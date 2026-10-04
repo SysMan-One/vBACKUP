@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCMP"
-#define	__IDENT__	"X01-01"
-#define	__REV__		"1.1.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -27,6 +27,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		DATAZ records are compared as DATA ones.
 **
 **	X01-01		 3-OCT-2026	RRL
 **		Initial version.
@@ -60,6 +63,7 @@ typedef struct vbk_cmp_t
 	int		fd;
 	int		differs;		/* Reported already: one report a file		*/
 	uint8_t *	buf;
+	uint8_t *	zbuf;			/* A DATAZ record decompressed			*/
 
 	uint64_t	nfiles, ndiff;
 } VBK$CMP;
@@ -180,23 +184,41 @@ ssize_t		l_n;
 
 
 /*
-**  A DATA record: the same octets are read from the disk
+**  A DATA or DATAZ record: the same octets are read from the disk
 */
 static	void	s_vbk$data	(
 		VBK$CMP *	a_cmp,
+		uint16_t	a_type,
 	const	uint8_t *	a_body,
 		uint32_t	a_len
 			)
 {
-uint32_t	l_n = a_len - VBK$K_DATAHDR;
+const uint8_t *	l_data;
+uint32_t	l_n, l_fileno;
 uint64_t	l_off;
 ssize_t		l_rc;
 char		l_what [96];
 
-	if ( !a_cmp->fileno || (a_cmp->fd < 0) || a_cmp->differs || (a_len < VBK$K_DATAHDR) || (vbk$get32(a_body) != a_cmp->fileno) )
+	if ( !a_cmp->fileno || (a_cmp->fd < 0) || a_cmp->differs )
 		return;
 
-	l_off	= vbk$get64(a_body + 8);
+	if ( (a_type == VBK$K_RT_DATAZ) && !a_cmp->zbuf && !(a_cmp->zbuf = malloc(VBK$K_MAXDATA)) )
+		{
+		$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+		return;
+		}
+
+	/* A record that does not decompress: the saveset is damaged there, the file cannot be told the same */
+	if ( STS$K_SUCCESS != vbk$data_get(a_type, a_body, a_len, a_cmp->zbuf, &l_fileno, &l_off, &l_data, &l_n) )
+		{
+		$VBKMSG(VBACKUP$_FILDAMAGED, a_cmp->path);
+		a_cmp->differs	= 1;
+		a_cmp->ndiff++;
+		return;
+		}
+
+	if ( l_fileno != a_cmp->fileno )
+		return;
 
 	if ( (l_rc = pread(a_cmp->fd, a_cmp->buf, l_n, (off_t) l_off)) != (ssize_t) l_n )
 		{
@@ -207,11 +229,11 @@ char		l_what [96];
 		return;
 		}
 
-	if ( memcmp(a_cmp->buf, a_body + VBK$K_DATAHDR, l_n) )
+	if ( memcmp(a_cmp->buf, l_data, l_n) )
 		{
 		uint32_t	i = 0;
 
-		while ( (i < l_n) && (a_cmp->buf [i] == a_body [VBK$K_DATAHDR + i]) )
+		while ( (i < l_n) && (a_cmp->buf [i] == l_data [i]) )
 			i++;
 
 		snprintf(l_what, sizeof(l_what), "the contents differ at octet %llu", (unsigned long long) (l_off + i));
@@ -312,8 +334,8 @@ int		l_status;
 			s_vbk$done(l_cmp);
 			s_vbk$file(l_cmp, l_body, l_len);
 			}
-		else if ( l_type == VBK$K_RT_DATA )
-			s_vbk$data(l_cmp, l_body, l_len);
+		else if ( (l_type == VBK$K_RT_DATA) || (l_type == VBK$K_RT_DATAZ) )
+			s_vbk$data(l_cmp, l_type, l_body, l_len);
 		else if ( l_type == VBK$K_RT_FEND )
 			s_vbk$fend(l_cmp, l_body, l_len);
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
@@ -333,6 +355,7 @@ int		l_status;
 		free(l_cmp->base [i]);
 
 	free(l_cmp->buf);
+	free(l_cmp->zbuf);
 	free(l_cmp);
 
 	return	l_status;

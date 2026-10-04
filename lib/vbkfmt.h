@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-02"
+#define	__IDENT__	"X01-04"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.2.0"
+#define	__REV__		"1.4.0"
 #endif
 
 /*
@@ -34,6 +34,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		DATAZ, the compressed DATA record; the SUMMARY tag COMPRESS.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		Stage 2: SUMMARY tags KIND, FILTER; the catalog STATUS PRESENT;
@@ -96,6 +99,7 @@ enum	{					/* Record types					*/
 	VBK$K_RT_FEND,
 	VBK$K_RT_CATALOG,
 	VBK$K_RT_END,
+	VBK$K_RT_DATAZ,				/* DATA, compressed (X01-04)			*/
 
 	VBK$K_RT_SSET	= 16,			/* Journal: a saveset				*/
 	VBK$K_RT_FSTATE				/* Journal: the state of a saved file		*/
@@ -142,6 +146,7 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_SYSTEM,
 	VBK$K_TAG_KIND,
 	VBK$K_TAG_FILTER,
+	VBK$K_TAG_COMPRESS,			/* SUMMARY: the codec of the DATAZ records	*/
 
 	VBK$K_TAG_NFILES = 96,
 	VBK$K_TAG_NBYTES,

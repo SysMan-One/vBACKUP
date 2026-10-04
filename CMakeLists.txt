@@ -159,7 +159,8 @@ message(STATUS "VBACKUP: StarLet ${StarLet_VERSION} from ${StarLet_DIR}")
 add_library(vbkcore STATIC
 	lib/vbkfmt.c
 	lib/vbkwrt.c
-	lib/vbkrd.c)
+	lib/vbkrd.c
+	lib/vbklz4.c)
 
 target_include_directories(vbkcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_link_libraries(vbkcore PUBLIC StarLet::starlet Threads::Threads PRIVATE vbackup_options)

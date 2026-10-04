@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		DATAZ: the compressed data is restored and extracted.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		/INCREMENTAL removes in the order of the names, not in that of
@@ -101,6 +104,7 @@ typedef struct vbk_rest_t
 	int		quit;
 
 	uint8_t *	seen;			/* FILENOs of the FILE records read, a bit each	*/
+	uint8_t *	zbuf;			/* A DATAZ record decompressed, VBK$K_MAXDATA	*/
 	uint32_t	seensz;			/* ... octets of it				*/
 } VBK$REST;
 
@@ -545,18 +549,37 @@ ssize_t	l_rc;
 
 
 /*
-**  A DATA record of the current file
+**  A DATA or DATAZ record of the current file; a DATAZ that does not
+**  decompress leaves the file incomplete
 */
 static	int	s_vbk$data	(
 		VBK$REST *	a_rst,
+		uint16_t	a_type,
 	const	uint8_t *	a_body,
 		uint32_t	a_len
 			)
 {
-	if ( !a_rst->active || (a_len < VBK$K_DATAHDR) || (vbk$get32(a_body) != a_rst->attr.fileno) )
+const uint8_t *	l_data;
+uint32_t	l_fileno, l_n;
+uint64_t	l_off;
+
+	if ( !a_rst->active )
 		return	STS$K_SUCCESS;
 
-	return	vbk$rst_write(a_rst, vbk$get64(a_body + 8), a_body + VBK$K_DATAHDR, a_len - VBK$K_DATAHDR);
+	if ( (a_type == VBK$K_RT_DATAZ) && !a_rst->zbuf && !(a_rst->zbuf = malloc(VBK$K_MAXDATA)) )
+		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+
+	if ( STS$K_SUCCESS != vbk$data_get(a_type, a_body, a_len, a_rst->zbuf, &l_fileno, &l_off, &l_data, &l_n) )
+		{
+		a_rst->damaged	= 1;
+
+		return	$VBKMSG(VBACKUP$_BADREC, a_rst->rctx ? a_rst->rctx->payblk : 0, a_rst->rctx ? a_rst->rctx->payvol : 0);
+		}
+
+	if ( l_fileno != a_rst->attr.fileno )
+		return	STS$K_SUCCESS;
+
+	return	vbk$rst_write(a_rst, l_off, l_data, l_n);
 }
 
 
@@ -727,6 +750,7 @@ int	vbk$rst_finish	(
 		*a_nbytes = a_rst->nbytes;
 
 	free(a_rst->file);
+	free(a_rst->zbuf);
 	free(a_rst->seen);
 	free(a_rst);
 
@@ -1229,8 +1253,8 @@ int		l_status, l_quit = 0, l_lossy = 0, l_end = 0;
 				break;
 				}
 			}
-		else if ( l_type == VBK$K_RT_DATA )
-			s_vbk$data(l_rst, l_body, l_len);
+		else if ( (l_type == VBK$K_RT_DATA) || (l_type == VBK$K_RT_DATAZ) )
+			s_vbk$data(l_rst, l_type, l_body, l_len);
 		else if ( l_type == VBK$K_RT_FEND )
 			s_vbk$fend(l_rst, l_body, l_len);
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
@@ -1414,6 +1438,7 @@ int	vbk$extract	(
 		VBK$OPTS *	a_opts
 			)
 {
+uint8_t *	l_zbuf = NULL;
 VBK$RCTX	l_rctx = {0};
 VBK$ATTR	l_attr;
 VBK$LOC		l_loc;
@@ -1499,15 +1524,33 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 			l_crc	= ~l_crc;		/* Known bad: the checksum is not to agree by chance */
 			}
 
-		if ( (l_type == VBK$K_RT_DATA) && (l_len >= VBK$K_DATAHDR) && (vbk$get32(l_body) == l_fileno) )
+		if ( (l_type == VBK$K_RT_DATA) || (l_type == VBK$K_RT_DATAZ) )
 			{
-			uint64_t	l_off = vbk$get64(l_body + 8);
-			uint32_t	l_n = l_len - VBK$K_DATAHDR;
+			const uint8_t *	l_data;
+			uint32_t	l_dfno, l_n;
+			uint64_t	l_off;
 			int		l_ok;
 
+			if ( (l_type == VBK$K_RT_DATAZ) && !l_zbuf && !(l_zbuf = malloc(VBK$K_MAXDATA)) )
+				{
+				$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+				break;
+				}
+
+			/* A record that does not decompress: the file is incomplete, the checksum must not agree */
+			if ( STS$K_SUCCESS != vbk$data_get(l_type, l_body, l_len, l_zbuf, &l_dfno, &l_off, &l_data, &l_n) )
+				{
+				$VBKMSG(VBACKUP$_FILDAMAGED, a_opts->extract);
+				l_crc	= ~l_crc;
+				continue;
+				}
+
+			if ( l_dfno != l_fileno )
+				continue;
+
 			if ( l_tostd )
-				l_ok = (l_off >= l_pos) && (1 & s_vbk$zeros(l_fd, l_off - l_pos)) && (write(l_fd, l_body + VBK$K_DATAHDR, l_n) == (ssize_t) l_n);
-			else	l_ok = (pwrite(l_fd, l_body + VBK$K_DATAHDR, l_n, (off_t) l_off) == (ssize_t) l_n);
+				l_ok = (l_off >= l_pos) && (1 & s_vbk$zeros(l_fd, l_off - l_pos)) && (write(l_fd, l_data, l_n) == (ssize_t) l_n);
+			else	l_ok = (pwrite(l_fd, l_data, l_n, (off_t) l_off) == (ssize_t) l_n);
 
 			if ( !l_ok )
 				{
@@ -1515,7 +1558,7 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 				break;
 				}
 
-			l_crc	= $VBK_CRC(l_crc, l_body + VBK$K_DATAHDR, l_n);
+			l_crc	= $VBK_CRC(l_crc, l_data, l_n);
 			l_pos	= l_off + l_n;
 			}
 		else if ( l_type == VBK$K_RT_FEND )
@@ -1550,6 +1593,7 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 		l_status = $VBKMSG(VBACKUP$_WRITERR, a_opts->output, errno, strerror(errno));
 
 	vbk$rd_close(&l_rctx);
+	free(l_zbuf);
 
 	return	l_status;
 }

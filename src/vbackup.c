@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		Stage 4: /DATA_FORMAT=COMPRESSED - the data of the files in DATAZ
+**		records, LZ4 block format.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		Stage 3: the saveset is written by a thread of its own; hints
@@ -104,6 +108,7 @@ enum	{
 	VBACKUP$K_QUAL_JOURNAL,
 	VBACKUP$K_QUAL_INCREMENTAL,
 	VBACKUP$K_QUAL_HELP,
+	VBACKUP$K_QUAL_DATA_FORMAT,
 
 	VBACKUP$K_QUAL_MAX
 	};
@@ -120,6 +125,12 @@ static	CLI_KEYWORD	s_ignkwd [] = {
 static	CLI_KEYWORD	s_fmtkwd [] = {
 	{ .name = {$ASCINI("VMS")},	.val = VBACKUP$K_FMT_VMS },
 	{ .name = {$ASCINI("LS")},	.val = VBACKUP$K_FMT_LS },
+	{ .name = { .len = 0 } }
+	};
+
+static	CLI_KEYWORD	s_dfmkwd [] = {
+	{ .name = {$ASCINI("COMPRESSED")},	.val = 1 },
+	{ .name = {$ASCINI("UNCOMPRESSED")},	.val = 0 },
 	{ .name = { .len = 0 } }
 	};
 
@@ -155,6 +166,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("JOURNAL")},		.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("INCREMENTAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("DATA_FORMAT")},	.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_dfmkwd },
 	{ .name = { .len = 0 } }
 	};
 
@@ -184,7 +196,7 @@ static	const char	s_usage [] = {
 	"  Save:     /BLOCK_SIZE=n /GROUP_SIZE=n /VOLUME_SIZE=size /COMMENT=\"...\"\n"
 	"            /SINCE=time /BEFORE=time /MODIFIED /CREATED /CHANGED\n"
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
-	"            /RECORD /SINCE=BACKUP /JOURNAL=file\n"
+	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
 	"  Restore:  /REPLACE /OWNER=ORIGINAL|DEFAULT|user /INCREMENTAL\n"
 	"  Common:   /SELECT=(pat,...) /EXCLUDE=(pat,...) /[NO]XATTRS /LOG /CONFIRM\n"
 	"\n"
@@ -592,6 +604,16 @@ ASC		l_val;
 
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_FULL, NULL) )
 		a_opts->lstfmt	= VBACKUP$K_LST_FULL;
+
+	/* /DATA_FORMAT=COMPRESSED: the data in DATAZ records, LZ4 (format.md, 6.7) */
+	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_DATA_FORMAT, l_str, sizeof(l_str)) )
+		{
+		if ( l_str [0] && !strncasecmp(l_str, "COMPRESSED", strlen(l_str)) )
+			a_opts->compress = 1;
+		else if ( l_str [0] && !strncasecmp(l_str, "UNCOMPRESSED", strlen(l_str)) )
+			a_opts->compress = 0;
+		else	return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "DATA_FORMAT");
+		}
 
 	if ( (1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_FORMAT, l_str, sizeof(l_str))) && !strncasecmp(l_str, "LS", strlen(l_str)) )
 		a_opts->lstfmt	= VBACKUP$K_LST_LS;

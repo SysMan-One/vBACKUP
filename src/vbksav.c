@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		/DATA_FORMAT=COMPRESSED: a DATAZ record where LZ4 pays, DATA
+**		elsewhere; the SUMMARY says COMPRESS.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files are read SEQUENTIAL; a cold one is dropped from the
@@ -90,6 +94,8 @@ typedef struct vbk_save_t
 	VBK$TLVB	cat;			/* A catalog entry				*/
 	FILE *		spool;			/* The catalog entries, until the end		*/
 	uint8_t *	iobuf;			/* VBK$K_DATAHDR + VBACKUP$K_IOBUF		*/
+	uint8_t *	zbuf;			/* /DATA_FORMAT=COMPRESSED: a DATAZ record body	*/
+	uint64_t	nzin, nzout;		/* ... octets in, octets out			*/
 	VBK$HLINK *	hlink [VBK$K_HLHASH];
 	uint32_t	fileno;
 	uint64_t	nfiles, nbytes, nentries;
@@ -269,6 +275,7 @@ off_t		l_beg, l_end, l_off;
 ssize_t		l_n;
 uint32_t	l_crc = 0;
 size_t		l_want;
+uint32_t	l_zlen = 0;
 int		l_cold;
 
 	*a_saved	= a_size;
@@ -325,12 +332,36 @@ int		l_cold;
 				return	STS$K_SUCCESS;
 				}
 
-			vbk$put32(l_hdr, a_fileno);
-			vbk$put32(l_hdr + 4, 0);
-			vbk$put64(l_hdr + 8, (uint64_t) l_off);
+			/*
+			**  Compressed when it pays - by more than the 4 octets the
+			**  DATAZ header costs over DATA; else stored as it is.  A
+			**  saveset so mixes both kinds, and a reader takes either.
+			*/
+			if ( a_sav->zbuf && (1 & vbk$lz4_compress(l_data, (uint32_t) l_n, a_sav->zbuf + VBK$K_DATAZHDR,
+						(uint32_t) l_n - 4, &l_zlen)) && ((l_zlen + 4) < (uint32_t) l_n) )
+				{
+				vbk$put32(a_sav->zbuf, a_fileno);
+				vbk$put32(a_sav->zbuf + 4, VBK$K_CODEC_LZ4);
+				vbk$put64(a_sav->zbuf + 8, (uint64_t) l_off);
+				vbk$put32(a_sav->zbuf + 16, (uint32_t) l_n);
 
-			if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_DATA, l_hdr, VBK$K_DATAHDR + (uint32_t) l_n, NULL)) )
-				return	s_vbk$wrterr(a_sav);
+				if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_DATAZ, a_sav->zbuf, VBK$K_DATAZHDR + l_zlen, NULL)) )
+					return	s_vbk$wrterr(a_sav);
+
+				a_sav->nzout += VBK$K_DATAZHDR + l_zlen;
+				}
+			else	{
+				vbk$put32(l_hdr, a_fileno);
+				vbk$put32(l_hdr + 4, 0);
+				vbk$put64(l_hdr + 8, (uint64_t) l_off);
+
+				if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_DATA, l_hdr, VBK$K_DATAHDR + (uint32_t) l_n, NULL)) )
+					return	s_vbk$wrterr(a_sav);
+
+				a_sav->nzout += VBK$K_DATAHDR + (uint64_t) l_n;
+				}
+
+			a_sav->nzin += (uint64_t) l_n;
 
 			l_crc	= $VBK_CRC(l_crc, l_data, l_n);
 
@@ -647,6 +678,10 @@ int		l_ok = 1;
 
 	l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_BLOCKSIZE, l_o->bsize);
 	l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_GROUPSIZE, l_o->grpsz);
+
+	/* Information only: a reader goes by the record types, not by this */
+	if ( l_o->compress )
+		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_COMPRESS, VBK$K_CODEC_LZ4);
 	l_ok &= vbk$tlv_u64(a_tlvb, VBK$K_TAG_VOLSIZE, l_o->volsize);
 
 	if ( l_o->comment [0] )
@@ -752,7 +787,8 @@ uint32_t	l_nvols;
 int		l_status = STS$K_SUCCESS;
 
 	if ( !(l_sav = calloc(1, sizeof(*l_sav))) || !(l_base = calloc(a_opts->ninput, VBACKUP$K_SZ_PATH))
-		|| !(l_sav->iobuf = malloc(VBK$K_DATAHDR + VBACKUP$K_IOBUF)) )
+		|| !(l_sav->iobuf = malloc(VBK$K_DATAHDR + VBACKUP$K_IOBUF))
+		|| (a_opts->compress && !(l_sav->zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBACKUP$K_IOBUF)))) )
 		return	$VBKMSG(VBACKUP$_NOMEM, errno, strerror(errno)), STS$K_FATAL;
 
 	l_sav->opts	= a_opts;
@@ -865,6 +901,7 @@ int		l_status = STS$K_SUCCESS;
 			}
 
 	free(l_sav->iobuf);
+	free(l_sav->zbuf);
 	free(l_base);
 
 	/* /VERIFY: the saveset just written, read back and compared with the disk */

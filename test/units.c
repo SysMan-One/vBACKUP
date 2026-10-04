@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-01"
-#define	__REV__		"1.1.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -27,6 +27,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-04		 4-OCT-2026	RRL
+**		The LZ4 block codec: round trips, determinism, damaged blocks.
+**
 **	X01-01		 3-OCT-2026	RRL
 **		Initial version.
 **
@@ -45,6 +48,7 @@
 #include	"vbkwrt.h"
 #include	"vbkrd.h"
 #include	"vbkos.h"
+#include	"vbklz4.h"
 
 #define	UNITS$K_NREC	400			/* Records of the synthetic saveset		*/
 #define	UNITS$K_BSZ	8192			/* Small blocks: many of them, many volumes	*/
@@ -370,6 +374,93 @@ char		l_spec [1100];
 	$CHECK(vbk$rd_probe(l_spec) == STS$K_SUCCESS, "one.bck not a saveset");
 	snprintf(l_spec, sizeof(l_spec), "%s/one.bck", a_argv [0]);
 	$CHECK(vbk$rd_probe(a_argv [0]) == STS$K_WARN, "the test image taken for a saveset");
+
+	s_begin("LZ4 block: round trip of runs, text, random, short and empty buffers");
+	{
+	static uint8_t	l_src [VBK$K_MAXDATA], l_z [VBK$LZ4_BOUND(VBK$K_MAXDATA)], l_out [VBK$K_MAXDATA];
+	uint32_t	l_sizes [] = { 0, 1, 5, 12, 13, 17, 100, 4096, 65536, 65537, 300000, VBK$K_MAXDATA };
+	uint32_t	l_zlen, l_bad = 0, l_seed = 12345;
+
+	for ( int l_kind = 0; l_kind < 4; l_kind++ )
+		for ( size_t s = 0; s < (sizeof(l_sizes) / sizeof(l_sizes [0])); s++ )
+			{
+			uint32_t	l_n = l_sizes [s];
+
+			for ( uint32_t j = 0; j < l_n; j++ )
+				{
+				l_seed	= (l_seed * 1103515245U) + 12345U;
+
+				switch ( l_kind )
+					{
+					case 0:	l_src [j] = 'A';						break;
+					case 1:	l_src [j] = (uint8_t) "the quick brown fox "[j % 20];		break;
+					case 2:	l_src [j] = (uint8_t) (l_seed >> 16);				break;
+					default: l_src [j] = (uint8_t) ((j / 700) ^ ((l_seed >> 28) & 1));	break;
+					}
+				}
+
+			if ( !(1 & vbk$lz4_compress(l_src, l_n, l_z, sizeof(l_z), &l_zlen))
+				|| !(1 & vbk$lz4_decompress(l_z, l_zlen, l_out, l_n)) || memcmp(l_src, l_out, l_n) )
+				l_bad++;
+
+			/* The same input, the same output */
+			{
+			uint32_t	l_zlen2;
+			static uint8_t	l_z2 [VBK$LZ4_BOUND(VBK$K_MAXDATA)];
+
+			if ( !(1 & vbk$lz4_compress(l_src, l_n, l_z2, sizeof(l_z2), &l_zlen2)) || (l_zlen2 != l_zlen) || memcmp(l_z, l_z2, l_zlen) )
+				l_bad++;
+			}
+			}
+
+	$CHECK(!l_bad, "%u buffers did not come back the same", l_bad);
+
+	/* A run of 1 MB is a few kilobytes; random data does not fit into less than itself */
+	memset(l_src, 'A', VBK$K_MAXDATA);
+	vbk$lz4_compress(l_src, VBK$K_MAXDATA, l_z, sizeof(l_z), &l_zlen);
+	$CHECK(l_zlen < 8192, "a run of 1 MB is %u octets", l_zlen);
+	$CHECK(STS$K_WARN == vbk$lz4_compress(l_src, VBK$K_MAXDATA, l_z, 100, &l_zlen), "a buffer too small was not refused");
+	}
+
+	s_begin("LZ4 block: damaged blocks are refused, nothing is written out of bounds");
+	{
+	static uint8_t	l_src [65536], l_z [VBK$LZ4_BOUND(65536)], l_bz [VBK$LZ4_BOUND(65536)], l_out [65536];
+	uint32_t	l_zlen, l_ok = 0, l_seed = 777;
+
+	for ( uint32_t j = 0; j < sizeof(l_src); j++ )
+		l_src [j] = (uint8_t) "abcabcabd 0123456789"[(j * 7) % 20];
+
+	vbk$lz4_compress(l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen);
+
+	/* Random octets spoiled, the block cut, garbage given: refused, or - by chance - exactly 64 KB */
+	for ( int i = 0; i < 20000; i++ )
+		{
+		uint32_t	l_len = l_zlen;
+
+		memcpy(l_bz, l_z, l_zlen);
+		l_seed	= (l_seed * 1103515245U) + 12345U;
+
+		if ( (i % 3) == 0 )
+			l_len	= (l_seed >> 8) % (l_zlen + 1);
+		else if ( (i % 3) == 1 )
+			for ( int k = 0; k < 1 + (i % 5); k++ )
+				{
+				l_seed	= (l_seed * 1103515245U) + 12345U;
+				l_bz [(l_seed >> 8) % l_zlen] = (uint8_t) (l_seed >> 3);
+				}
+		else
+			for ( uint32_t k = 0; k < l_len; k++ )
+				{
+				l_seed	= (l_seed * 1103515245U) + 12345U;
+				l_bz [k] = (uint8_t) (l_seed >> 16);
+				}
+
+		if ( STS$K_SUCCESS == vbk$lz4_decompress(l_bz, l_len, l_out, sizeof(l_out)) )
+			l_ok++;
+		}
+
+	$CHECK(l_ok < 20000, "every damaged block decompressed");
+	}
 
 	printf("\n%d test%s, %d failure%s\n", s_ntest, (s_ntest == 1) ? "" : "s", s_fail, (s_fail == 1) ? "" : "s");
 

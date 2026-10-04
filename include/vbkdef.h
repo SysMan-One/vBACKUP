@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-03"
+#define	__IDENT__	"X01-04"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.3.0"
+#define	__REV__		"1.4.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		COMPRESS: /DATA_FORMAT=COMPRESSED.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		NOPIPE: VBACKUP_PIPELINE=0; PRE and VBK$PRE_*: the read-ahead.
@@ -63,6 +66,7 @@
 #include	"vbkwrt.h"
 #include	"vbkrd.h"
 #include	"vbkos.h"
+#include	"vbklz4.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -296,6 +300,7 @@ typedef struct vbk_opts_t
 	int		record;			/* /RECORD					*/
 	int		incremental;		/* /INCREMENTAL (restore)			*/
 	int		nopipe;			/* VBACKUP_PIPELINE=0: no writer thread		*/
+	int		compress;		/* /DATA_FORMAT=COMPRESSED			*/
 	struct vbk_pre_t *pre;			/* The read-ahead of files, NULL - none		*/
 	char		jnlspec [VBACKUP$K_SZ_PATH];	/* /JOURNAL=file, "" - the default	*/
 	struct vbk_jnl_t *jnl;			/* The journal, when one is open		*/

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -54,6 +54,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-04		 4-OCT-2026	RRL
+**		DATAZ: the data compressed with /DATA_FORMAT=COMPRESSED.
+**
 **	X01-03		 4-OCT-2026	RRL
 **		The owner, mode and times that cannot be set are said, not
 **		passed over (a warning of glibc on Ubuntu, -Wunused-result).
@@ -77,6 +80,7 @@
 
 #include	"vbkrd.h"
 #include	"vbkos.h"
+#include	"vbklz4.h"
 
 #define	VBKX$K_SZ_PATH	4096
 
@@ -627,31 +631,46 @@ static	const uint8_t	l_zero [65536];
 }
 
 
+/*
+**  A DATA or DATAZ record of the file being put back; a DATAZ that does
+**  not decompress leaves it incomplete
+*/
 static	void	s_vbkx$data	(
 		VBKX$OUT *	a_out,
+		uint16_t	a_type,
 	const	uint8_t *	a_body,
 		uint32_t	a_len
 			)
 {
+static	uint8_t	s_zbuf [VBK$K_MAXDATA];
+const uint8_t *	l_data;
 uint64_t	l_off;
-uint32_t	l_n;
+uint32_t	l_n, l_fileno;
 
-	if ( !a_out->active || (a_len < VBK$K_DATAHDR) || (vbk$get32(a_body) != a_out->ent.fileno) )
+	if ( !a_out->active )
 		return;
 
-	l_off	= vbk$get64(a_body + 8);
-	l_n	= a_len - VBK$K_DATAHDR;
+	if ( STS$K_SUCCESS != vbk$data_get(a_type, a_body, a_len, s_zbuf, &l_fileno, &l_off, &l_data, &l_n) )
+		{
+		s_vbkx$msg("%s: a data record that makes no sense", a_out->name);
+		a_out->damaged	= 1;
 
-	a_out->crc = $VBK_CRC(a_out->crc, a_body + VBK$K_DATAHDR, l_n);
+		return;
+		}
+
+	if ( l_fileno != a_out->ent.fileno )
+		return;
+
+	a_out->crc = $VBK_CRC(a_out->crc, l_data, l_n);
 
 	if ( a_out->tostd )
 		{
 		s_vbkx$zeros(a_out, l_off);
 
-		if ( (a_out->pos == l_off) && (1 == fwrite(a_body + VBK$K_DATAHDR, l_n, 1, stdout)) )
+		if ( (a_out->pos == l_off) && (1 == fwrite(l_data, l_n, 1, stdout)) )
 			a_out->pos	+= l_n;
 		}
-	else if ( (a_out->fd >= 0) && (pwrite(a_out->fd, a_body + VBK$K_DATAHDR, l_n, (off_t) l_off) != (ssize_t) l_n) )
+	else if ( (a_out->fd >= 0) && (pwrite(a_out->fd, l_data, l_n, (off_t) l_off) != (ssize_t) l_n) )
 		{
 		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
 		a_out->damaged	= 1;
@@ -801,8 +820,8 @@ int		l_files = 0;
 
 			s_vbkx$begin(a_out, l_body, l_len, a_as, a_make);
 			}
-		else if ( l_type == VBK$K_RT_DATA )
-			s_vbkx$data(a_out, l_body, l_len);
+		else if ( (l_type == VBK$K_RT_DATA) || (l_type == VBK$K_RT_DATAZ) )
+			s_vbkx$data(a_out, l_type, l_body, l_len);
 		else if ( l_type == VBK$K_RT_FEND )
 			{
 			s_vbkx$end(a_out, l_body, l_len);
