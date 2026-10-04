@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-05"
+#define	__REV__		"1.5.0"
 
 /*
 **++
@@ -40,6 +40,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-05		 4-OCT-2026	RRL
+**		Stage 5: the plugins of the file managers - Midnight Commander
+**		(extfs uvbk), far2l and Far3 (MultiArc), Total Commander and
+**		Double Commander (WCX); compression on several cores.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		Stage 4: /DATA_FORMAT=COMPRESSED - the data of the files in DATAZ

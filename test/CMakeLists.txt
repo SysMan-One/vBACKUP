@@ -8,7 +8,11 @@
 #
 #	MODIFICATION HISTORY:
 #
-#		 4-OCT-2026	RRL	X-03 : PLUGINS, the plugins of MC and far2l.
+#		 4-OCT-2026	RRL	X-05 : WCX, the WCX plugin natively; WCXWIN, its Windows
+#					builds under wine.
+#
+#		 4-OCT-2026	RRL	X-05 : PLUGINS, the plugins of MC and far2l.
+#
 #		 4-OCT-2026	RRL	X-04 : WIN, vbkx.exe under wine.
 #
 #		 4-OCT-2026	RRL	X-03 : GEEKS, vbkx-go and vbkx-rs, when they are built;
@@ -70,6 +74,45 @@ if ( VBACKUP_WINVBKX AND VBACKUP_WINE )
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/win.sh)
 endif()
 
+#
+#	The WCX plugin through test/wcx_harness.c: the Linux .so always; the
+#	Windows ones under wine, with a harness built by the same MinGW
+#
+add_executable(wcx_harness wcx_harness.c)
+target_link_libraries(wcx_harness PRIVATE ${CMAKE_DL_LIBS} vbackup_options)
+add_dependencies(wcx_harness vbkwcx)
+
+add_test(NAME wcx COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
+	SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/wcx.d
+	sh ${CMAKE_CURRENT_SOURCE_DIR}/wcx.sh $<TARGET_FILE:wcx_harness> $<TARGET_FILE:vbkwcx>)
+
+if ( VBACKUP_WINE AND (VBACKUP_WCX64 OR VBACKUP_WCX32) )
+	set(L_PAIRS "")
+
+	if ( VBACKUP_WCX64 )
+		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness64.exe
+			COMMAND ${VBACKUP_MINGW} -O2 -Wall -Wextra -o ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness64.exe
+				${CMAKE_CURRENT_SOURCE_DIR}/wcx_harness.c -static -lshell32
+			DEPENDS wcx_harness.c
+			COMMENT "Building wcx_harness64.exe (MinGW-w64)")
+		add_custom_target(wcx-harness64 ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness64.exe)
+		list(APPEND L_PAIRS ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness64.exe ${VBACKUP_WCX64})
+	endif()
+
+	if ( VBACKUP_WCX32 )
+		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness32.exe
+			COMMAND ${VBACKUP_MINGW32} -O2 -Wall -Wextra -o ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness32.exe
+				${CMAKE_CURRENT_SOURCE_DIR}/wcx_harness.c -static -lshell32
+			DEPENDS wcx_harness.c
+			COMMENT "Building wcx_harness32.exe (MinGW-w64, 32 bits)")
+		add_custom_target(wcx-harness32 ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness32.exe)
+		list(APPEND L_PAIRS ${CMAKE_CURRENT_BINARY_DIR}/wcx_harness32.exe ${VBACKUP_WCX32})
+	endif()
+
+	add_test(NAME wcxwin COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
+		WINE=${VBACKUP_WINE} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/wcxwin.d
+		sh ${CMAKE_CURRENT_SOURCE_DIR}/wcx.sh ${L_PAIRS})
+endif()
 #	The plugins of the file managers: the commands always; the real mc and far2l when tmux and they are there
 add_test(NAME plugins
 	COMMAND ${CMAKE_COMMAND} -E env

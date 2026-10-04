@@ -87,6 +87,40 @@ symbolic links where Windows allows them (developer mode).  A name
 Windows cannot hold (`a:b`, `x?`, `con.txt`, ...) is not extracted, and
 said.  `test/win.sh` runs it under wine.
 
+## File managers
+
+A saveset opens like a folder in the file managers below: list, view,
+copy out, test.  Read only - nothing is ever written into a saveset.
+The listing comes from the catalog, so a saveset of hundreds of
+gigabytes opens at once, and a file is copied out through its place in
+the catalog.
+
+- **Midnight Commander** - [plugins/mc/uvbk](plugins/mc/uvbk), an extfs
+  script over `vbackup`.  `cmake --install` puts it into the extfs of MC
+  and its section into `mc.ext.ini`, when MC is there (and takes them out
+  again on uninstall); then Enter on a `.bck` file.
+- **far2l and Far3** - [plugins/far/vbackup.ini](plugins/far/vbackup.ini),
+  a format description for MultiArc over `vbkx` (`vbkx.exe` on Windows).
+  The installation appends it to the `custom.ini` of far2l's MultiArc.
+- **Total Commander and Double Commander** - [plugins/wcx/vbkwcx.c](plugins/wcx/vbkwcx.c),
+  a WCX packer plugin over the reading core: `vbackup.wcx64` and
+  `vbackup.wcx` for Total Commander 64 and 32 bit, `vbackup.wcx` (a
+  shared object) for Double Commander on Linux.  It checks the CRC of
+  every file, repairs what the XOR blocks allow, names what they do not,
+  asks for a volume that is not beside volume 1, and keeps a forged
+  saveset inside the target.  Install in TC: open a zip of the plugin
+  with [pluginst.inf](plugins/wcx/pluginst.inf) (`make -f plugins/wcx/Makefile zip`),
+  or Configuration -> Options -> Packer -> Configure packer extension
+  WCXs, extension `bck`.  In DC: Options -> Plugins -> Packer plugins
+  (WCX) -> Add, extension `bck`.  The head of the source is its manual.
+
+      $ make -f plugins/wcx/Makefile linux win64 win32   # out/linux, out/win64, out/win32
+
+  The CMake build makes the Linux one always (installed under
+  `share/vbackup/plugins/wcx`) and the Windows ones when MinGW-w64 is
+  found; `test/wcx.sh` checks them against `vbkx` - natively and under
+  wine.
+
 ## Build
 
 Requires StarLet 1.6 or later; HELP 1.0 (optional) for `/HELP` and the
