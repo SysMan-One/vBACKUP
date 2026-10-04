@@ -29,6 +29,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
+#
 #		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED: smaller, the same tree,
 #					the same listing, deterministic; vbkx reads it.
 #
@@ -55,12 +57,9 @@
 VB=${VBACKUP:?"VBACKUP must name the image"}
 S=${SCRATCH:?"SCRATCH must name a scratch directory"}
 
-FAILS=0
-CHECKS=0
-
-ok ()	{ CHECKS=$((CHECKS + 1)); }
-fail ()	{ CHECKS=$((CHECKS + 1)); FAILS=$((FAILS + 1)); echo "%VBACKUP-E-SMOKE, $*"; }
-check () { if eval "$1"; then ok; else fail "$2"; fi; }
+#	ok, fail, check, bail, tap_end - plain output, or TAP with TAP=1
+TAPNAME=SMOKE
+. "$(dirname "$0")/tap.sh"
 
 #	An immutable file cannot be removed: the flag goes first, whatever happened
 wipe ()	{ [ -e "$1" ] && chattr -R -i "$1" 2>/dev/null; rm -rf "$1"; }
@@ -498,6 +497,4 @@ check '[ $? = 0 ]' "no parameters: the summary, completion code 0"
 $VB src/tree x2.bck /BLOCK_SIZE=1000 > bs.log 2>&1
 check '[ $? = 2 ] && grep -q IVQUAL bs.log' "/BLOCK_SIZE=1000 accepted"
 
-echo "$CHECKS checks, $FAILS failures"
-
-exit $FAILS
+tap_end

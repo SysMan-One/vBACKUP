@@ -29,6 +29,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		The LZ4 block codec: round trips, determinism, damaged blocks.
+**		TAP=1: the Test Anything Protocol.
 **
 **	X01-01		 3-OCT-2026	RRL
 **		Initial version.
@@ -53,12 +54,26 @@
 #define	UNITS$K_NREC	400			/* Records of the synthetic saveset		*/
 #define	UNITS$K_BSZ	8192			/* Small blocks: many of them, many volumes	*/
 
-static	int	s_fail, s_ntest;
+static	int	s_fail, s_ntest, s_nchk, s_tap;
+static	const char *	s_title = "";
 static	char	s_dir [1024];
 static	VBK$LOC	s_loc [UNITS$K_NREC];
 static	int	s_ev [8];
 
-#define	$CHECK(cond, ...)	do { if ( !(cond) ) { s_fail++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
+/*
+**  One check.  TAP=1 in the environment: one "ok N" / "not ok N" line each (TAP 13), named by
+**  the test and the condition; the details of a failure, and every other line, as "# " notes.
+*/
+#define	$CHECK(cond, ...)	do { s_nchk++;									\
+				if ( !(cond) ) {								\
+					s_fail++;								\
+					if ( s_tap ) printf("not ok %d - %s: %s\n", s_nchk, s_title, #cond);	\
+					printf("%s FAIL %s:%d: ", s_tap ? "#" : " ", __FILE__, __LINE__);	\
+					printf(__VA_ARGS__); printf("\n"); }					\
+				else if ( s_tap ) printf("ok %d - %s: %s\n", s_nchk, s_title, #cond);		\
+				} while (0)
+
+#define	$NOTE(...)		do { printf("%s ", s_tap ? "#" : " "); printf(__VA_ARGS__); printf("\n"); } while (0)
 
 static	uint16_t	s_rtype	(uint32_t a_i)	{ return (uint16_t) (VBK$K_RT_FILE + (a_i % 3)); }
 
@@ -109,7 +124,7 @@ uint64_t	l_nblocks;
 
 	if ( !(1 & vbk$wrt_open(&l_wctx, l_spec, UNITS$K_BSZ, a_grpsz, a_volsize, VBK$M_WRT_REPLACE, l_sum.buf, l_sum.len)) )
 		{
-		printf("  vbk$wrt_open(%s): errno=%d\n", l_spec, l_wctx.err);
+		$NOTE("vbk$wrt_open(%s): errno=%d", l_spec, l_wctx.err);
 		return	STS$K_ERROR;
 		}
 
@@ -122,7 +137,7 @@ uint64_t	l_nblocks;
 
 		if ( !(1 & vbk$wrt_record(&l_wctx, s_rtype(i), l_buf, l_len, &s_loc [i])) )
 			{
-			printf("  vbk$wrt_record(%u): errno=%d\n", i, l_wctx.err);
+			$NOTE("vbk$wrt_record(%u): errno=%d", i, l_wctx.err);
 			return	STS$K_ERROR;
 			}
 		}
@@ -190,7 +205,7 @@ VBK$LOC		l_loc;
 
 	if ( !(1 & vbk$rd_open(&l_rctx, l_spec, s_evcb, NULL)) )
 		{
-		printf("  vbk$rd_open(%s): errno=%d\n", l_spec, l_rctx.err);
+		$NOTE("vbk$rd_open(%s): errno=%d", l_spec, l_rctx.err);
 		return	STS$K_ERROR;
 		}
 
@@ -244,7 +259,7 @@ int		l_fd;
 
 	if ( 0 > (l_fd = open(l_vs, O_WRONLY)) )
 		{
-		printf("  open(%s): errno=%d\n", l_vs, errno);
+		$NOTE("open(%s): errno=%d", l_vs, errno);
 		s_fail++;
 		return;
 		}
@@ -259,7 +274,8 @@ int		l_fd;
 static	void	s_begin	(const char *a_what)
 {
 	s_ntest++;
-	printf("%2d. %s\n", s_ntest, a_what);
+	s_title	= a_what;
+	printf("%s%2d. %s\n", s_tap ? "# " : "", s_ntest, a_what);
 }
 
 
@@ -277,6 +293,9 @@ char		l_spec [1100];
 		fprintf(stderr, "Usage: units <scratch-directory>\n");
 		return	2;
 		}
+
+	if ( (s_tap = getenv("TAP") && *getenv("TAP")) )
+		printf("TAP version 13\n");
 
 	snprintf(s_dir, sizeof(s_dir), "%s", a_argv [1]);
 	mkdir(s_dir, 0755);
@@ -462,7 +481,10 @@ char		l_spec [1100];
 	$CHECK(l_ok < 20000, "every damaged block decompressed");
 	}
 
-	printf("\n%d test%s, %d failure%s\n", s_ntest, (s_ntest == 1) ? "" : "s", s_fail, (s_fail == 1) ? "" : "s");
+	if ( s_tap )
+		printf("# %d test%s, %d check%s, %d failure%s\n1..%d\n", s_ntest, (s_ntest == 1) ? "" : "s", s_nchk, (s_nchk == 1) ? "" : "s",
+			s_fail, (s_fail == 1) ? "" : "s", s_nchk);
+	else	printf("\n%d test%s, %d failure%s\n", s_ntest, (s_ntest == 1) ? "" : "s", s_fail, (s_fail == 1) ? "" : "s");
 
 	return	s_fail ? 1 : 0;
 }

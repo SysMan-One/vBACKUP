@@ -40,6 +40,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
+#
 #		 4-OCT-2026	RRL	X-04 : Every other round damages the same tree saved
 #					/DATA_FORMAT=COMPRESSED; every third file of
 #					the tree compresses.
@@ -58,11 +60,9 @@ BSZ=16384
 GRP=5
 VOLSZ=1048576
 
-FAILS=0
-CHECKS=0
-
-ok ()	{ CHECKS=$((CHECKS + 1)); }
-fail ()	{ CHECKS=$((CHECKS + 1)); FAILS=$((FAILS + 1)); echo "%VBACKUP-E-DAMAGE, $*"; }
+#	ok, fail, check, bail, tap_end - plain output, or TAP with TAP=1
+TAPNAME=DAMAGE
+. "$(dirname "$0")/tap.sh"
 
 cleanup () { rm -rf "$S"; }
 [ -n "$KEEP" ] || trap cleanup EXIT
@@ -220,20 +220,20 @@ elif sys.argv[1] == "tree":
 EOF
 
 export BSZ GRP
-python3 dmg.py tree src/tree "$SEED" 300 || exit 1
+python3 dmg.py tree src/tree "$SEED" 300 || bail "the tree could not be made"
 
 mkdir -p base basez
 $VB src/tree base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ > save.log 2>&1
-[ $? = 0 ] && [ -e base/x.bck.003 ] || { echo "%VBACKUP-F-DAMAGE, the saveset could not be made: $(cat save.log)"; exit 1; }
+[ $? = 0 ] && [ -e base/x.bck.003 ] || bail "the saveset could not be made: $(cat save.log)"
 
 #	The same tree compressed: every other round damages this one - garbage inside a DATAZ body is the new case
 $VB src/tree basez/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED > savez.log 2>&1
-[ $? = 0 ] && [ -e basez/x.bck.002 ] || { echo "%VBACKUP-F-DAMAGE, the compressed saveset could not be made: $(cat savez.log)"; exit 1; }
+[ $? = 0 ] && [ -e basez/x.bck.002 ] || bail "the compressed saveset could not be made: $(cat savez.log)"
 
 #	The undamaged saveset first: the judge itself must agree with it
 $VB base/x.bck r0 > r0.log 2>&1
 python3 dmg.py judge src/tree r0 r0.log > /dev/null && [ "$(grep -c BLK r0.log)" = 0 ]
-[ $? = 0 ] && ok || fail "the undamaged saveset does not restore"
+[ $? = 0 ] && ok "the undamaged saveset restores" || fail "the undamaged saveset does not restore"
 
 #	A completion code from a signal (>= 128) or a hang (124) is a crash; so is a report of a sanitizer in the log
 crashed () { [ "$1" -ge 124 ] || grep -q "Sanitizer\|runtime error:" "$2"; }
@@ -263,7 +263,7 @@ while [ $r -le "$ROUNDS" ]; do
 	elif [ $MODE = FIX ] && { grep -q BLKLOST rst.log || [ $RC != 0 ]; }; then
 		fail "round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v BLKFIXED rst.log | head -3)"
 	else
-		ok
+		ok "round $r $MODE seed $RS: restore"
 	fi
 
 	#	The same damage through the stand-alone extractor
@@ -279,7 +279,7 @@ while [ $r -le "$ROUNDS" ]; do
 		elif [ $MODE = FIX ] && [ $RC != 0 ]; then
 			fail "round $r FIX seed $RS: vbkx did not repair all, completion code $RC: $(grep -v repaired vx.log | head -3)"
 		else
-			ok
+			ok "round $r $MODE seed $RS: vbkx x"
 		fi
 
 		#	By name, through the catalog: the right files or none, never another one
@@ -293,7 +293,7 @@ while [ $r -le "$ROUNDS" ]; do
 		elif ! python3 dmg.py judgen src/tree vn vn.log $NAMES; then
 			fail "round $r $MODE seed $RS: vbkx x by name, silent damage"
 		else
-			ok
+			ok "round $r $MODE seed $RS: vbkx x by name"
 		fi
 
 		ONE=${NAMES%% *}
@@ -307,12 +307,12 @@ while [ $r -le "$ROUNDS" ]; do
 		elif [ $RC = 0 ] && ! cmp -s vp.out src/$ONE; then
 			fail "round $r $MODE seed $RS: vbkx p completed with the wrong data"
 		else
-			ok
+			ok "round $r $MODE seed $RS: vbkx p"
 		fi
 
 		timeout 120 $VX l d/x.bck > q.log 2>&1
 		RC=$?
-		crashed $RC q.log && fail "round $r $MODE seed $RS: vbkx l crashed or hung, completion code $RC" || ok
+		crashed $RC q.log && fail "round $r $MODE seed $RS: vbkx l crashed or hung, completion code $RC" || ok "round $r $MODE seed $RS: vbkx l"
 	fi
 
 	for Q in "/LIST" "/LIST /FULL" "/COMPARE"; do
@@ -322,12 +322,10 @@ while [ $r -le "$ROUNDS" ]; do
 			timeout 120 $VB d/x.bck $Q > q.log 2>&1
 		fi
 		RC=$?
-		crashed $RC q.log && fail "round $r $MODE seed $RS: $Q crashed or hung, completion code $RC" || ok
+		crashed $RC q.log && fail "round $r $MODE seed $RS: $Q crashed or hung, completion code $RC" || ok "round $r $MODE seed $RS: $Q"
 	done
 
 	r=$((r + 1))
 done
 
-echo "$CHECKS checks, $FAILS failures"
-
-exit $FAILS
+tap_end
