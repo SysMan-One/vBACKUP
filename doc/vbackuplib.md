@@ -588,6 +588,29 @@ TODAY  YESTERDAY  TOMORROW  NOW
 BACKUP                     /SINCE only: since the last /RECORD of each file
 ```
 
+## Plugins -- savesets in file managers
+
+Savesets can be browsed like folders in file managers. All plugins are
+read only: you can look inside and copy files out; a saveset is never
+changed. The list comes from the catalog, so even a very large saveset
+opens at once.
+
+Midnight Commander: press Enter on a .bck file. The installation puts
+the script uvbk into the extfs of MC and a [vbackup] section into
+mc.ext.ini; by hand: copy share/vbackup/plugins/mc/uvbk into
+~/.local/share/mc/extfs.d and the section of mc.ext.ini.vbackup into
+your mc.ext.ini, before [Default]. A saveset of several volumes opens
+from a local disk only.
+
+far2l (Linux) and Far Manager 3 (Windows): MultiArc, with the format in
+share/vbackup/plugins/far/vbackup.ini (the installation adds it for
+far2l). It runs vbkx; on Windows put vbkx.exe on the PATH. Press Enter
+or Ctrl+PgDn on a .bck file; F5 copies files out.
+
+Total Commander (Windows) and Double Commander (Linux): the packer
+plugin vbackup.wcx64 / vbackup.wcx / vbkwcx.so - install it in the
+plugin settings and associate it with the extension bck.
+
 ## Vbkx -- the stand-alone extractor
 
 vbkx reads savesets on a machine where VBACKUP is not installed. It

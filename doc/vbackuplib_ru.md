@@ -587,6 +587,28 @@ TODAY  YESTERDAY  TOMORROW  NOW
 BACKUP                     только /SINCE: с последнего /RECORD каждого файла
 ```
 
+## Plugins -- saveset-ы в файловых менеджерах
+
+Saveset-ы можно смотреть в файловых менеджерах как папки. Все плагины
+только читают: можно заглянуть внутрь и скопировать файлы; saveset не
+меняется. Список берётся из каталога, поэтому даже очень большой
+saveset открывается сразу.
+
+Midnight Commander: нажмите Enter на файле .bck. Установка кладёт
+скрипт uvbk в extfs MC и секцию [vbackup] в mc.ext.ini; вручную:
+скопируйте share/vbackup/plugins/mc/uvbk в ~/.local/share/mc/extfs.d, а
+секцию из mc.ext.ini.vbackup -- в свой mc.ext.ini перед [Default].
+Многотомный saveset открывается только с локального диска.
+
+far2l (Linux) и Far Manager 3 (Windows): MultiArc с описанием формата
+share/vbackup/plugins/far/vbackup.ini (для far2l установка добавляет
+его сама). Работу делает vbkx; на Windows положите vbkx.exe в PATH.
+Enter или Ctrl+PgDn на файле .bck; F5 копирует файлы.
+
+Total Commander (Windows) и Double Commander (Linux): плагин архиватора
+vbackup.wcx64 / vbackup.wcx / vbkwcx.so -- установите его в настройках
+плагинов и свяжите с расширением bck.
+
 ## Vbkx -- автономный извлекатель
 
 vbkx читает saveset-ы на машине, где VBACKUP не установлен. Это одна
