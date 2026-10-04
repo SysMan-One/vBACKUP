@@ -47,6 +47,12 @@
 **		a leading "/" or an empty component are refused, and so is a
 **		way through a symbolic link.
 **
+**  DATA:	DATA records and DATAZ records (vbackup /DATA_FORMAT=COMPRESSED,
+**		the LZ4 block format, format.md 6.7) alike; a DATAZ block is
+**		decompressed under the same checks as everything else - a
+**		length or an offset out of bounds makes it a bad record, and
+**		its file is named incomplete.
+**
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
@@ -75,6 +81,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		DATAZ: the data compressed in the LZ4 block format.
 **
 **	X01-03		 4-OCT-2026	RRL
 **		Initial version.
@@ -112,6 +121,10 @@ const RT_DATA: u16 = 3;
 const RT_FEND: u16 = 4;
 const RT_CATALOG: u16 = 5;
 const RT_END: u16 = 6;
+const RT_DATAZ: u16 = 7; // DATA, compressed: format.md 6.7
+
+const MAXDATA: u32 = 1 << 20; // the most octets a DATA or DATAZ record holds
+const CODEC_LZ4: u32 = 1;
 
 const FT_REG: u8 = 1;
 const FT_DIR: u8 = 2;
@@ -174,6 +187,93 @@ fn u64_at(b: &[u8], off: usize) -> u64 {
         Some(s) => u64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]),
         None => 0,
     }
+}
+
+/*
+** lz4_decompress - the LZ4 block format (format.md 6.7): exactly rawlen
+** octets out of exactly src, or None.  Every length is checked against
+** what is left of the input and of the output, every offset against what
+** has been written; nothing is indexed without a check.
+ */
+fn lz4_decompress(src: &[u8], rawlen: u32) -> Option<Vec<u8>> {
+    let raw = rawlen as usize;
+    let mut dst: Vec<u8> = Vec::with_capacity(raw);
+    let mut ip = 0usize;
+
+    /* A length beyond the nibble: bytes added until one is below 255, never past rawlen */
+    fn getlen(src: &[u8], ip: &mut usize, mut v: usize, raw: usize) -> Option<usize> {
+        loop {
+            let b = *src.get(*ip)?;
+            *ip += 1;
+            v += b as usize;
+            if v > raw {
+                return None;
+            }
+            if b != 255 {
+                return Some(v);
+            }
+        }
+    }
+
+    loop {
+        let tok = *src.get(ip)?;
+        ip += 1;
+        let mut lit = (tok >> 4) as usize;
+        if lit == 15 {
+            lit = getlen(src, &mut ip, lit, raw)?;
+        }
+        if lit > src.len() - ip || lit > raw - dst.len() {
+            return None;
+        }
+        dst.extend_from_slice(src.get(ip..ip + lit)?);
+        ip += lit;
+        if ip == src.len() {
+            break; // the last sequence has its literals only
+        }
+        if src.len() - ip < 2 {
+            return None;
+        }
+        let off = (*src.get(ip)? as usize) | ((*src.get(ip + 1)? as usize) << 8);
+        ip += 2;
+        if off == 0 || off > dst.len() {
+            return None;
+        }
+        let mut ml = (tok & 15) as usize;
+        if ml == 15 {
+            ml = getlen(src, &mut ip, ml, raw)?;
+        }
+        ml += 4;
+        if ml > raw - dst.len() {
+            return None;
+        }
+        for _ in 0..ml {
+            /* octet by octet: a match may overlap what it makes */
+            let b = *dst.get(dst.len() - off)?;
+            dst.push(b);
+        }
+    }
+    if dst.len() != raw {
+        return None;
+    }
+    Some(dst)
+}
+
+/*
+** data_view - the file, the offset and the octets of a DATA or DATAZ
+** record; None - a bad record
+ */
+fn data_view(typ: u16, body: &[u8]) -> Option<(u32, u64, std::borrow::Cow<'_, [u8]>)> {
+    if typ == RT_DATA {
+        let d = body.get(16..)?;
+        return Some((u32_at(body, 0), u64_at(body, 8), std::borrow::Cow::Borrowed(d)));
+    }
+    let z = body.get(20..)?;
+    let rawlen = u32_at(body, 16);
+    if u32_at(body, 4) != CODEC_LZ4 || rawlen > MAXDATA {
+        return None;
+    }
+    let d = lz4_decompress(z, rawlen)?;
+    Some((u32_at(body, 0), u64_at(body, 8), std::borrow::Cow::Owned(d)))
 }
 
 /* The block header, format.md section 3 */
@@ -965,13 +1065,27 @@ impl Extractor {
         }
     }
 
-    /* A DATA record: u32 fileno, u32 0, u64 offset, the bytes */
-    fn data(&mut self, r: &Reader, body: &[u8]) {
-        if !self.active || body.len() < 16 || u32_at(body, 0) != self.e.fileno {
+    /*
+    ** A DATA record (u32 fileno, u32 0, u64 offset, the bytes) or a DATAZ one
+    ** (u32 fileno, u32 codec, u64 offset, u32 rawlen, LZ4 block); a DATAZ
+    ** that does not decompress leaves the file incomplete
+     */
+    fn data(&mut self, r: &Reader, typ: u16, body: &[u8]) {
+        if !self.active {
             return;
         }
-        let off = u64_at(body, 8);
-        let d = &body[16..];
+        let (fileno, off, view) = match data_view(typ, body) {
+            Some(v) => v,
+            None => {
+                msg!("{}: a data record that makes no sense", shown(&self.e.path));
+                self.damaged = true;
+                return;
+            }
+        };
+        if fileno != self.e.fileno {
+            return;
+        }
+        let d: &[u8] = &view;
         self.crc = r.crc.update(self.crc, d);
         if let Some(f) = &self.f {
             if off > 1 << 62 {
@@ -1096,7 +1210,7 @@ fn run(r: &mut Reader, x: &mut Extractor) {
                 }
                 x.begin(r, &body);
             }
-            RT_DATA => x.data(r, &body),
+            RT_DATA | RT_DATAZ => x.data(r, typ, &body),
             RT_FEND => x.end(r, Some(&body)),
             RT_CATALOG => {
                 if x.active {
@@ -1158,7 +1272,7 @@ fn list(r: &mut Reader) {
 
 fn usage() -> i32 {
     eprintln!(
-        "vbkx-rs X01-03 - the extractor of last resort for VBACKUP savesets\n\n  \
+        "vbkx-rs X01-04 - the extractor of last resort for VBACKUP savesets\n\n  \
          vbkx-rs l saveset              list the files (times in UTC)\n  \
          vbkx-rs x saveset [-C dir]     extract them all\n  \
          vbkx-rs t saveset              read it all, check the checksums\n\n\

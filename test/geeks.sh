@@ -25,6 +25,14 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
+#
+#		 4-OCT-2026	RRL	X-03 : DATAZ: the tree saved /DATA_FORMAT=COMPRESSED read the
+#					same as vbkx; a saveset of the reference LZ4
+#					compressor (python3-lz4, all modes); the rounds
+#					of damage on the compressed saveset too, with
+#					garbage inside the DATAZ bodies, blocks resealed.
+#
 #		 4-OCT-2026	RRL	X-02 : VBKXPL, the extractor in Perl; a Perl warning
 #					in the log counts as a crash.
 #
@@ -42,12 +50,9 @@ BSZ=8192
 GRP=4
 export BSZ GRP
 
-FAILS=0
-CHECKS=0
-
-ok ()	{ CHECKS=$((CHECKS + 1)); }
-fail ()	{ CHECKS=$((CHECKS + 1)); FAILS=$((FAILS + 1)); echo "%VBACKUP-E-GEEKS, $*"; }
-check () { if eval "$1"; then ok; else fail "$2"; fi; }
+#	ok, fail, check, bail, tap_end - plain output, or TAP with TAP=1
+TAPNAME=GEEKS
+. "$(dirname "$0")/tap.sh"
 
 cleanup () { rm -rf "$S"; }
 [ -n "$KEEP" ] || trap cleanup EXIT
@@ -127,6 +132,91 @@ def damage(d, mode, seed):
 				with open(p, "r+b") as f:
 					f.seek(rnd.randrange(max(1, os.path.getsize(p)))); f.write(rnd.randbytes(rnd.randint(1, 3 * BSZ)))
 
+def zbody(d, seed):
+	"""Garbage inside the compressed bytes of DATAZ records, the blocks resealed:
+	the block CRC does not catch it, so the decoder and the file CRC must"""
+	import struct, zlib
+	rnd = random.Random(seed)
+	blocks = []				# (volume, position, payload length) of the DATA blocks, in order
+	for p in vols(d):
+		with open(p, "rb") as f:
+			raw = f.read()
+		for pos in range(len(raw) // BSZ):
+			h = raw[pos * BSZ:pos * BSZ + 64]
+			if h[:4] == b"VBKB" and h[12] == 1:
+				blocks.append((p, pos, struct.unpack_from("<I", h, 48)[0]))
+	stream, where = bytearray(), []
+	for p, pos, plen in blocks:
+		with open(p, "rb") as f:
+			f.seek(pos * BSZ + 64); stream += f.read(plen)
+		where += [(p, pos, 64 + i) for i in range(plen)]
+	targets, off = [], 0
+	while off + 8 <= len(stream):			# the records: type, flags, length
+		typ, _, ln = struct.unpack_from("<HHI", stream, off)
+		if typ == 7 and ln > 20:
+			targets += range(off + 8 + 20, min(off + 8 + ln, len(stream)))
+		off += 8 + ln
+	if not targets:
+		return
+	touched = set()
+	for i in rnd.sample(targets, min(len(targets), rnd.randint(1, 6))):
+		p, pos, at = where[i]
+		with open(p, "r+b") as f:
+			f.seek(pos * BSZ + at); f.write(bytes([rnd.randrange(256)]))
+		touched.add((p, pos))
+	for p, pos in touched:
+		with open(p, "r+b") as f:
+			f.seek(pos * BSZ); b = bytearray(f.read(BSZ))
+			b[60:64] = b"\0\0\0\0"
+			struct.pack_into("<I", b, 60, zlib.crc32(bytes(b)))
+			f.seek(pos * BSZ); f.write(b)
+
+def lz4ref(path, outdir):
+	"""A saveset made by hand whose DATAZ records come from the reference LZ4
+	compressor (python3-lz4), in all its modes: every decoder must read them"""
+	import struct, zlib, lz4.block
+	B = 8192; P = B - 64; UU = b"\x22" * 16; NONE = 0xFFFFFFFF
+	def tlv(t, v): return struct.pack("<HI", t, len(v)) + v
+	def rec(t, body): return struct.pack("<HHI", t, 0, len(body)) + body
+	rnd = random.Random(99)
+	files = [("tree/runs", b"A" * 300000 + b"B" * 70000),
+		 ("tree/text", b"".join(b"line %d of a text that repeats itself\n" % (i % 50) for i in range(20000))),
+		 ("tree/mixed", bytes(rnd.randrange(4) for _ in range(200000))),
+		 ("tree/random", rnd.randbytes(5000)),
+		 ("tree/short", b"abc"),
+		 ("tree/overlap", b"ab" * 100000 + b"abc" * 70000)]
+	modes = [dict(mode="default"), dict(mode="fast", acceleration=8), dict(mode="high_compression", compression=12)]
+	recs = [rec(1, tlv(71, struct.pack("<I", 0)))]
+	os.makedirs(outdir, exist_ok=True)
+	for no, (name, data) in enumerate(files, 1):
+		open(os.path.join(outdir, os.path.basename(name)), "wb").write(data)
+		recs.append(rec(2, tlv(1, struct.pack("<I", no)) + tlv(2, name.encode()) + tlv(3, b"\x01") + tlv(4, struct.pack("<I", 0o644))
+			+ tlv(5, struct.pack("<I", 0)) + tlv(6, struct.pack("<I", 0)) + tlv(9, struct.pack("<Q", len(data))) + tlv(10, struct.pack("<qI", 0, 0))))
+		for k, at in enumerate(range(0, len(data), 1 << 20)):
+			chunk = data[at:at + (1 << 20)]
+			z = lz4.block.compress(chunk, store_size=False, **modes[(no + k) % 3])
+			recs.append(rec(7, struct.pack("<IIQI", no, 1, at, len(chunk)) + z))
+		recs.append(rec(4, tlv(1, struct.pack("<I", no)) + tlv(9, struct.pack("<Q", len(data))) + tlv(32, struct.pack("<I", zlib.crc32(data)))))
+	recs.append(rec(6, b""))
+	def blk(typ, no, recoff, pay):
+		h = b"VBKB" + struct.pack("<HHIBBH", 64, 1, B, typ, 0, 0) + UU + struct.pack("<QIIIIII", no, 1, recoff, len(pay), NONE, 0, 0)
+		b = bytearray(h + pay + bytes(P - len(pay)))
+		struct.pack_into("<I", b, 60, zlib.crc32(bytes(b)))
+		return bytes(b)
+	out, cur, recoff, no = [blk(3, 0, 0, recs[0])], b"", NONE, 1
+	for r in recs:					# a record header is never split over two blocks
+		if P - len(cur) < 8:
+			out.append(blk(1, no, recoff, cur)); no += 1; cur, recoff = b"", NONE
+		if recoff == NONE:
+			recoff = len(cur)
+		while r:
+			n = min(len(r), P - len(cur)); cur += r[:n]; r = r[n:]
+			if len(cur) == P:
+				out.append(blk(1, no, recoff, cur)); no += 1; cur, recoff = b"", NONE
+	if cur:
+		out.append(blk(1, no, recoff, cur))
+	open(path, "wb").write(b"".join(out))
+
 def judge(src, out, log):
 	"""Silent damage is the one thing never allowed"""
 	text = open(log, errors="replace").read()
@@ -152,8 +242,12 @@ def judge(src, out, log):
 		print("  " + b)
 	return 1 if bad else 0
 
-if sys.argv[1] == "damage":
+if sys.argv[1] == "damage" and sys.argv[3] == "ZBODY":
+	zbody(sys.argv[2], int(sys.argv[4]))
+elif sys.argv[1] == "damage":
 	damage(sys.argv[2], sys.argv[3], int(sys.argv[4]))
+elif sys.argv[1] == "lz4ref":
+	lz4ref(sys.argv[2], sys.argv[3])
 else:
 	sys.exit(judge(sys.argv[2], sys.argv[3], sys.argv[4]))
 EOF
@@ -175,16 +269,30 @@ ln $T/a.txt $T/sub/hard
 mkfifo $T/fifo
 echo x > "$T/sub/deep/имя с пробелом"
 for i in $(seq 1 60); do echo "small $i" > $T/sub/s$i; done
+yes "a line that compresses well, again and again" | head -c 400000 > $T/text.txt
+head -c 250000 /dev/zero | tr '\0' 'z' > $T/sub/runs.bin
 chmod 4750 $T/big.bin
 chmod 0700 $T/sub/deep
 touch -d '2001-02-03 04:05:06.789' $T/a.txt $T/sub/deep
 
 mkdir base
 $VB src/tree base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=200000 > save.log 2>&1
-[ $? = 0 ] && [ -e base/x.bck.003 ] || { echo "%VBACKUP-F-GEEKS, the saveset could not be made: $(cat save.log)"; exit 1; }
+[ $? = 0 ] && [ -e base/x.bck.003 ] || bail "the saveset could not be made: $(cat save.log)"
 
 TZ=UTC $VX l base/x.bck > ref.lst 2>&1
 $VX x base/x.bck -C ref > ref.log 2>&1
+
+#	The same tree compressed (/DATA_FORMAT=COMPRESSED, DATAZ records)
+mkdir zbase
+$VB src/tree zbase/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=200000 /DATA_FORMAT=COMPRESSED > zsave.log 2>&1
+[ $? = 0 ] && [ -e zbase/x.bck.002 ] || bail "the compressed saveset could not be made: $(cat zsave.log)"
+[ "$(cat zbase/x.bck* | wc -c)" -lt "$(cat base/x.bck* | wc -c)" ] || bail "the compressed saveset is not smaller"
+TZ=UTC $VX l zbase/x.bck > zref.lst 2>&1
+$VX x zbase/x.bck -C zref > zref.log 2>&1
+
+#	A saveset made by hand from the reference LZ4 compressor, if python3-lz4 is there
+LZREF=0
+python3 -c "import lz4.block" 2>/dev/null && python3 g.py lz4ref lzref.bck lzref.src && LZREF=1
 
 #	The state of a tree: types, modes, sizes, times, link targets (the top itself left out)
 state () { ( cd "$1" && find . -mindepth 1 -printf '%y %m %s %T@ %l %P\n' | sort ); }
@@ -216,12 +324,32 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	$G q base/x.bck > /dev/null 2>&1
 	check '[ $? = 2 ]' "$N: a command that is none, completion code"
 
+	#	1z. The compressed saveset: the same as VBKX, the same tree as uncompressed
+	$G l zbase/x.bck > $N.zlst 2> $N.zlerr
+	check '[ $? = 0 ] && cmp -s $N.zlst zref.lst' "$N l of DATAZ: the listing differs from vbkx l, $(diff zref.lst $N.zlst | head -4)"
+	$G x zbase/x.bck -C $N.zout > $N.zlog 2>&1
+	check '[ $? = 0 ] && same zref $N.zout && same ref $N.zout' "$N x of DATAZ: the tree differs, $(head -3 $N.zlog)"
+	$G t zbase/x.bck > $N.zt 2>&1
+	check '[ $? = 0 ] && grep -q "all checksums match" $N.zt' "$N t of DATAZ: $(cat $N.zt)"
+
+	#	1r. DATAZ records of the reference compressor, in its default, fast and high modes
+	if [ $LZREF = 1 ]; then
+		$G x lzref.bck -C $N.lz > $N.lzlog 2>&1
+		RC=$?
+		W=0
+		for F in runs text mixed random short overlap; do cmp -s lzref.src/$F $N.lz/tree/$F || W=$((W + 1)); done
+		check '[ $RC = 0 ] && [ $W = 0 ]' "$N: the blocks of the reference LZ4 not read right ($W files), $(head -3 $N.lzlog)"
+	fi
+
 	#	2. Volume 1 without its VHDR: the block size and the group size found by trying
 	rm -rf d && cp -r base d && python3 g.py damage d VHDR 0
 	$G x d/x.bck -C $N.vh > $N.vh.log 2>&1
 	check '[ $? = 0 ] && same ref $N.vh && grep -q "found by trying" $N.vh.log' "$N: volume 1 without its VHDR, $(head -3 $N.vh.log)"
 
-	#	3. The rounds of damage
+	#	3. The rounds of damage: on the plain saveset, then on the compressed one - there also
+	#	   garbage inside the compressed bytes of DATAZ records with the blocks resealed (ZBODY),
+	#	   which the block CRC cannot catch: the decoder and the file CRC must
+	for BASE in base zbase; do
 	r=1
 	while [ $r -le "$ROUNDS" ]; do
 		case $((r % 3)) in
@@ -229,40 +357,42 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 			2) MODE=LOSE ;;
 			0) MODE=CHAOS ;;
 		esac
+		[ $BASE = zbase ] && [ $((r % 4)) = 0 ] && MODE=ZBODY
 		RS=$((SEED * 1000 + r))
 		rm -rf d o o2
-		cp -r base d
+		cp -r $BASE d
 		python3 g.py damage d $MODE $RS
 
 		timeout 120 $G x d/x.bck -C o > x.log 2>&1
 		RC=$?
 		if crashed $RC x.log; then
-			fail "$N round $r $MODE seed $RS: crashed or hung, completion code $RC: $(tail -3 x.log)"
+			fail "$N $BASE round $r $MODE seed $RS: crashed or hung, completion code $RC: $(tail -3 x.log)"
 		elif ! python3 g.py judge src/tree o x.log; then
-			fail "$N round $r $MODE seed $RS: silent damage"
+			fail "$N $BASE round $r $MODE seed $RS: silent damage"
 		elif [ $MODE = FIX ] && { [ $RC != 0 ] || ! same ref o; }; then
-			fail "$N round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v repaired x.log | head -3)"
+			fail "$N $BASE round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v repaired x.log | head -3)"
 		else
-			ok
+			ok "$N $BASE round $r $MODE seed $RS: x"
 		fi
 
 		#	The same input, the same output: twice, byte for byte (into the same name: errors carry it)
 		rm -rf o
 		timeout 120 $G x d/x.bck -C o > x2.log 2>&1
-		check 'cmp -s x.log x2.log' "$N round $r $MODE seed $RS: two runs of x say different things"
+		check 'cmp -s x.log x2.log' "$N $BASE round $r $MODE seed $RS: two runs of x say different things"
 		for Q in l t; do
 			timeout 120 $G $Q d/x.bck > q1.log 2>&1
 			RC=$?
 			timeout 120 $G $Q d/x.bck > q2.log 2>&1
 			if crashed $RC q1.log; then
-				fail "$N round $r $MODE seed $RS: $Q crashed or hung, completion code $RC"
+				fail "$N $BASE round $r $MODE seed $RS: $Q crashed or hung, completion code $RC"
 			elif ! cmp -s q1.log q2.log; then
-				fail "$N round $r $MODE seed $RS: two runs of $Q say different things"
+				fail "$N $BASE round $r $MODE seed $RS: two runs of $Q say different things"
 			else
-				ok
+				ok "$N $BASE round $r $MODE seed $RS: $Q, twice the same"
 			fi
 		done
 		r=$((r + 1))
+	done
 	done
 
 	#	4. A forged saveset: names that climb out, a link to go through
@@ -293,6 +423,4 @@ PYEOF
 		"$N: a forged saveset wrote outside, $(cat evil.$N.log)"
 done
 
-echo "$CHECKS checks, $FAILS failures"
-
-exit $FAILS
+tap_end

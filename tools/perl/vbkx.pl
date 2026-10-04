@@ -57,6 +57,12 @@
 #		a leading "/" or an empty component are refused, and so is a
 #		way through a symbolic link.
 #
+#  DATA:	DATA records and DATAZ records (vbackup /DATA_FORMAT=COMPRESSED,
+#		the LZ4 block format, format.md 6.7) alike; a DATAZ block is
+#		decompressed under the same checks as everything else - a
+#		length or an offset out of bounds makes it a bad record, and
+#		its file is named incomplete.
+#
 #  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 #		rebuilt from the group's XOR block; after a loss the stream
 #		is picked up at the next good block.  A file that lost data
@@ -86,6 +92,9 @@
 #
 #  MODIFICATION HISTORY:
 #
+#	X01-04		 4-OCT-2026	RRL
+#		DATAZ: the data compressed in the LZ4 block format.
+#
 #	X01-03		 4-OCT-2026	RRL
 #		Initial version.
 #
@@ -109,6 +118,9 @@ use constant {
 
 	BT_DATA	=> 1, BT_XOR => 2, BT_VHDR => 3, BT_TRAILER => 4,
 	RT_SUMMARY => 1, RT_FILE => 2, RT_DATA => 3, RT_FEND => 4, RT_CATALOG => 5, RT_END => 6,
+	RT_DATAZ => 7,			# DATA, compressed: format.md 6.7
+	MAXDATA => 1048576,		# the most octets a DATA or DATAZ record holds
+	CODEC_LZ4 => 1,
 	FT_REG => 1, FT_DIR => 2, FT_SYMLINK => 3, FT_HARDLINK => 4, FT_FIFO => 7,
 	FS_CHANGED => 1, FS_READERR => 2, FS_PRESENT => 3,
 	TWO32	=> 4294967296,
@@ -824,13 +836,96 @@ sub x_begin
 	}
 }
 
-# A DATA record: u32 fileno, u32 0, u64 offset, the bytes
+# lz4_decompress: the LZ4 block format (format.md 6.7) - exactly $rawlen
+# octets out of exactly $src, or undef.  Every length is checked against
+# what is left of the input and of the output, every offset against what
+# has been written; nothing is taken on trust.
+sub lz4_decompress
+{
+	my ($src, $rawlen) = @_;
+	my ($n, $ip, $dst) = (length($src), 0, '');
+
+	# A length beyond the nibble: octets added until one is below 255, never past $rawlen
+	my $getlen = sub
+	{
+		my ($v) = @_;
+		while (1)
+		{
+			return undef if $ip >= $n;
+			my $b = ord(substr($src, $ip++, 1));
+			$v += $b;
+			return undef if $v > $rawlen;
+			return $v if $b != 255;
+		}
+	};
+
+	while (1)
+	{
+		return undef if $ip >= $n;
+		my $tok = ord(substr($src, $ip++, 1));
+		my $lit = $tok >> 4;
+		if ($lit == 15)
+		{
+			$lit = $getlen->($lit);
+			return undef unless defined($lit);
+		}
+		return undef if $lit > $n - $ip || $lit > $rawlen - length($dst);
+		$dst .= substr($src, $ip, $lit);
+		$ip += $lit;
+		last if $ip == $n;			# the last sequence has its literals only
+		return undef if $n - $ip < 2;
+		my $off = ord(substr($src, $ip, 1)) | (ord(substr($src, $ip + 1, 1)) << 8);
+		$ip += 2;
+		return undef if $off == 0 || $off > length($dst);
+		my $ml = $tok & 15;
+		if ($ml == 15)
+		{
+			$ml = $getlen->($ml);
+			return undef unless defined($ml);
+		}
+		$ml += 4;
+		return undef if $ml > $rawlen - length($dst);
+		# A match may overlap what it makes (a run): copied in pieces no longer than the offset
+		while ($ml > 0)
+		{
+			my $k = ($ml < $off) ? $ml : $off;
+			$dst .= substr($dst, length($dst) - $off, $k);
+			$ml -= $k;
+		}
+	}
+	return (length($dst) == $rawlen) ? $dst : undef;
+}
+
+# data_view: the file, the offset and the octets of a DATA or DATAZ record; () - a bad record
+sub data_view
+{
+	my ($typ, $body) = @_;
+	if ($typ == RT_DATA)
+	{
+		return () if length($body) < 16;
+		return (u32(\$body, 0), u64(\$body, 8), substr($body, 16));
+	}
+	return () if length($body) < 20 || u32(\$body, 4) != CODEC_LZ4 || u32(\$body, 16) > MAXDATA;
+	my $d = lz4_decompress(substr($body, 20), u32(\$body, 16));
+	return () unless defined($d);
+	return (u32(\$body, 0), u64(\$body, 8), $d);
+}
+
+# A DATA record (u32 fileno, u32 0, u64 offset, the bytes) or a DATAZ one
+# (u32 fileno, u32 codec, u64 offset, u32 rawlen, LZ4 block); a DATAZ that
+# does not decompress leaves the file incomplete
 sub x_data
 {
-	my ($body) = @_;
-	return unless $X{active} && length($body) >= 16 && u32(\$body, 0) == $X{e}{fileno};
-	my $off = u64(\$body, 8);
-	my $d = substr($body, 16);
+	my ($typ, $body) = @_;
+	return unless $X{active};
+	my ($fileno, $off, $d) = data_view($typ, $body);
+	if (!defined($fileno))
+	{
+		msg('%s: a data record that makes no sense', $X{e}{path});
+		$X{damaged} = 1;
+		return;
+	}
+	return unless $fileno == $X{e}{fileno};
 	$X{crc} = crc($X{crc}, $d);
 	return unless defined($X{fh});
 	if ($off > 2**53)
@@ -956,7 +1051,7 @@ sub run
 			x_end(undef) if $X{active};
 			x_begin($body);
 		}
-		elsif ($typ == RT_DATA) { x_data($body); }
+		elsif ($typ == RT_DATA || $typ == RT_DATAZ) { x_data($typ, $body); }
 		elsif ($typ == RT_FEND) { x_end($body); }
 		elsif ($typ == RT_CATALOG)
 		{
@@ -993,7 +1088,7 @@ sub list
 
 sub usage
 {
-	print STDERR "vbkx-pl X01-03 - the extractor of last resort for VBACKUP savesets\n\n",
+	print STDERR "vbkx-pl X01-04 - the extractor of last resort for VBACKUP savesets\n\n",
 		"  perl vbkx.pl l saveset              list the files (times in UTC)\n",
 		"  perl vbkx.pl x saveset [-C dir]     extract them all\n",
 		"  perl vbkx.pl t saveset              read it all, check the checksums\n\n",

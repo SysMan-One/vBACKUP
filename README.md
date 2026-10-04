@@ -47,7 +47,9 @@ fixed against [doc/format.md](doc/format.md).  They list (`l`, times in
 UTC), extract (`x`) and test (`t`) a saveset in one pass, repair one bad
 block per group, pick the stream up after a loss, find the block size by
 trying when volume 1 lost its first block, and name every damaged or
-missing file.  The head of each source is its manual.
+missing file.  They read compressed savesets too (DATAZ, the LZ4 block
+format, each with its own checked decoder).  The head of each source is
+its manual.
 
     $ go build -o vbkx-go main.go                         # in tools/go
     $ rustc -O -C strip=symbols -o vbkx-rs src/main.rs    # in tools/rust
@@ -75,6 +77,13 @@ help libraries.
     $ cmake --install build
 
 `make kit` in the build tree makes `vbackup-<ident>.tar.gz`.
+
+The tests speak TAP (the Test Anything Protocol) when `TAP=1` is set,
+for prove, Jenkins, GitLab and their kin; without it they print only
+the failures:
+
+    $ TAP=1 build/test/units /tmp/u.d
+    $ prove -e "env TAP=1 VBACKUP=build/vbackup VBKX=build/vbkx SCRATCH=/var/tmp/s sh" test/smoke.sh
 
 ## Author
 

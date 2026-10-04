@@ -48,6 +48,12 @@
 **		a leading "/" or an empty component are refused, and so is a
 **		way through a symbolic link.
 **
+**  DATA:	DATA records and DATAZ records (vbackup /DATA_FORMAT=COMPRESSED,
+**		the LZ4 block format, format.md 6.7) alike; a DATAZ block is
+**		decompressed under the same checks as everything else - a
+**		length or an offset out of bounds makes it a bad record, and
+**		its file is named incomplete.
+**
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
@@ -72,6 +78,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		DATAZ: the data compressed in the LZ4 block format.
 **
 **	X01-03		 4-OCT-2026	RRL
 **		Initial version.
@@ -114,6 +123,10 @@ const (
 	rtFend    = 4
 	rtCatalog = 5
 	rtEnd     = 6
+	rtDataz   = 7 // DATA, compressed: format.md 6.7
+
+	maxData  = 1 << 20 // the most octets a DATA or DATAZ record holds
+	codecLZ4 = 1
 
 	ftReg      = 1
 	ftDir      = 2
@@ -805,13 +818,118 @@ func (x *extractor) begin(body []byte) {
 	}
 }
 
-/* A DATA record: u32 fileno, u32 0, u64 offset, the bytes */
-func (x *extractor) data(body []byte) {
-	if !x.active || len(body) < 16 || u32(body, 0) != x.e.fileno {
+/*
+** lz4Decompress - the LZ4 block format (format.md 6.7): exactly rawlen
+** octets out of exactly src, or nil.  Every length is checked against
+** what is left of the input and of the output, every offset against
+** what has been written; nothing else is trusted.
+ */
+func lz4Decompress(src []byte, rawlen uint32) []byte {
+	dst := make([]byte, 0, rawlen)
+	ip, n := 0, len(src)
+	getlen := func(v uint32) (uint32, bool) { // a length beyond the nibble
+		for {
+			if ip >= n {
+				return 0, false
+			}
+			b := src[ip]
+			ip++
+			v += uint32(b)
+			if v > rawlen {
+				return 0, false
+			}
+			if b != 255 {
+				return v, true
+			}
+		}
+	}
+	for {
+		if ip >= n {
+			return nil
+		}
+		tok := src[ip]
+		ip++
+		lit := uint32(tok >> 4)
+		ok := true
+		if lit == 15 {
+			if lit, ok = getlen(lit); !ok {
+				return nil
+			}
+		}
+		if uint64(lit) > uint64(n-ip) || lit > rawlen-uint32(len(dst)) {
+			return nil
+		}
+		dst = append(dst, src[ip:ip+int(lit)]...)
+		ip += int(lit)
+		if ip == n { // the last sequence has its literals only
+			break
+		}
+		if n-ip < 2 {
+			return nil
+		}
+		off := uint32(src[ip]) | uint32(src[ip+1])<<8
+		ip += 2
+		if off == 0 || off > uint32(len(dst)) {
+			return nil
+		}
+		ml := uint32(tok & 15)
+		if ml == 15 {
+			if ml, ok = getlen(ml); !ok {
+				return nil
+			}
+		}
+		ml += 4
+		if ml > rawlen-uint32(len(dst)) {
+			return nil
+		}
+		for i := uint32(0); i < ml; i++ { // octet by octet: a match may overlap what it makes
+			dst = append(dst, dst[len(dst)-int(off)])
+		}
+	}
+	if uint32(len(dst)) != rawlen {
+		return nil
+	}
+	return dst
+}
+
+/*
+** dataView - the file, the offset and the octets of a DATA or DATAZ
+** record; ok false - a bad record
+ */
+func dataView(typ uint16, body []byte) (fileno uint32, off uint64, d []byte, ok bool) {
+	if typ == rtData {
+		if len(body) < 16 {
+			return 0, 0, nil, false
+		}
+		return u32(body, 0), u64(body, 8), body[16:], true
+	}
+	if len(body) < 20 || u32(body, 4) != codecLZ4 || u32(body, 16) > maxData {
+		return 0, 0, nil, false
+	}
+	if d = lz4Decompress(body[20:], u32(body, 16)); d == nil {
+		return 0, 0, nil, false
+	}
+	return u32(body, 0), u64(body, 8), d, true
+}
+
+/*
+** A DATA record (u32 fileno, u32 0, u64 offset, the bytes) or a DATAZ one
+** (u32 fileno, u32 codec, u64 offset, u32 rawlen, LZ4 block); a DATAZ that
+** does not decompress leaves the file incomplete
+ */
+func (x *extractor) data(typ uint16, body []byte) {
+	if !x.active {
 		return
 	}
-	off := u64(body, 8)
-	d := body[16:]
+	fileno, off, d, ok := dataView(typ, body)
+	if !ok {
+		msg("%s: a data record that makes no sense", x.e.path)
+		x.damaged = true
+		return
+	}
+	if fileno != x.e.fileno {
+		return
+	}
 	x.crc = crc32.Update(x.crc, crc32.IEEETable, d)
 	if x.f == nil {
 		return
@@ -935,8 +1053,8 @@ func run(r *reader, x *extractor) {
 				x.end(nil)
 			}
 			x.begin(body)
-		case rtData:
-			x.data(body)
+		case rtData, rtDataz:
+			x.data(typ, body)
 		case rtFend:
 			x.end(body)
 		case rtCatalog:
@@ -986,7 +1104,7 @@ func list(r *reader) {
 }
 
 func usage() int {
-	fmt.Fprintf(os.Stderr, "vbkx-go X01-03 - the extractor of last resort for VBACKUP savesets\n\n"+
+	fmt.Fprintf(os.Stderr, "vbkx-go X01-04 - the extractor of last resort for VBACKUP savesets\n\n"+
 		"  vbkx-go l saveset              list the files (times in UTC)\n"+
 		"  vbkx-go x saveset [-C dir]     extract them all\n"+
 		"  vbkx-go t saveset              read it all, check the checksums\n\n"+
