@@ -40,6 +40,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-06 : Every fourth round damages the tree saved
+#					/ENCRYPT and seals the spoilt blocks again:
+#					a right CRC, a wrong TAG.
+#
 #		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
 #
 #		 4-OCT-2026	RRL	X-04 : Every other round damages the same tree saved
@@ -76,7 +80,7 @@ cd "$S" || exit 1
 #	only tool the tests use besides the shell
 #
 cat > dmg.py <<'EOF'
-import os, random, re, sys, glob
+import os, random, re, sys, glob, zlib
 
 BSZ, GRP = int(os.environ["BSZ"]), int(os.environ["GRP"])
 
@@ -89,9 +93,25 @@ def groupblocks(path, last):
 	n = os.path.getsize(path) // BSZ
 	return list(range(1, n - 1 if last else n))
 
+FORGE = os.environ.get("DMG_FORGE") == "1"
+
+def reseal(f, pos):
+	"""The CRC of a spoilt block made right again: only its TAG can tell (an encrypted saveset)"""
+	f.seek(pos * BSZ); b = bytearray(f.read(BSZ))
+	if len(b) == BSZ and b[0:4] == b"VBKB":
+		b[60:64] = bytes(4)
+		b[60:64] = (zlib.crc32(bytes(b)) & 0xffffffff).to_bytes(4, "little")
+		f.seek(pos * BSZ); f.write(b)
+
 def hit(path, pos, rnd):
-	"""Spoil one block: a few bytes, a run of zeros, or garbage all over"""
+	"""Spoil one block: a few bytes, a run of zeros, or garbage all over; DMG_FORGE=1 - and seal it again"""
 	with open(path, "r+b") as f:
+		spoil(f, pos, rnd)
+		if FORGE:
+			reseal(f, pos)
+
+def spoil(f, pos, rnd):
+	if True:
 		k = rnd.randrange(3)
 		if k == 0:
 			for _ in range(rnd.randint(1, 8)):
@@ -140,7 +160,10 @@ def damage(d, mode, seed):
 					f.seek(a * BSZ); x = f.read(BSZ); f.seek(b * BSZ); f.write(x)
 			elif k == 5:
 				with open(p, "r+b") as f:
-					f.seek(rnd.randrange(max(1, os.path.getsize(p)))); f.write(os.urandom(rnd.randint(1, 3 * BSZ)))
+					o = rnd.randrange(max(1, os.path.getsize(p))); f.seek(o); f.write(os.urandom(rnd.randint(1, 3 * BSZ)))
+					if FORGE:
+						for b in range(o // BSZ, o // BSZ + 4):
+							reseal(f, b)
 
 def judge(src, out, log):
 	"""Silent damage is the one thing never allowed"""
@@ -222,13 +245,24 @@ EOF
 export BSZ GRP
 python3 dmg.py tree src/tree "$SEED" 300 || bail "the tree could not be made"
 
-mkdir -p base basez
+mkdir -p base basez basee
 $VB src/tree base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ > save.log 2>&1
 [ $? = 0 ] && [ -e base/x.bck.003 ] || bail "the saveset could not be made: $(cat save.log)"
 
 #	The same tree compressed: every other round damages this one - garbage inside a DATAZ body is the new case
 $VB src/tree basez/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED > savez.log 2>&1
 [ $? = 0 ] && [ -e basez/x.bck.002 ] || bail "the compressed saveset could not be made: $(cat savez.log)"
+
+#	The same tree encrypted and compressed (format.md 6.10): every fourth round damages this one and
+#	seals every spoilt block again - a right CRC over a wrong block, only the TAG tells
+printf 'damage passphrase\n' > key && chmod 600 key
+VBACKUP_KEY_FILE=$S/key VBACKUP_KDFITER=1000
+export VBACKUP_KEY_FILE VBACKUP_KDFITER
+$VB src/tree basee/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED /ENCRYPT > savee.log 2>&1
+[ $? = 0 ] && [ -e basee/x.bck.002 ] || bail "the encrypted saveset could not be made: $(cat savee.log)"
+$VB basee/x.bck re0 > re0.log 2>&1
+python3 dmg.py judge src/tree re0 re0.log > /dev/null && [ "$(grep -c BLK re0.log)" = 0 ]
+[ $? = 0 ] && ok "the undamaged encrypted saveset restores" || fail "the undamaged encrypted saveset does not restore: $(head -3 re0.log)"
 
 #	The undamaged saveset first: the judge itself must agree with it
 $VB base/x.bck r0 > r0.log 2>&1
@@ -250,20 +284,27 @@ while [ $r -le "$ROUNDS" ]; do
 	rm -rf d out
 	BASE=base
 	[ $((r % 2)) = 0 ] && BASE=basez
+	[ $((r % 4)) = 3 ] && BASE=basee
 	cp -r $BASE d
-	python3 dmg.py damage d $MODE $RS
+	[ $BASE = basee ] && DMG_FORGE=1 || DMG_FORGE=0
+	DMG_FORGE=$DMG_FORGE python3 dmg.py damage d $MODE $RS
+
+	#	A forged block repaired is a warning still: the saveset was changed by somebody
+	FIXRC=0
+	[ $BASE = basee ] && grep -q BLKFORGED rst.log 2>/dev/null && FIXRC=1
 
 	timeout 120 $VB d/x.bck out > rst.log 2>&1
 	RC=$?
+	[ $BASE = basee ] && grep -q BLKFORGED rst.log && FIXRC=1
 
 	if crashed $RC rst.log; then
 		fail "round $r $MODE seed $RS: the restore crashed or hung, completion code $RC"
 	elif ! python3 dmg.py judge src/tree out rst.log; then
 		fail "round $r $MODE seed $RS: silent damage"
-	elif [ $MODE = FIX ] && { grep -q BLKLOST rst.log || [ $RC != 0 ]; }; then
+	elif [ $MODE = FIX ] && { grep -q BLKLOST rst.log || [ $RC != $FIXRC ]; }; then
 		fail "round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v BLKFIXED rst.log | head -3)"
 	else
-		ok "round $r $MODE seed $RS: restore"
+		ok "round $r $MODE seed $RS: restore${DMG_FORGE:+ ($BASE)}"
 	fi
 
 	#	The same damage through the stand-alone extractor
