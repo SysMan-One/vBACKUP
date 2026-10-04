@@ -13,6 +13,10 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 5-OCT-2026	RRL	X-06 : /ENCRYPT, /KEY_FILE; VBACKUP_KEY_FILE,
+.\"					VBACKUP_NOPROMPT, VBACKUP_KDFITER,
+.\"					VBACKUP_NOHWCRYPTO; .sav, glued qualifiers.
+.\"
 .\"		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED, /PHYSICAL, /IMAGE,
 .\"					/ORIGINAL, /DELETE.
 .\"
@@ -34,6 +38,9 @@ vbackup \- save files into a saveset, restore, list and compare them
 .I output-spec
 .RI [ /qualifiers ]
 .SH DESCRIPTION
+Two parameters at most: an input and an output.  A saveset on the
+output side is a name ending in .bck or .sav, or /SAVE_SET; qualifiers
+may be glued to a parameter, as in DCL: x.sav/sav/log.
 .B vbackup
 keeps copies of files in a
 .IR saveset ,
@@ -104,6 +111,18 @@ at a terminal.  See vbackup /HELP /PHYSICAL.
 .B /DATA_FORMAT=COMPRESSED
 Compress the data (LZ4); data that does not shrink is stored plain.
 Readers before X01-04 report compressed files as damaged.
+.TP
+.B /ENCRYPT
+Encrypt the saveset with a passphrase, asked twice on the terminal or
+taken from /KEY_FILE \- never from the command line.  A reader asks
+for it by itself.  ChaCha20, HMAC-SHA256, PBKDF2-HMAC-SHA256 of 600000
+iterations; repair works without the passphrase.  See vbackup /HELP
+/ENCRYPT.
+.TP
+.BI /KEY_FILE= file
+The passphrase of an encrypted saveset: the first line of
+.IR file ,
+which only its owner may read (chmod 600).
 .TP
 .BI /SELECT=( pattern ,...)
 .TQ
@@ -187,6 +206,21 @@ $ vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL
 $ vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
 .fi
 .SH ENVIRONMENT
+.TP
+.B VBACKUP_KEY_FILE
+The key file when /KEY_FILE is not given.
+.TP
+.B VBACKUP_NOPROMPT
+1 \- never ask for a passphrase on the terminal (the plugins of the
+file managers set it): no key file means %VBACKUP-E-NOKEY.
+.TP
+.B VBACKUP_KDFITER
+The PBKDF2 iterations of an encrypted save, for the tests (at least
+1000); not to be lowered for real savesets.
+.TP
+.B VBACKUP_NOHWCRYPTO
+1 \- SHA-256 by the portable code even where the CPU has instructions
+for it (aarch64); for the trouble-shooting.
 .TP
 .B VBACKUP_PIPELINE
 0 \- the saveset is written without the writer thread, for the

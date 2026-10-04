@@ -78,13 +78,24 @@ When you extract: the file to write. Without it, or with "-", the
 file goes to the standard output.
 
 When you copy: the directory to copy into. An output that is not a
-saveset (no .bck, no /SAVE_SET) means a copy, as in BACKUP. The files
-keep everything a restore would give them back.
+saveset (no .bck or .sav, no /SAVE_SET) means a copy, as in BACKUP.
+The files keep everything a restore would give them back.
+
+Only these two parameters are taken. A third word is an error
+(%VBACKUP-E-MAXPARM): most often it is a qualifier typed without its
+slash - ".log" for "/LOG".
+
+Qualifiers may be glued to a parameter, as in DCL: "x.sav/sav/log" is
+"x.sav /SAVE_SET /LOG". VBACKUP says so (%VBACKUP-I-GLUED), so that a
+mistyped name of a file is not taken for a qualifier unseen. A word
+that is the name of an existing file is never cut; a qualifier whose
+value holds a slash (/JOURNAL=/var/...) must be given apart.
 
 ## /SAVE_SET -- the output is a saveset
 
 Says that the output-spec is a saveset, whatever its name. You do not
-need it when the name ends in .bck.
+need it when the name ends in .bck or .sav (the names savesets have on
+OpenVMS).
 
 ## /BLOCK_SIZE -- the size of a block
 
@@ -271,6 +282,60 @@ compressed data. They do not write wrong files: they report the
 compressed files as damaged (CRCERR, FILDAMAGED). Update them.
 
 Example: vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+
+## /ENCRYPT -- make an encrypted saveset
+
+```
+vbackup /home/me me.bck /ENCRYPT
+vbackup /home/me me.bck /ENCRYPT /KEY_FILE=/root/backup.key
+```
+
+The data, the names of the files and everything else in the saveset is
+encrypted with a passphrase; without it nothing can be read. VBACKUP
+asks for the passphrase twice on the terminal (nothing is shown while
+you type), or reads it from a key file (/KEY_FILE). The passphrase is
+never given on the command line: the command line is stored in the
+saveset and can be seen by other users with ps.
+
+Restore, /LIST, /COMPARE, /EXTRACT and vbkx see by themselves that a
+saveset is encrypted and ask for the passphrase (or take /KEY_FILE).
+/ENCRYPT is given to the save only.
+
+A damaged encrypted saveset is repaired as any other: checking and
+repairing do not need the passphrase. A block that somebody changed on
+purpose (its checksum made right again) is recognized by its
+authentication tag, reported (%VBACKUP-W-BLKFORGED) and repaired from
+its group like a bad block.
+
+The passphrase IS the key. Keep it somewhere safe: nobody, VBACKUP's
+author included, can open a saveset whose passphrase is lost. Use a
+long one - five or more random words. The journal (/RECORD) is not
+encrypted: it is a file of this system.
+
+How: ChaCha20 and HMAC-SHA256 per block, the keys from the passphrase
+by PBKDF2-HMAC-SHA256 with 600000 iterations and a random salt per
+saveset (format.md, 6.10). No library is used: vbkx and the extractors
+for the geeks read it with nothing else.
+
+Note: VBACKUP and vbkx before X01-06 cannot read an encrypted saveset;
+they report all blocks lost and write nothing.
+
+## /KEY_FILE -- the passphrase from a file
+
+```
+/KEY_FILE=file
+```
+
+The first line of the file is the passphrase (without the end of the
+line). The file must be readable by its owner only - chmod 600 file -
+or VBACKUP refuses it (%VBACKUP-E-KEYFILE). For a save run by cron
+or a timer, and for the file managers.
+
+Without /KEY_FILE the environment variable VBACKUP_KEY_FILE is taken.
+Without both, VBACKUP asks on the terminal; when there is none (cron,
+a pipe), it stops with %VBACKUP-E-NOKEY - it never waits.
+VBACKUP_NOPROMPT=1 forbids the question even with a terminal (the
+plugins of the file managers set it).
 
 ## /SELECT -- take only some files
 
@@ -611,6 +676,12 @@ Total Commander (Windows) and Double Commander (Linux): the packer
 plugin vbackup.wcx64 / vbackup.wcx / vbkwcx.so - install it in the
 plugin settings and associate it with the extension bck.
 
+An encrypted saveset: the file managers cannot ask for a passphrase.
+Put it into a key file (chmod 600) and name the file in the environment
+variable VBACKUP_KEY_FILE before you start the file manager (on
+Windows: in the system settings of environment variables). Without it
+the saveset does not open - nothing waits for an answer on the screen.
+
 ## Vbkx -- the stand-alone extractor
 
 vbkx reads savesets on a machine where VBACKUP is not installed. It
@@ -621,6 +692,8 @@ vbkx l saveset                          list the files
 vbkx x saveset [-C dir] [-f] [name...]  extract all, or the names given
 vbkx p saveset name                     write one file to the output
 vbkx t saveset                          read it all, check the checksums
+  ... -k keyfile                        an encrypted saveset: the passphrase
+  ... -n                                never ask for it (for programs)
 ```
 
 A name is a stored name as the listing shows it; a directory name
@@ -637,6 +710,10 @@ names every file that is incomplete ("is incomplete") and every file it
 could not reach ("was not extracted"). Completion code: 0 -- done;
 1 -- something was damaged or not done; 2 -- the command or the
 saveset cannot be used.
+
+An encrypted saveset: vbkx takes the passphrase from -k keyfile, else
+from VBACKUP_KEY_FILE, else asks on the terminal (the console on
+Windows).
 
 There is vbkx.exe for Windows too, with the same commands. It puts back
 the data, times, read-only files, directories and hard links; symbolic
@@ -690,7 +767,34 @@ exists).** A saveset of that name is there. Give another name, or
 
 **%VBACKUP-E-IVOP, cannot tell what to do.** The input is not a
 saveset, and the output does not look like one. When you save, give
-/SAVE_SET or end the name with .bck.
+/SAVE_SET or end the name with .bck or .sav.
+
+**%VBACKUP-E-MAXPARM, too many parameters: .log.** A qualifier was
+typed without its slash. Write /LOG, not .log.
+
+**%VBACKUP-E-WRONGKEY.** The passphrase does not open the saveset.
+Check the key file: only its first line counts, and capitals matter.
+Nothing was written. A saveset whose passphrase is lost cannot be
+opened by anybody.
+
+**%VBACKUP-E-NOKEY.** The saveset is encrypted and there is no terminal
+to ask on (cron, a pipe, a file manager). Give /KEY_FILE=file or set
+VBACKUP_KEY_FILE.
+
+**%VBACKUP-E-KEYFILE ... chmod 600 it.** Others may read the key file.
+Make it yours only: chmod 600 file.
+
+**%VBACKUP-W-BLKFORGED.** A block of an encrypted saveset is not what
+was written, though its checksum is right: somebody changed it on
+purpose, or the medium does very odd things. When BLKFIXED follows, it
+was repaired and the files are right; find out who could write to the
+saveset.
+
+**Opening an encrypted saveset takes a few seconds.** That is the
+deliberate cost of PBKDF2 (600000 iterations) - every guess of an
+attacker pays it too. About 0.5 s on a PC, 1.6 s on a small ARM board
+with SHA instructions, 6 s on one without. VBACKUP_KDFITER is for the
+tests; do not lower it for real savesets.
 
 **%VBACKUP-I-BLKFIXED when you restore.** A block of the saveset was
 bad and was repaired. All files are fine. The medium may be failing:
@@ -847,6 +951,14 @@ that were in the cache stay there.
 %VBACKUP-I-CPYSUMM      /LOG: the totals of a copy
 %VBACKUP-I-INCRSUMM     /LOG: unchanged files listed as present
 %VBACKUP-W-NOINODE      a catalog too old to rebuild the journal from
+%VBACKUP-E-MAXPARM      more than an input and an output: a qualifier without its /
+%VBACKUP-I-GLUED        qualifiers glued to a parameter, taken as qualifiers
+%VBACKUP-I-ENCRYPTED    /LOG: the saveset is made encrypted
+%VBACKUP-E-NOKEY        encrypted, and no passphrase to be had: /KEY_FILE
+%VBACKUP-E-WRONGKEY     the passphrase does not open the saveset
+%VBACKUP-E-KEYFILE      the key file cannot be used (chmod 600, first line)
+%VBACKUP-E-KEYMATCH     the two passphrases of a save differ: nothing saved
+%VBACKUP-W-BLKFORGED    a block changed on purpose: its checksum right, its tag not
 ```
 
 A message goes to the standard error. It begins with the date, the

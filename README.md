@@ -23,6 +23,12 @@ What a saveset gives you:
   what changed since, and a chain restored `/INCREMENTAL` comes back with
   deleted files gone;
 - a copy disk to disk with everything a restore would give back;
+- compression (`/DATA_FORMAT=COMPRESSED`, LZ4 on all cores), a whole
+  device block by block (`/PHYSICAL`) or a whole file system (`/IMAGE`);
+- encryption (`/ENCRYPT`, `/KEY_FILE`): ChaCha20 and HMAC-SHA256 per
+  block, keys by PBKDF2 - the names of the files hidden too, damage
+  still repaired without the passphrase, a block changed on purpose
+  recognized; no crypto library, so every reader below reads it;
 - `vbkx`, a stand-alone extractor linked statically: list, extract and
   test a saveset where VBACKUP is not installed (`vbackup /HELP VBKX`);
 - no dependency beyond libc, StarLet and HELP.
