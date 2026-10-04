@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKPRE"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -50,6 +50,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		The read of a head bounded by the buffer for the eyes of a
+**		fortified glibc (Ubuntu, -Wstringop-overflow).
 **
 **	X01-03		 3-OCT-2026	RRL
 **		Initial version.
@@ -182,7 +186,8 @@ int		l_fd, l_cold = -1, l_oflags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXE
 		l_cold	= 1;
 	else	l_cold	= vbk$os_cold(l_fd, (uint64_t) l_st.st_size);
 
-	while ( l_got < l_len )
+	/* The buffer is VBK$K_PRECAP octets: said so, a fortified pread cannot prove it from the loop */
+	while ( (l_got < l_len) && (l_len <= VBK$K_PRECAP) )
 		{
 		if ( 0 >= (l_n = pread(l_fd, a_buf + l_got, l_len - l_got, (off_t) l_got)) )
 			{
