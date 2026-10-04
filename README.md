@@ -64,6 +64,23 @@ second) and sure.  Copy it next to the saveset:
     $ perl vbkx.pl l /mnt/usb/home.bck
     $ perl vbkx.pl x /mnt/usb/home.bck -C /tmp/restore
 
+## vbkx on Windows
+
+`vbkx.exe` reads savesets on Windows, with the same commands as `vbkx`.
+It needs no StarLet and no CMake; with MinGW-w64, from the top of the
+source tree:
+
+    $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c -static -lshell32
+    $ make -f tools/Makefile.win                     # the same
+    $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
+
+On Windows itself the gcc of MinGW-w64 or MSYS2 takes the same line.  It
+puts back data, times, read-only files, directories and hard links;
+symbolic links where Windows allows them (developer mode).  A name
+Windows cannot hold (`a:b`, `x?`, `con.txt`, ...) is not extracted, and
+said.  `test/win.sh` runs it under wine.
+
 ## Build
 
 Requires StarLet 1.6 or later; HELP 1.0 (optional) for `/HELP` and the

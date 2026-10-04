@@ -478,6 +478,11 @@ could not reach ("was not extracted"). Completion code: 0 -- done;
 1 -- something was damaged or not done; 2 -- the command or the
 saveset cannot be used.
 
+There is vbkx.exe for Windows too, with the same commands. It puts back
+the data, times, read-only files, directories and hard links; symbolic
+links only where Windows allows them. A name Windows cannot hold (with
+: ? * and the like, or CON, NUL ...) is not extracted, and said.
+
 ## Examples
 
 Save your home directory, check it, list it:

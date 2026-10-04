@@ -8,6 +8,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : WIN, vbkx.exe under wine.
+#
 #		 4-OCT-2026	RRL	X-03 : GEEKS, vbkx-go and vbkx-rs, when they are built;
 #					vbkx-pl, when there is a perl.
 #
@@ -58,4 +60,11 @@ if ( VBACKUP_GEEKS )
 	endif()
 
 	add_test(NAME geeks COMMAND ${CMAKE_COMMAND} -E env ${L_ENV} sh ${CMAKE_CURRENT_SOURCE_DIR}/geeks.sh)
+endif()
+
+#	vbkx.exe under wine: only when both are there (a few seconds)
+if ( VBACKUP_WINVBKX AND VBACKUP_WINE )
+	add_test(NAME win COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
+		VBKXEXE=${VBACKUP_WINVBKX} WINE=${VBACKUP_WINE} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/win.d
+		sh ${CMAKE_CURRENT_SOURCE_DIR}/win.sh)
 endif()

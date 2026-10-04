@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-03"
+#define	__IDENT__	"X01-04"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.3.0"
+#define	__REV__		"1.4.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		VBK$K_SZ_SPEC and VBK$VOLSPEC moved to VBKFMT.H.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The blocks are written by a thread of their own, behind a
@@ -49,7 +52,6 @@
 extern "C" {
 #endif
 
-#define	VBK$K_SZ_SPEC	4096			/* Longest volume specification			*/
 
 #define	VBK$M_WRT_REPLACE	1		/* An existing volume may be overwritten	*/
 #define	VBK$M_WRT_SYNC		2		/* No writer thread: every block written at once */
@@ -128,7 +130,6 @@ int	vbk$wrt_record	(VBK$WCTX *a_ctx, uint16_t a_type, const void *a_body, uint32
 int	vbk$wrt_finish	(VBK$WCTX *a_ctx, uint64_t *a_nblocks, uint32_t *a_nvols);
 int	vbk$wrt_close	(VBK$WCTX *a_ctx, const uint8_t *a_trlbody, uint32_t a_trllen);
 void	vbk$wrt_abort	(VBK$WCTX *a_ctx);
-int	vbk$volspec	(const char *a_spec, uint32_t a_volno, char *a_out, size_t a_outsz);
 
 #ifdef	__cplusplus
 }

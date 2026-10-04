@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-03"
+#define	__IDENT__	"X01-04"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.3.0"
+#define	__REV__		"1.4.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-04		 4-OCT-2026	RRL
+**		No more of VBKWRT.H: the reader stands without the writer.
+**
 **	X01-03		 3-OCT-2026	RRL
 **		GEND: where the group in hand ends, for VBK$RD_SEEK.
 **
@@ -42,7 +45,6 @@
 #include	<stdint.h>
 
 #include	"vbkfmt.h"
-#include	"vbkwrt.h"
 
 #ifdef	__cplusplus
 extern "C" {

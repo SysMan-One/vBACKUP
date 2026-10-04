@@ -1,0 +1,40 @@
+#+++
+#
+#	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+#
+#	MODULE:		tools/Makefile.win
+#
+#	ABSTRACT:	vbkx.exe, the stand-alone extractor for Windows, in one
+#			command - no CMake, no StarLet.  From the top of the
+#			source tree:
+#
+#			    make -f tools/Makefile.win		(cross, MinGW-w64)
+#			    make -f tools/Makefile.win CC=gcc	(MinGW of Windows, MSYS2)
+#
+#	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#	CREATION DATE:	 4-OCT-2026
+#
+#	MODIFICATION HISTORY:
+#
+#		 4-OCT-2026	RRL	X-01 : Initial version.
+#
+#---
+
+CC	?= x86_64-w64-mingw32-gcc
+ifeq ($(origin CC),default)
+CC	= x86_64-w64-mingw32-gcc
+endif
+
+SRC	= tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c
+HDR	= lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h
+
+all: vbkx.exe
+
+vbkx.exe: $(SRC) $(HDR)
+	$(CC) -O2 -Wall -Wextra -Wno-unused-parameter -Ilib -o $@ $(SRC) -static -lshell32
+
+clean:
+	rm -f vbkx.exe
+
+.PHONY: all clean
