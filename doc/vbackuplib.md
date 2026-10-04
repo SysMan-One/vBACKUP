@@ -135,6 +135,28 @@ in the other volumes can still be restored.
 
 Keeps the text in the saveset. /LIST shows it.
 
+## /DATA_FORMAT -- compress the data
+
+```
+/DATA_FORMAT=COMPRESSED
+/DATA_FORMAT=UNCOMPRESSED     (the default)
+```
+
+COMPRESSED makes the saveset smaller: text, programs and documents
+often shrink to half, or less. Files that are compressed already
+(photos, video, .gz, .zip) stay as they are - VBACKUP sees that they
+do not shrink and stores them plain. The checksums and the repair of
+bad blocks work as always.
+
+A restore, /LIST, /COMPARE, /EXTRACT and vbkx need nothing: they see
+compressed data by themselves.
+
+Note: VBACKUP before X01-04, and vbkx before X01-04, cannot read
+compressed data. They do not write wrong files: they report the
+compressed files as damaged (CRCERR, FILDAMAGED). Update them.
+
+Example: vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+
 ## /SELECT -- take only some files
 
 ```

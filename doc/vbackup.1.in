@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED.
+.\"
 .\"		 3-OCT-2026	RRL	X-03 : Stage 3: ENVIRONMENT (VBACKUP_PIPELINE,
 .\"					VBACKUP_PREFETCH), NOTES (the page cache).
 .\"
@@ -77,6 +79,10 @@ Cut the saveset into volumes of this size (K, M, G, T): x.bck, x.bck.002, ...
 .TP
 .BI /COMMENT= text
 A note kept in the saveset.
+.TP
+.B /DATA_FORMAT=COMPRESSED
+Compress the data (LZ4); data that does not shrink is stored plain.
+Readers before X01-04 report compressed files as damaged.
 .TP
 .BI /SELECT=( pattern ,...)
 .TQ
@@ -151,6 +157,7 @@ $ vbackup /home full.bck /RECORD
 $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 $ vbackup full.bck,mon.bck /restore /INCREMENTAL
 $ vbackup /home/rrl /mnt/disk2 /VERIFY
+$ vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
 .fi
 .SH ENVIRONMENT
 .TP

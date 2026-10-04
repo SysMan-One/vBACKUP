@@ -29,6 +29,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED: smaller, the same tree,
+#					the same listing, deterministic; vbkx reads it.
+#
 #		 3-OCT-2026	RRL	X-03 : Stage 3: the writer thread - a save without
 #					it gives the same saveset contents, a volume
 #					switch through the queue, a write error that
@@ -421,6 +424,22 @@ $VB jd1.bck /RECORD /JOURNAL=jd2.jnl > /dev/null 2>&1
 #	(the bytes differ by the times of the commit; the files must not)
 check '[ "$($VB /JOURNAL=jd1.jnl /LIST /FULL | grep jdet | sed "s/ [0-9-]*-20[0-9][0-9] [0-9:.]*//g")" = "$($VB /JOURNAL=jd2.jnl /LIST /FULL | grep jdet | sed "s/ [0-9-]*-20[0-9][0-9] [0-9:.]*//g")" ]' "the journal depends on the order its files came in"
 
+#	/DATA_FORMAT=COMPRESSED: smaller, the same tree back, the same listing; deterministic
+mkdir -p ztree && for i in $(seq 1 40); do yes "line $i of a text that compresses well" | head -c 150000 > ztree/t$i.txt; done
+head -c 500000 /dev/urandom > ztree/rand.bin
+$VB ztree zp.bck > /dev/null 2>&1
+$VB ztree z1.bck /DATA_FORMAT=COMPRESSED /VERIFY > z1.log 2>&1
+check '[ $? = 0 ]' "a compressed save failed: $(cat z1.log)"
+$VB ztree z2.bck /DATA_FORMAT=COMPRESSED > /dev/null 2>&1
+check '[ $(stat -c %s z1.bck) -lt $(( $(stat -c %s zp.bck) / 4 )) ]' "compressed $(stat -c %s z1.bck), plain $(stat -c %s zp.bck): it did not shrink"
+check '[ $(stat -c %s z1.bck) = $(stat -c %s z2.bck) ]' "two compressed saves of one tree differ in size"
+$VB z1.bck zout > /dev/null 2>&1
+check '[ $? = 0 ] && diff -r ztree zout/ztree > /dev/null' "a compressed saveset does not restore the tree"
+check '[ "$($VB z1.bck /LIST /FORMAT=LS)" = "$($VB zp.bck /LIST /FORMAT=LS)" ]' "compressed and plain list differently"
+check '$VB z1.bck /EXTRACT=ztree/t7.txt | cmp -s - ztree/t7.txt && $VB z1.bck . /COMPARE > /dev/null 2>&1' "compressed: /EXTRACT or /COMPARE"
+$VB ztree zbad.bck /DATA_FORMAT=SQUEEZED > zbad.log 2>&1
+check '[ $? = 2 ] && [ ! -e zbad.bck ]' "/DATA_FORMAT=SQUEEZED accepted: $(cat zbad.log)"
+
 #
 #	12. VBKX, the stand-alone extractor
 #
@@ -439,6 +458,8 @@ if [ -n "$VX" ]; then
 	check '$VX p x.bck tree/sub/hard | cmp -s - vref/tree/a.txt' "vbkx p of a further name of a file: not its data"
 	$VX x x.bck -C vn tree/sub/hard > vn.log 2>&1
 	check '[ $? = 0 ] && cmp -s vn/tree/sub/hard vref/tree/a.txt && [ ! -e vn/tree/a.txt ]' "vbkx x of a further name alone: $(cat vn.log)"
+	$VX x z1.bck -C vz > /dev/null 2>&1
+	check '[ $? = 0 ] && diff -r ztree vz/ztree > /dev/null && $VX t z1.bck > /dev/null 2>&1' "vbkx on a compressed saveset"
 	$VX t x.bck > vt.log 2>&1
 	check '[ $? = 0 ] && grep -q "all checksums match" vt.log' "vbkx t: $(cat vt.log)"
 	mkdir -p evil/vx

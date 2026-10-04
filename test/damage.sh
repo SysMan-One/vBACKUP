@@ -40,6 +40,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : Every other round damages the same tree saved
+#					/DATA_FORMAT=COMPRESSED; every third file of
+#					the tree compresses.
+#
 #		 3-OCT-2026	RRL	X-01 : Initial version; VBKX too.
 #
 #---
@@ -206,15 +210,25 @@ elif sys.argv[1] == "tree":
 		d = os.path.join(sys.argv[2], "d%02d" % (i % 13), "s%d" % (i % 3))
 		os.makedirs(d, exist_ok=True)
 		size = rnd.choice([0, 1, 100, 5000, BSZ - 1, BSZ, 3 * BSZ + 7, 70000, 250000, 900000])
-		open(os.path.join(d, "f%04d" % i), "wb").write(rnd.randbytes(size))
+		# Every third file compresses (text), the rest does not: a compressed saveset holds both DATAZ and DATA
+		if i % 3 == 0:
+			line = ("line %d of file %d, some words to repeat\n" % (rnd.randrange(1000), i)).encode()
+			data = (line * (size // len(line) + 1))[:size]
+		else:
+			data = rnd.randbytes(size)
+		open(os.path.join(d, "f%04d" % i), "wb").write(data)
 EOF
 
 export BSZ GRP
 python3 dmg.py tree src/tree "$SEED" 300 || exit 1
 
-mkdir -p base
+mkdir -p base basez
 $VB src/tree base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ > save.log 2>&1
 [ $? = 0 ] && [ -e base/x.bck.003 ] || { echo "%VBACKUP-F-DAMAGE, the saveset could not be made: $(cat save.log)"; exit 1; }
+
+#	The same tree compressed: every other round damages this one - garbage inside a DATAZ body is the new case
+$VB src/tree basez/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED > savez.log 2>&1
+[ $? = 0 ] && [ -e basez/x.bck.002 ] || { echo "%VBACKUP-F-DAMAGE, the compressed saveset could not be made: $(cat savez.log)"; exit 1; }
 
 #	The undamaged saveset first: the judge itself must agree with it
 $VB base/x.bck r0 > r0.log 2>&1
@@ -234,7 +248,9 @@ while [ $r -le "$ROUNDS" ]; do
 	RS=$((SEED * 1000 + r))
 
 	rm -rf d out
-	cp -r base d
+	BASE=base
+	[ $((r % 2)) = 0 ] && BASE=basez
+	cp -r $BASE d
 	python3 dmg.py damage d $MODE $RS
 
 	timeout 120 $VB d/x.bck out > rst.log 2>&1

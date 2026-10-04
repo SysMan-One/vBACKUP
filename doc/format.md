@@ -15,6 +15,9 @@ skips them by the rules of sections 5 and 6:
 - the SUMMARY BASE items are absolute (realpath) names; X01-01 wrote
   them as they were given;
 - the journal file (section 9) - a file of its own, not part of a saveset;
+- the DATAZ record (type 7) and the SUMMARY tag COMPRESS (6.7): data
+  compressed in the LZ4 block format, since X01-04; a reader of an
+  earlier version skips it and reports the files damaged;
 - the XATTR value (6.1) carries a counted name (u8 length, name) since
   X01-03; before it the name was ended by a NUL.  No saveset of the
   earlier form was ever given out: the change is made within version 1,
@@ -141,12 +144,13 @@ Record header, 8 bytes:
 | 4 | FEND | TLV items, section 6.3 |
 | 5 | CATALOG | a sequence of entries: u32 entry length, then TLV items, section 6.4 |
 | 6 | END | TLV items, section 6.5 |
+| 7 | DATAZ | u32 fileno, u32 codec (1 = LZ4 block), u64 offset in the file, u32 rawlen (at most 1048576), then the compressed bytes - section 6.7 |
 
 Order in the stream:
 
 ```
 SUMMARY
-  ( FILE [DATA ...] FEND ) ...       one group per file, files in walk order
+  ( FILE [DATA|DATAZ ...] FEND ) ... one group per file, files in walk order
   CATALOG ...                        one or more records, at most 1 MiB body each
 END
 ```
@@ -246,6 +250,7 @@ SUMMARY tags:
 | 74 | SYSTEM | STR | uname -s -r -m |
 | 75 | KIND | u8 | 0 FULL: every covered file is saved; 1 INCREMENTAL: a time filter chose what is saved, the catalog lists the rest as PRESENT |
 | 76 | FILTER | STR | the time filter of an INCREMENTAL saveset as it was given, e.g. `/SINCE=BACKUP` |
+| 77 | COMPRESS | u8 | the codec of the DATAZ records, 1 = LZ4 block; information only - a reader goes by the record types |
 
 END and TRAILER tags:
 
@@ -287,6 +292,42 @@ entries with their status, the others as PRESENT.  So it describes the
 tree as it was at the save, and a restore /INCREMENTAL can remove from a
 directory what was not in it any more.  A plain FULL save writes no
 PRESENT entries.
+
+### 6.7 DATAZ and the LZ4 block format
+
+A DATAZ record stands where a DATA record would and means the same: the
+`rawlen` bytes of the file at `offset`.  The writer chooses per record;
+a saveset may hold both.  The FEND and CATALOG CRC is the CRC of the raw
+bytes, as for DATA; the block CRC covers the compressed bytes as they
+lie in the stream.  A reader that does not know type 7 skips it: the
+file comes out short or with holes, and its CRC and size disagree with
+the FEND - it is reported damaged, never silently wrong.
+
+Codec 1 is the LZ4 block format (no frame, no checksum of its own).
+The compressed bytes are a series of sequences:
+
+```
+token     1 byte: high 4 bits = literal length L, low 4 bits = match length M - 4
+[L ext]   if L = 15: more bytes, each added to L, until a byte < 255
+literals  L bytes, copied to the output
+offset    2 bytes, little-endian, 1..65535: the match begins that far back
+[M ext]   if the low 4 bits are 15: more bytes, each added, until a byte < 255
+match     M + 4 bytes copied from (output - offset), one byte at a time
+          (a match may overlap the bytes it produces: a run)
+```
+
+The last sequence has its literals only: the block ends right after
+them, with no offset.  A reader must check every length against what is
+left of the input and of `rawlen`, every offset against what has been
+output, and want exactly `rawlen` bytes from exactly the given input;
+anything else is a bad record (its file is damaged).  A writer keeps
+the last 5 bytes as literals and begins no match in the last 12 bytes
+(the rules of the reference implementation, so that any LZ4 decoder
+reads it); VBACKUP's own writer is a fixed greedy one, so the same data
+compresses to the same bytes.
+
+A record is written as DATAZ only when it is smaller than the DATA
+record would be; incompressible data stays DATA.
 
 ## 7. Writer rules
 
