@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-05"
-#define	__REV__		"1.5.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -31,6 +31,13 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		Encrypted savesets (format.md 6.10): EDATA blocks checked by
+**		their TAG before the repair, the repaired one after it, then
+**		decrypted; the ETRAILER opened by VBK$RD_SETKEY, which also
+**		puts the SUMMARY of the stream in place of the short one of
+**		the VHDR.
 **
 **	X01-05		 4-OCT-2026	RRL
 **		VBK$RD_ADDVOL: a volume found by the user (a WCX plugin asks).
@@ -184,6 +191,30 @@ int		l_fd, l_isreg, l_status = STS$K_WARN;
 
 
 /*
+**  The last block of the last volume, checked already: a TRAILER is taken
+**  as it is, an ETRAILER kept whole until VBK$RD_SETKEY opens it
+*/
+static	void	s_vbk$trailer	(
+		VBK$RCTX *	a_ctx,
+	const	uint8_t *	a_blk,
+	const	VBK$BHDR *	a_hdr
+			)
+{
+	if ( !a_ctx->crypt && (a_hdr->type == VBK$K_BT_TRAILER) && (a_ctx->trailer = malloc(a_hdr->paylen + 1)) )
+		{
+		memcpy(a_ctx->trailer, a_blk + VBK$K_HDRSZ, a_hdr->paylen);
+		a_ctx->trllen	= a_hdr->paylen;
+		a_ctx->trlblk	= a_hdr->blkno;
+		}
+	else if ( a_ctx->crypt && (a_hdr->type == VBK$K_BT_ETRAILER) && (a_ctx->trlraw = malloc(a_ctx->bsize)) )
+		{
+		memcpy(a_ctx->trlraw, a_blk, a_ctx->bsize);
+		a_ctx->trlblk	= a_hdr->blkno;
+		}
+}
+
+
+/*
 **  The end of the groups of a volume: the TRAILER, when there is one, is
 **  not part of them
 */
@@ -194,7 +225,7 @@ static	uint64_t	s_vbk$volend	(
 {
 VBK$RVOL *	l_vol = &a_ctx->vols [a_volno - 1];
 
-	if ( a_ctx->trailer && (a_volno == a_ctx->nvols) && l_vol->nblk )
+	if ( (a_ctx->trailer || a_ctx->trlraw) && (a_volno == a_ctx->nvols) && l_vol->nblk )
 		return	l_vol->nblk - 1;
 
 	return	l_vol->nblk;
@@ -302,9 +333,54 @@ int		l_fd, l_isreg = 0;
 	memcpy(a_ctx->summary, l_blk + VBK$K_HDRSZ + VBK$K_RECHDR, l_reclen);
 	a_ctx->sumlen	= l_reclen;
 
+	{
+	uint32_t	l_cipher = 0, l_kdf = 0, l_nsalt = 0, l_ncheck = 0;
+
 	while ( 1 & vbk$tlv_next(a_ctx->summary, a_ctx->sumlen, &l_pos, &l_tag, &l_vlen, &l_val) )
-		if ( l_tag == VBK$K_TAG_GROUPSIZE )
-			a_ctx->grpsz = (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+		switch ( l_tag )
+			{
+			case VBK$K_TAG_GROUPSIZE:
+				a_ctx->grpsz = (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+				break;
+
+			case VBK$K_TAG_CIPHER:
+				a_ctx->crypt	= 1;
+				l_cipher	= (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+				break;
+
+			case VBK$K_TAG_KDF:
+				l_kdf	= (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+				break;
+
+			case VBK$K_TAG_KDFITER:
+				a_ctx->kdfiter = (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+				break;
+
+			case VBK$K_TAG_SALT:
+				if ( (l_nsalt = l_vlen) == VBK$K_SALTSZ )
+					memcpy(a_ctx->salt, l_val, VBK$K_SALTSZ);
+				break;
+
+			case VBK$K_TAG_KEYCHECK:
+				if ( (l_ncheck = l_vlen) == VBK$K_KEYSZ )
+					memcpy(a_ctx->keycheck, l_val, VBK$K_KEYSZ);
+				break;
+			}
+
+	a_ctx->dtype	= a_ctx->crypt ? VBK$K_BT_EDATA : VBK$K_BT_DATA;
+	a_ctx->cap	= a_ctx->crypt ? (a_ctx->psize - VBK$K_TAGSZ) : a_ctx->psize;
+
+	/* An algorithm not known here: nothing of the saveset can be read, and that is said at once */
+	if ( a_ctx->crypt && ((l_cipher != VBK$K_CIPHER_CC20HS) || (l_kdf != VBK$K_KDF_PBKDF2) || (a_ctx->kdfiter < VBK$K_KDFMIN)
+		|| (l_nsalt != VBK$K_SALTSZ) || (l_ncheck != VBK$K_KEYSZ)) )
+		{
+		vbk$os_close(l_fd);
+		free(l_blk);
+		a_ctx->err	= ENOTSUP;
+
+		return	STS$K_ERROR;
+		}
+	}
 
 	if ( a_ctx->grpsz > VBK$K_MAXGRP )
 		{
@@ -361,13 +437,8 @@ int		l_fd, l_isreg = 0;
 		{
 		s_vbk$pread(l_vol->fd, l_blk, a_ctx->bsize, (l_vol->nblk - 1) * a_ctx->bsize);
 
-		if ( (1 & vbk$blk_check(l_blk, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr)) && (l_bhdr.type == VBK$K_BT_TRAILER)
-			&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
-			{
-			memcpy(a_ctx->trailer, l_blk + VBK$K_HDRSZ, l_bhdr.paylen);
-			a_ctx->trllen	= l_bhdr.paylen;
-			a_ctx->trlblk	= l_bhdr.blkno;
-			}
+		if ( 1 & vbk$blk_check(l_blk, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr) )
+			s_vbk$trailer(a_ctx, l_blk, &l_bhdr);
 		}
 	}
 
@@ -449,22 +520,117 @@ int		l_fd, l_isreg = 0;
 		a_ctx->nvols	= a_volno;
 
 	/* The last volume now, and no TRAILER yet: its last block may be it */
-	if ( !a_ctx->trailer && (a_volno == a_ctx->nvols) && (a_ctx->vols [a_volno - 1].nblk > 1) )
+	if ( !a_ctx->trailer && !a_ctx->trlraw && (a_volno == a_ctx->nvols) && (a_ctx->vols [a_volno - 1].nblk > 1) )
 		{
 		s_vbk$pread(l_fd, l_blk, a_ctx->bsize, (a_ctx->vols [a_volno - 1].nblk - 1) * a_ctx->bsize);
 
-		if ( (1 & vbk$blk_check(l_blk, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr)) && (l_bhdr.type == VBK$K_BT_TRAILER)
-			&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
-			{
-			memcpy(a_ctx->trailer, l_blk + VBK$K_HDRSZ, l_bhdr.paylen);
-			a_ctx->trllen	= l_bhdr.paylen;
-			a_ctx->trlblk	= l_bhdr.blkno;
-			}
+		if ( 1 & vbk$blk_check(l_blk, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr) )
+			s_vbk$trailer(a_ctx, l_blk, &l_bhdr);
 		}
 
 	free(l_blk);
 
 	return	vbk$rd_rewind(a_ctx);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	The passphrase of an encrypted saveset: the keys are derived from
+**	it and the SALT of the VHDR and judged by its KEYCHECK; then the
+**	ETRAILER is opened and the SUMMARY of the stream - the complete
+**	one - is put in place of the short SUMMARY of the VHDR.  To be
+**	called after VBK$RD_OPEN, before the first record is read.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ctx		The saveset, open, CRYPT set
+**	a_pass		The passphrase, its bytes as they are
+**	a_plen		Its length
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- the passphrase is right; the saveset is at its start;
+**	STS$K_ERROR	- it is not;
+**	STS$K_WARN	- it is right, but the TRAILER fails its TAG: the
+**			  saveset is read in sequential mode only.
+**--
+*/
+int	vbk$rd_setkey	(
+		VBK$RCTX *	a_ctx,
+	const	void *		a_pass,
+		size_t		a_plen
+			)
+{
+VBK$BHDR	l_bhdr;
+VBK$KEYS	l_keys;
+int		l_status = STS$K_SUCCESS;
+
+	if ( !a_ctx->crypt )
+		return	STS$K_SUCCESS;
+
+	vbk$crp_derive(&l_keys, a_pass, a_plen, a_ctx->salt, a_ctx->kdfiter);
+
+	if ( !vbk$crp_equal(l_keys.check, a_ctx->keycheck, VBK$K_KEYSZ) )
+		{
+		vbk$crp_wipe(&l_keys, sizeof(l_keys));
+
+		return	STS$K_ERROR;
+		}
+
+	a_ctx->keys	= l_keys;
+	a_ctx->haskey	= 1;
+	vbk$crp_wipe(&l_keys, sizeof(l_keys));
+
+	if ( a_ctx->trlraw && !a_ctx->trailer )
+		{
+		if ( (1 & vbk$blk_check(a_ctx->trlraw, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr))
+			&& (1 & vbk$crp_open(&a_ctx->keys, &l_bhdr, a_ctx->trlraw + VBK$K_HDRSZ, a_ctx->psize))
+			&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
+			{
+			memcpy(a_ctx->trailer, a_ctx->trlraw + VBK$K_HDRSZ, l_bhdr.paylen);
+			a_ctx->trllen	= l_bhdr.paylen;
+			}
+		else	{
+			s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->nvols, a_ctx->trlblk);
+			l_status = STS$K_WARN;
+			}
+		}
+
+	/*
+	**  The first record of the stream is the complete SUMMARY.  It is read
+	**  quietly: whatever is lost on the way is reported when the caller
+	**  reads it for itself.
+	*/
+	{
+	void		(*l_evcb) (void *, int, uint32_t, uint64_t) = a_ctx->evcb;
+	uint64_t	l_nrep = a_ctx->nrepaired, l_nlost = a_ctx->nlost;
+	const uint8_t *	l_body;
+	uint32_t	l_len;
+	uint16_t	l_type;
+	uint8_t *	l_sum;
+
+	a_ctx->evcb	= NULL;
+
+	if ( (STS$K_SUCCESS == vbk$rd_next(a_ctx, &l_type, &l_body, &l_len, NULL)) && (l_type == VBK$K_RT_SUMMARY)
+		&& !a_ctx->resync && (l_sum = malloc(l_len + 1)) )
+		{
+		memcpy(l_sum, l_body, l_len);
+		free(a_ctx->summary);
+		a_ctx->summary	= l_sum;
+		a_ctx->sumlen	= l_len;
+		}
+
+	a_ctx->evcb	= l_evcb;
+	a_ctx->nrepaired = l_nrep;
+	a_ctx->nlost	= l_nlost;
+	a_ctx->gdata	= 0;
+	}
+
+	vbk$rd_rewind(a_ctx);
+
+	return	l_status;
 }
 
 
@@ -480,10 +646,11 @@ void	vbk$rd_close	(
 	free(a_ctx->vols);
 	free(a_ctx->summary);
 	free(a_ctx->trailer);
+	free(a_ctx->trlraw);
 	free(a_ctx->gbuf);
 	free(a_ctx->rec);
 
-	memset(a_ctx, 0, sizeof(*a_ctx));
+	vbk$crp_wipe(a_ctx, sizeof(*a_ctx));
 }
 
 
@@ -603,8 +770,16 @@ uint8_t *	l_blk;
 
 	for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
 		{
-		if ( a_ctx->gok [i] && (a_ctx->ghdr [i].type != VBK$K_BT_DATA) )
+		if ( a_ctx->gok [i] && (a_ctx->ghdr [i].type != a_ctx->dtype) )
 			a_ctx->gok [i] = 0;
+
+		/* A good CRC and a wrong TAG: changed on purpose - a bad block all the same, repairable as any */
+		if ( a_ctx->gok [i] && a_ctx->crypt
+			&& !vbk$crp_check(&a_ctx->keys, &a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ, a_ctx->psize) )
+			{
+			a_ctx->gok [i] = 0;
+			s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->curvol, a_ctx->ghdr [i].blkno);
+			}
 
 		if ( !a_ctx->gok [i] )
 			{
@@ -642,7 +817,7 @@ uint8_t *	l_blk;
 		memset(l_h, 0, sizeof(*l_h));
 
 		l_h->bsize	= a_ctx->bsize;
-		l_h->type	= VBK$K_BT_DATA;
+		l_h->type	= a_ctx->dtype;
 		l_h->gindex	= (uint16_t) l_badidx;
 		l_h->blkno	= l_vol->firstblk + a_ctx->curpos + l_badidx;
 		l_h->volno	= a_ctx->curvol;
@@ -652,7 +827,8 @@ uint8_t *	l_blk;
 
 		memcpy(l_h->ssuuid, a_ctx->ssuuid, VBK$K_UUIDSZ);
 
-		if ( (l_h->paylen <= a_ctx->psize) && ((l_h->recoff == VBK$K_NONE) || (l_h->recoff < l_h->paylen)) )
+		if ( (l_h->paylen <= a_ctx->cap) && ((l_h->recoff == VBK$K_NONE) || (l_h->recoff < l_h->paylen))
+			&& (!a_ctx->crypt || vbk$crp_check(&a_ctx->keys, l_h, l_blk + VBK$K_HDRSZ, a_ctx->psize)) )
 			{
 			vbk$bhdr_put(l_h, l_blk);
 
@@ -670,6 +846,12 @@ uint8_t *	l_blk;
 			a_ctx->nlost++;
 			s_vbk$event(a_ctx, VBK$K_EV_LOST, a_ctx->curvol, l_vol->firstblk + a_ctx->curpos + i);
 			}
+
+	/* Every check done, the repair too: now the good blocks are decrypted where they lie */
+	if ( a_ctx->crypt )
+		for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
+			if ( a_ctx->gok [i] )
+				vbk$crp_decrypt(&a_ctx->keys, &a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ);
 
 	a_ctx->gvol	= a_ctx->curvol;
 	a_ctx->gpos	= a_ctx->curpos;
@@ -784,6 +966,13 @@ VBK$LOC		l_loc;
 uint32_t	l_len, l_got, l_n;
 uint16_t	l_type;
 int		l_status, l_resync = a_ctx->pendrs;
+
+	if ( a_ctx->crypt && !a_ctx->haskey )
+		{
+		a_ctx->err	= EACCES;
+
+		return	STS$K_ERROR;
+		}
 
 	a_ctx->pendrs	= 0;
 
@@ -920,7 +1109,7 @@ VBK$RVOL *	l_vol;
 uint64_t	l_pos, l_start;
 int		l_status;
 
-	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) )
+	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) || (a_ctx->crypt && !a_ctx->haskey) )
 		return	STS$K_ERROR;
 
 	l_vol	= &a_ctx->vols [a_loc->vol - 1];

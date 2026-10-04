@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWRT"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -47,6 +47,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		Encrypted savesets: the payload of a DATA block and of the TRAILER
+**		sealed before the XOR and the CRC; CAP, the room left by the TAG.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		VBK$VOLSPEC moved to VBKFMT.C: the reader needs it without the
@@ -413,19 +417,25 @@ static	int	s_vbk$special	(
 {
 VBK$BHDR	l_hdr;
 
-	if ( a_len > a_ctx->psize )
+int		l_seal = a_ctx->keys && (a_type == VBK$K_BT_TRAILER);
+
+	if ( a_len > (l_seal ? a_ctx->cap : a_ctx->psize) )
 		{
 		a_ctx->err	= EOVERFLOW;
 
 		return	STS$K_ERROR;
 		}
 
-	s_vbk$hdrini(a_ctx, &l_hdr, a_type);
+	s_vbk$hdrini(a_ctx, &l_hdr, l_seal ? VBK$K_BT_ETRAILER : a_type);
 	l_hdr.paylen	= a_len;
 
 	memset(a_ctx->aux, 0, a_ctx->bsize);
-	vbk$bhdr_put(&l_hdr, a_ctx->aux);
 	memcpy(a_ctx->aux + VBK$K_HDRSZ, a_body, a_len);
+
+	if ( l_seal )
+		vbk$crp_seal(a_ctx->keys, &l_hdr, a_ctx->aux + VBK$K_HDRSZ, a_ctx->psize);
+
+	vbk$bhdr_put(&l_hdr, a_ctx->aux);
 	vbk$blk_seal(a_ctx->aux, a_ctx->bsize);
 
 	return	s_vbk$emit(a_ctx, &a_ctx->aux);
@@ -590,12 +600,16 @@ int		l_status;
 	if ( !a_ctx->curopen )
 		return	STS$K_SUCCESS;
 
-	s_vbk$hdrini(a_ctx, &l_hdr, VBK$K_BT_DATA);
+	s_vbk$hdrini(a_ctx, &l_hdr, a_ctx->keys ? VBK$K_BT_EDATA : VBK$K_BT_DATA);
 	l_hdr.gindex	= (uint16_t) a_ctx->gcnt;
 	l_hdr.recoff	= a_ctx->recoff;
 	l_hdr.paylen	= a_ctx->fill;
 	l_hdr.prvrecoff	= a_ctx->grpsz ? a_ctx->prvrecoff : VBK$K_NONE;
 	l_hdr.prvpaylen	= a_ctx->grpsz ? a_ctx->prvpaylen : 0;
+
+	/* Encrypted before the XOR and the CRC: both cover what lies on the medium */
+	if ( a_ctx->keys )
+		vbk$crp_seal(a_ctx->keys, &l_hdr, a_ctx->cur + VBK$K_HDRSZ, a_ctx->psize);
 
 	vbk$bhdr_put(&l_hdr, a_ctx->cur);
 	vbk$blk_seal(a_ctx->cur, a_ctx->bsize);
@@ -674,6 +688,7 @@ int	l_status;
 	a_ctx->opts	= a_opts;
 	a_ctx->bsize	= a_bsize;
 	a_ctx->psize	= a_bsize - VBK$K_HDRSZ;
+	a_ctx->cap	= a_ctx->keys ? (a_ctx->psize - VBK$K_TAGSZ) : a_ctx->psize;
 	a_ctx->grpsz	= a_grpsz;
 	a_ctx->maxvolblk = a_volsize / a_bsize;
 	a_ctx->volno	= 1;
@@ -787,7 +802,7 @@ int	vbk$wrt_rechdr	(
 uint8_t	l_hdr [VBK$K_RECHDR];
 int	l_status;
 
-	if ( a_ctx->curopen && ((a_ctx->psize - a_ctx->fill) < VBK$K_RECHDR) )
+	if ( a_ctx->curopen && ((a_ctx->cap - a_ctx->fill) < VBK$K_RECHDR) )
 		if ( !(1 & (l_status = s_vbk$closedata(a_ctx))) )
 			return	l_status;
 
@@ -846,7 +861,7 @@ int		l_status;
 			if ( !(1 & (l_status = s_vbk$opendata(a_ctx))) )
 				return	l_status;
 
-		l_n	= a_ctx->psize - a_ctx->fill;
+		l_n	= a_ctx->cap - a_ctx->fill;
 		l_n	= (l_n < a_len) ? l_n : a_len;
 
 		memcpy(a_ctx->cur + VBK$K_HDRSZ + a_ctx->fill, l_p, l_n);
@@ -855,7 +870,7 @@ int		l_status;
 		l_p		+= l_n;
 		a_len		-= l_n;
 
-		if ( a_ctx->fill == a_ctx->psize )
+		if ( a_ctx->fill == a_ctx->cap )
 			if ( !(1 & (l_status = s_vbk$closedata(a_ctx))) )
 				return	l_status;
 		}

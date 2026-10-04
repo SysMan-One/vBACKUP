@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-04"
+#define	__IDENT__	"X01-06"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.4.0"
+#define	__REV__		"1.6.0"
 #endif
 
 /*
@@ -34,6 +34,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		The block types EDATA, ETRAILER; the tags CIPHER, KDF, KDFITER,
+**		SALT, KEYCHECK (format.md 6.10).
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ, the compressed DATA record; the SUMMARY tag COMPRESS;
@@ -90,7 +94,9 @@ enum	{					/* Block types					*/
 	VBK$K_BT_DATA	= 1,
 	VBK$K_BT_XOR,
 	VBK$K_BT_VHDR,
-	VBK$K_BT_TRAILER
+	VBK$K_BT_TRAILER,
+	VBK$K_BT_EDATA,				/* DATA of an encrypted saveset (X01-06)	*/
+	VBK$K_BT_ETRAILER			/* TRAILER of an encrypted saveset		*/
 	};
 
 #define	VBK$M_LASTINVOL	1			/* Last block of a volume			*/
@@ -161,6 +167,11 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_FSUSED,			/* ... bytes in use				*/
 	VBK$K_TAG_ROOTATTR,			/* ... the per-file tags of its root directory	*/
 	VBK$K_TAG_MOUNTOPTS,			/* ... the options it was mounted with		*/
+	VBK$K_TAG_CIPHER,			/* SUMMARY, VHDR: encrypted, 1 = ChaCha20+HMAC	*/
+	VBK$K_TAG_KDF,				/* ... the key derivation, 1 = PBKDF2-SHA256	*/
+	VBK$K_TAG_KDFITER,			/* ... its iterations				*/
+	VBK$K_TAG_SALT,				/* ... its salt, 32 octets			*/
+	VBK$K_TAG_KEYCHECK,			/* ... CHECK, 32 octets: the passphrase is right */
 
 	VBK$K_TAG_NFILES = 96,
 	VBK$K_TAG_NBYTES,

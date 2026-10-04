@@ -92,6 +92,8 @@ void	vbk$crp_derive		(VBK$KEYS *a_keys, const void *a_pass, size_t a_plen, const
 				uint32_t a_iter);
 void	vbk$crp_tag		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, const uint8_t *a_ct, uint8_t a_tag [VBK$K_TAGSZ]);
 void	vbk$crp_seal		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, uint8_t *a_pay, uint32_t a_psize);
+int	vbk$crp_check		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, const uint8_t *a_pay, uint32_t a_psize);
+void	vbk$crp_decrypt		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, uint8_t *a_pay);
 int	vbk$crp_open		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, uint8_t *a_pay, uint32_t a_psize);
 int	vbk$crp_equal		(const uint8_t *a_a, const uint8_t *a_b, size_t a_len);
 void	vbk$crp_wipe		(void *a_p, size_t a_len);

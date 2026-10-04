@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-04"
+#define	__IDENT__	"X01-06"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.4.0"
+#define	__REV__		"1.6.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-06		 5-OCT-2026	RRL
+**		KEYS, set by the caller: the saveset is encrypted; CAP.
+**
 **	X01-04		 4-OCT-2026	RRL
 **		VBK$K_SZ_SPEC and VBK$VOLSPEC moved to VBKFMT.H.
 **
@@ -47,6 +50,7 @@
 #include	<pthread.h>
 
 #include	"vbkfmt.h"
+#include	"vbkcrp.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -60,7 +64,8 @@ extern "C" {
 
 /*
 **  The context of a saveset being written.  The members are the business
-**  of VBKWRT.C; a caller reads <volno>, <blkno>, <err> and <volspec> only.
+**  of VBKWRT.C; a caller reads <volno>, <blkno>, <err> and <volspec> only,
+**  and sets <keys> for an encrypted saveset.
 */
 typedef struct vbk_wctx_t
 {
@@ -72,6 +77,9 @@ typedef struct vbk_wctx_t
 
 	uint32_t	bsize;			/* Block size					*/
 	uint32_t	psize;			/* Payload area, bsize - VBK$K_HDRSZ		*/
+	uint32_t	cap;			/* Of it for the stream: psize, less the TAG	*/
+	const VBK$KEYS *keys;			/* Set by the caller before VBK$WRT_OPEN: the	*/
+						/* saveset is encrypted (format.md 6.10)	*/
 	uint32_t	grpsz;			/* DATA blocks under one XOR, 0 - no XOR	*/
 	uint64_t	maxvolblk;		/* Blocks in a volume, 0 - one volume		*/
 

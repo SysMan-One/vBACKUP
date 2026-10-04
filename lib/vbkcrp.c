@@ -471,6 +471,43 @@ uint8_t		l_nonce [12];
 
 
 /*
+**  The TAG of a payload is right, and PAYLEN leaves room for it
+*/
+int	vbk$crp_check		(
+	const	VBK$KEYS *	a_keys,
+	const	VBK$BHDR *	a_hdr,
+	const	uint8_t *	a_pay,
+		uint32_t	a_psize
+			)
+{
+uint8_t		l_tag [VBK$K_TAGSZ];
+
+	if ( (a_psize < VBK$K_TAGSZ) || (a_hdr->paylen > (a_psize - VBK$K_TAGSZ)) )
+		return	0;
+
+	vbk$crp_tag(a_keys, a_hdr, a_pay, l_tag);
+
+	return	vbk$crp_equal(l_tag, a_pay + a_psize - VBK$K_TAGSZ, VBK$K_TAGSZ);
+}
+
+
+/*
+**  Decrypt PAYLEN octets of a payload in place - one that VBK$CRP_CHECK passed
+*/
+void	vbk$crp_decrypt		(
+	const	VBK$KEYS *	a_keys,
+	const	VBK$BHDR *	a_hdr,
+		uint8_t *	a_pay
+			)
+{
+uint8_t		l_nonce [12];
+
+	s_vbk$nonce(a_hdr->blkno, l_nonce);
+	vbk$chacha20(a_keys->enc, l_nonce, 0, a_pay, a_hdr->paylen);
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
@@ -489,18 +526,10 @@ int	vbk$crp_open		(
 		uint32_t	a_psize
 			)
 {
-uint8_t		l_tag [VBK$K_TAGSZ], l_nonce [12];
-
-	if ( (a_psize < VBK$K_TAGSZ) || (a_hdr->paylen > (a_psize - VBK$K_TAGSZ)) )
+	if ( !vbk$crp_check(a_keys, a_hdr, a_pay, a_psize) )
 		return	STS$K_ERROR;
 
-	vbk$crp_tag(a_keys, a_hdr, a_pay, l_tag);
-
-	if ( !vbk$crp_equal(l_tag, a_pay + a_psize - VBK$K_TAGSZ, VBK$K_TAGSZ) )
-		return	STS$K_ERROR;
-
-	s_vbk$nonce(a_hdr->blkno, l_nonce);
-	vbk$chacha20(a_keys->enc, l_nonce, 0, a_pay, a_hdr->paylen);
+	vbk$crp_decrypt(a_keys, a_hdr, a_pay);
 
 	return	STS$K_SUCCESS;
 }

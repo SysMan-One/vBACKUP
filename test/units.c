@@ -64,6 +64,10 @@ static	const char *	s_title = "";
 static	char	s_dir [1024];
 static	VBK$LOC	s_loc [UNITS$K_NREC];
 static	int	s_ev [8];
+static	VBK$KEYS	s_keys;			/* s_write encrypts with them when S_CRYPT is set */
+static	int	s_crypt;
+static	uint8_t		s_salt [VBK$K_SALTSZ];
+static	const char *	s_pass = "units passphrase";
 
 /*
 **  One check.  TAP=1 in the environment: one "ok N" / "not ok N" line each (TAP 13), named by
@@ -126,6 +130,16 @@ uint64_t	l_nblocks;
 	vbk$tlv_str(&l_sum, VBK$K_TAG_PRODUCT, "VBACKUP UNITS");
 	vbk$tlv_u32(&l_sum, VBK$K_TAG_BLOCKSIZE, UNITS$K_BSZ);
 	vbk$tlv_u32(&l_sum, VBK$K_TAG_GROUPSIZE, a_grpsz);
+
+	if ( s_crypt )
+		{
+		vbk$tlv_u8(&l_sum, VBK$K_TAG_CIPHER, VBK$K_CIPHER_CC20HS);
+		vbk$tlv_u8(&l_sum, VBK$K_TAG_KDF, VBK$K_KDF_PBKDF2);
+		vbk$tlv_u32(&l_sum, VBK$K_TAG_KDFITER, VBK$K_KDFMIN);
+		vbk$tlv_put(&l_sum, VBK$K_TAG_SALT, VBK$K_SALTSZ, s_salt);
+		vbk$tlv_put(&l_sum, VBK$K_TAG_KEYCHECK, VBK$K_KEYSZ, s_keys.check);
+		l_wctx.keys	= &s_keys;
+		}
 
 	if ( !(1 & vbk$wrt_open(&l_wctx, l_spec, UNITS$K_BSZ, a_grpsz, a_volsize, VBK$M_WRT_REPLACE, l_sum.buf, l_sum.len)) )
 		{
@@ -214,6 +228,9 @@ VBK$LOC		l_loc;
 		return	STS$K_ERROR;
 		}
 
+	if ( l_rctx.crypt && !(1 & vbk$rd_setkey(&l_rctx, s_pass, strlen(s_pass))) )
+		$NOTE("vbk$rd_setkey(%s) refused the passphrase", l_spec);
+
 	while ( 1 & vbk$rd_next(&l_rctx, &l_type, &l_body, &l_len, &l_loc) )
 		{
 		if ( l_rctx.resync )
@@ -243,6 +260,41 @@ VBK$LOC		l_loc;
 	else	vbk$rd_close(&l_rctx);
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  Change one octet of the payload of block <a_pos> and seal it again: a
+**  CRC that is right over a block that is not - what only a TAG catches
+*/
+static	void	s_forge	(
+	const	char *		a_name,
+		uint32_t	a_vol,
+		uint64_t	a_pos,
+		uint32_t	a_off
+			)
+{
+char		l_spec [1100], l_vs [1200];
+uint8_t		l_blk [UNITS$K_BSZ];
+int		l_fd;
+
+	snprintf(l_spec, sizeof(l_spec), "%s/%s", s_dir, a_name);
+	vbk$volspec(l_spec, a_vol, l_vs, sizeof(l_vs));
+
+	if ( (0 > (l_fd = open(l_vs, O_RDWR)))
+		|| (pread(l_fd, l_blk, sizeof(l_blk), (off_t) (a_pos * UNITS$K_BSZ)) != (ssize_t) sizeof(l_blk)) )
+		{
+		s_fail++;
+		return;
+		}
+
+	l_blk [VBK$K_HDRSZ + a_off] ^= 0x20;
+	vbk$blk_seal(l_blk, sizeof(l_blk));
+
+	if ( pwrite(l_fd, l_blk, sizeof(l_blk), (off_t) (a_pos * UNITS$K_BSZ)) != (ssize_t) sizeof(l_blk) )
+		s_fail++;
+
+	close(l_fd);
 }
 
 
@@ -528,6 +580,74 @@ char		l_spec [1100];
 	$CHECK(l_ok < 20000, "every damaged block decompressed");
 	}
 
+
+
+	s_begin("encrypted: several volumes, groups of 3, read back with the passphrase");
+	vbk$os_random(s_salt, sizeof(s_salt));
+	vbk$crp_derive(&s_keys, s_pass, strlen(s_pass), s_salt, VBK$K_KDFMIN);
+	s_crypt	= 1;
+	$CHECK(1 & s_write("enc.bck", 3, 12 * UNITS$K_BSZ, &l_nvols), "write");
+	$CHECK(l_nvols > 3, "nvols %u", l_nvols);
+	s_readall("enc.bck", &l_nread, &l_nresync, &l_nbad, &l_rctx);
+	$CHECK((l_nread == UNITS$K_NREC) && !l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+	$CHECK(l_rctx.crypt && l_rctx.haskey && l_rctx.trailer, "crypt %d key %d trailer %p", l_rctx.crypt, l_rctx.haskey, l_rctx.trailer);
+
+	s_begin("encrypted: seek to every record by its location");
+	{
+	const uint8_t *	l_body;
+	uint32_t	l_len, l_bad = 0;
+	uint16_t	l_type;
+
+	for ( uint32_t i = 0; i < UNITS$K_NREC; i += 5 )
+		if ( (STS$K_SUCCESS != vbk$rd_seek(&l_rctx, &s_loc [i])) || !(1 & vbk$rd_next(&l_rctx, &l_type, &l_body, &l_len, NULL))
+			|| !s_same(i, l_type, l_body, l_len) )
+			l_bad++;
+
+	$CHECK(!l_bad, "%u seeks failed", l_bad);
+	vbk$rd_close(&l_rctx);
+	}
+
+	s_begin("encrypted: a wrong passphrase is refused, nothing is read without the right one");
+	{
+	VBK$RCTX	l_r = {0};
+	const uint8_t *	l_body;
+	uint32_t	l_len;
+	uint16_t	l_type;
+
+	snprintf(l_spec, sizeof(l_spec), "%s/enc.bck", s_dir);
+	$CHECK(1 & vbk$rd_open(&l_r, l_spec, NULL, NULL), "open");
+	$CHECK(l_r.crypt && !l_r.trailer, "crypt %d trailer %p before the key", l_r.crypt, l_r.trailer);
+	$CHECK(!(1 & vbk$rd_next(&l_r, &l_type, &l_body, &l_len, NULL)), "a record without the key");
+	$CHECK(STS$K_ERROR == vbk$rd_setkey(&l_r, "units passphrasE", 16), "a wrong passphrase taken");
+	$CHECK(!(1 & vbk$rd_next(&l_r, &l_type, &l_body, &l_len, NULL)), "a record after a wrong key");
+	vbk$rd_close(&l_r);
+	}
+
+	s_begin("encrypted: a zapped block and a forged one (CRC right) are both rebuilt from their groups");
+	$CHECK(1 & s_write("encf.bck", 4, 0, &l_nvols), "write");
+	s_zap("encf.bck", 1, 2);
+	s_forge("encf.bck", 1, 7, 100);		/* Group 2: positions 6..10, XOR at 10	*/
+	s_readall("encf.bck", &l_nread, &l_nresync, &l_nbad, NULL);
+	$CHECK((l_nread == UNITS$K_NREC) && !l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+	$CHECK((s_ev [VBK$K_EV_REPAIRED] == 2) && (s_ev [VBK$K_EV_BADTAG] == 1) && !s_ev [VBK$K_EV_LOST],
+		"repaired %d badtag %d lost %d", s_ev [VBK$K_EV_REPAIRED], s_ev [VBK$K_EV_BADTAG], s_ev [VBK$K_EV_LOST]);
+
+	s_begin("encrypted: a forged block with no XOR to rebuild it is lost, never read");
+	$CHECK(1 & s_write("encn.bck", 0, 0, &l_nvols), "write");
+	s_forge("encn.bck", 1, 5, 3);
+	s_readall("encn.bck", &l_nread, &l_nresync, &l_nbad, NULL);
+	$CHECK((l_nread < UNITS$K_NREC) && l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+	$CHECK((s_ev [VBK$K_EV_BADTAG] == 1) && (s_ev [VBK$K_EV_LOST] == 1), "badtag %d lost %d", s_ev [VBK$K_EV_BADTAG], s_ev [VBK$K_EV_LOST]);
+
+	s_begin("encrypted: two blocks of a group forged, its XOR forged too - lost, never read");
+	$CHECK(1 & s_write("enc2.bck", 4, 0, &l_nvols), "write");
+	s_forge("enc2.bck", 1, 7, 9);
+	s_forge("enc2.bck", 1, 10, 9);
+	s_readall("enc2.bck", &l_nread, &l_nresync, &l_nbad, NULL);
+	$CHECK((l_nread < UNITS$K_NREC) && l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+
+	s_crypt	= 0;
+	vbk$crp_wipe(&s_keys, sizeof(s_keys));
 
 	s_begin("SHA-256, FIPS 180-4 examples");
 	{
