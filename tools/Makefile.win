@@ -26,8 +26,8 @@ ifeq ($(origin CC),default)
 CC	= x86_64-w64-mingw32-gcc
 endif
 
-SRC	= tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c
-HDR	= lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h
+SRC	= tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c
+HDR	= lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h lib/vbkcrp.h
 
 all: vbkx.exe
 

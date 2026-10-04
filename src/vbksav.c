@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -32,6 +32,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		/ENCRYPT: the passphrase, the SALT and the keys of the saveset;
+**		a short SUMMARY in the clear for the VHDR, the crypto tags in
+**		both SUMMARYs; the writer seals the blocks.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		/DATA_FORMAT=COMPRESSED: a DATAZ record where LZ4 pays, DATA
@@ -113,7 +118,32 @@ typedef struct vbk_save_t
 	VBK$HASH	record;			/* /RECORD: absolute name -> VBK$FSTATE		*/
 	VBK$TIME	created;		/* Of the SUMMARY: the RECORDED of the journal	*/
 	int		failed;			/* The saveset itself could not be written	*/
+
+	int		crypt;			/* /ENCRYPT (format.md 6.10)			*/
+	VBK$KEYS	keys;			/* ... the keys of this saveset			*/
+	uint8_t		salt [VBK$K_SALTSZ];	/* ... its SALT					*/
+	uint32_t	kdfiter;		/* ... its KDFITER				*/
 } VBK$SAVE;
+
+
+/*
+**  The tags of an encrypted saveset: in its VHDR and in its SUMMARY
+*/
+static	int	s_vbk$crypttags	(
+		VBK$SAVE *	a_sav,
+		VBK$TLVB *	a_tlvb
+			)
+{
+int	l_ok = 1;
+
+	l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_CIPHER, VBK$K_CIPHER_CC20HS);
+	l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_KDF, VBK$K_KDF_PBKDF2);
+	l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_KDFITER, a_sav->kdfiter);
+	l_ok &= vbk$tlv_put(a_tlvb, VBK$K_TAG_SALT, VBK$K_SALTSZ, a_sav->salt);
+	l_ok &= vbk$tlv_put(a_tlvb, VBK$K_TAG_KEYCHECK, VBK$K_KEYSZ, a_sav->keys.check);
+
+	return	l_ok;
+}
 
 
 static	int	s_vbk$volcb	(
@@ -1024,6 +1054,9 @@ int		l_ok = 1;
 
 	l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_SYSTEM, l_sys);
 
+	if ( a_sav->crypt )
+		l_ok &= s_vbk$crypttags(a_sav, a_tlvb);
+
 	return	l_ok ? STS$K_SUCCESS : STS$K_FATAL;
 }
 
@@ -1222,7 +1255,7 @@ int	vbk$save	(
 {
 int		l_verified = 0;
 VBK$SAVE *	l_sav;
-VBK$TLVB	l_sum = {0}, l_trl = {0};
+VBK$TLVB	l_sum = {0}, l_trl = {0}, l_vhdr = {0};
 VBK$LOC		l_catloc = {0};
 char		(*l_base) [VBACKUP$K_SZ_PATH];
 uint64_t	l_nblocks;
@@ -1247,19 +1280,59 @@ int		l_status = STS$K_SUCCESS;
 	if ( a_opts->physical && !(1 & vbk$phy_open(a_opts, a_opts->input [0])) )
 		return	STS$K_FATAL;
 
+	/*
+	**  /ENCRYPT: the passphrase - asked twice - the SALT of this saveset,
+	**  the keys.  The VHDR carries a short SUMMARY in the clear: nothing
+	**  in it names the system or the files.
+	*/
+	if ( a_opts->encrypt )
+		{
+		const char *	l_pass;
+		size_t		l_plen;
+
+		if ( !(1 & vbk$key_get(a_opts, a_opts->output, 1, &l_pass, &l_plen)) )
+			return	STS$K_FATAL;
+
+		if ( !(1 & vbk$os_random(l_sav->salt, sizeof(l_sav->salt))) )
+			return	$VBKMSG(VBACKUP$_OPENOUT, "getrandom", errno, strerror(errno)), STS$K_FATAL;
+
+		l_sav->kdfiter	= vbk$key_iter();
+		vbk$crp_derive(&l_sav->keys, l_pass, l_plen, l_sav->salt, l_sav->kdfiter);
+		l_sav->crypt	= 1;
+		l_sav->wctx.keys = &l_sav->keys;
+		}
+
 	if ( !(1 & s_vbk$summary(l_sav, &l_sum, l_base, a_opts->ninput)) )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
+
+	if ( l_sav->crypt )
+		{
+		int	l_ok = 1;
+
+		l_ok &= vbk$tlv_str(&l_vhdr, VBK$K_TAG_PRODUCT, "VBACKUP " VBACKUP_K_IDENT);
+		l_ok &= vbk$tlv_u32(&l_vhdr, VBK$K_TAG_BLOCKSIZE, a_opts->bsize);
+		l_ok &= vbk$tlv_u32(&l_vhdr, VBK$K_TAG_GROUPSIZE, a_opts->grpsz);
+		l_ok &= vbk$tlv_u64(&l_vhdr, VBK$K_TAG_VOLSIZE, a_opts->volsize);
+		l_ok &= s_vbk$crypttags(l_sav, &l_vhdr);
+
+		if ( !l_ok )
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
+		}
 
 	l_sav->wctx.volcb	= s_vbk$volcb;
 	l_sav->wctx.volarg	= l_sav;
 
 	if ( !(1 & vbk$wrt_open(&l_sav->wctx, a_opts->output, a_opts->bsize, a_opts->grpsz, a_opts->volsize,
-				(a_opts->replace ? VBK$M_WRT_REPLACE : 0) | (a_opts->nopipe ? VBK$M_WRT_SYNC : 0), l_sum.buf, l_sum.len)) )
+				(a_opts->replace ? VBK$M_WRT_REPLACE : 0) | (a_opts->nopipe ? VBK$M_WRT_SYNC : 0),
+				l_sav->crypt ? l_vhdr.buf : l_sum.buf, l_sav->crypt ? l_vhdr.len : l_sum.len)) )
 		return	$VBKMSG(VBACKUP$_OPENOUT, l_sav->wctx.volspec[0] ? l_sav->wctx.volspec : a_opts->output,
 				l_sav->wctx.err, strerror(l_sav->wctx.err)), STS$K_FATAL;
 
 	if ( !(1 & vbk$wrt_record(&l_sav->wctx, VBK$K_RT_SUMMARY, l_sum.buf, l_sum.len, NULL)) )
 		s_vbk$wrterr(l_sav);
+
+	if ( l_sav->crypt && a_opts->log )
+		$VBKMSG(VBACKUP$_ENCRYPTED, a_opts->output, l_sav->kdfiter);
 
 	/* Compression on several cores: the ring between the reading of the files and the writer */
 	if ( a_opts->compress )
@@ -1356,6 +1429,8 @@ int		l_status = STS$K_SUCCESS;
 
 	vbk$tlv_free(&l_sum);
 	vbk$tlv_free(&l_trl);
+	vbk$tlv_free(&l_vhdr);
+	vbk$crp_wipe(&l_sav->keys, sizeof(l_sav->keys));
 	vbk$tlv_free(&l_sav->xbuf);
 	vbk$tlv_free(&l_sav->cat);
 

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the compressed data is restored and extracted.
@@ -1332,6 +1335,15 @@ unsigned	l_nbases = 0;
 	if ( !(1 & (l_status = vbk$rd_open(&l_rctx, a_spec, vbk$rdevent, (void *) a_spec))) )
 		return	(l_status == STS$K_WARN) ? $VBKMSG(VBACKUP$_NOTSAVESET, a_spec) : $VBKMSG(VBACKUP$_OPENIN, a_spec, l_rctx.err, strerror(l_rctx.err));
 
+	/* Encrypted: the passphrase first - nothing of it can be read before */
+	if ( !(1 & vbk$key_unlock(a_opts, &l_rctx, a_spec)) )
+		{
+		vbk$rd_close(&l_rctx);
+
+		return	STS$K_ERROR;
+		}
+
+
 	if ( !l_rctx.trailer && !a_opts->incremental )
 		$VBKMSG(VBACKUP$_NOTRAILER, a_spec);
 
@@ -1600,6 +1612,15 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 	if ( !(1 & (l_status = vbk$rd_open(&l_rctx, l_spec, vbk$rdevent, (void *) l_spec))) )
 		return	(l_status == STS$K_WARN) ? $VBKMSG(VBACKUP$_NOTSAVESET, l_spec)
 					 : $VBKMSG(VBACKUP$_OPENIN, l_spec, l_rctx.err, strerror(l_rctx.err));
+
+	/* Encrypted: the passphrase first - nothing of it can be read before */
+	if ( !(1 & vbk$key_unlock(a_opts, &l_rctx, l_spec)) )
+		{
+		vbk$rd_close(&l_rctx);
+
+		return	STS$K_ERROR;
+		}
+
 
 	l_status = STS$K_ERROR;
 	l_found	 = l_rctx.trailer ? (1 & s_vbk$lookup(&l_rctx, a_opts->extract, &l_loc)) : 0;

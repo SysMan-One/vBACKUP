@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKIMG"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -43,6 +43,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		Initial version.
@@ -521,6 +524,15 @@ int		l_image = 0, l_status, l_fd;
 
 	if ( !(1 & (l_status = vbk$rd_open(&l_rctx, l_spec, vbk$rdevent, (void *) l_spec))) )
 		return	(l_status == STS$K_WARN) ? $VBKMSG(VBACKUP$_NOTSAVESET, l_spec) : $VBKMSG(VBACKUP$_OPENIN, l_spec, l_rctx.err, strerror(l_rctx.err));
+
+	/* Encrypted: the passphrase first - nothing of it can be read before */
+	if ( !(1 & vbk$key_unlock(a_opts, &l_rctx, l_spec)) )
+		{
+		vbk$rd_close(&l_rctx);
+
+		return	STS$K_ERROR;
+		}
+
 
 	while ( 1 & vbk$tlv_next(l_rctx.summary, l_rctx.sumlen, &l_pos, &l_tag, &l_vlen, &l_val) )
 		switch ( l_tag )

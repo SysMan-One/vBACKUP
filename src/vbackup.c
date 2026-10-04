@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-05"
-#define	__REV__		"1.5.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -40,6 +40,13 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		Stage 6: encrypted savesets - /ENCRYPT, /KEY_FILE (format.md 6.10).
+**		The command line: a third parameter is refused (MAXPARM: ".log"
+**		meant "/LOG"), qualifiers glued to a parameter are taken apart
+**		as DCL does (TTR3.SAV/SAVE), an input with wildcards is not
+**		"an input that does not exist", .SAV names a saveset as .BCK.
 **
 **	X01-05		 4-OCT-2026	RRL
 **		Stage 5: the plugins of the file managers - Midnight Commander
@@ -120,6 +127,8 @@ enum	{
 	VBACKUP$K_QUAL_IMAGE,
 	VBACKUP$K_QUAL_ORIGINAL,
 	VBACKUP$K_QUAL_DELETE,
+	VBACKUP$K_QUAL_ENCRYPT,
+	VBACKUP$K_QUAL_KEY_FILE,
 
 	VBACKUP$K_QUAL_MAX
 	};
@@ -182,6 +191,8 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("IMAGE")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("ORIGINAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("DELETE")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("ENCRYPT")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("KEY_FILE")},	.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
 
@@ -213,10 +224,12 @@ static	const char	s_usage [] = {
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
 	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
 	"            /DELETE (with /VERIFY: the files saved and verified are deleted)\n"
+	"            /ENCRYPT (asks a passphrase twice, or /KEY_FILE=file)\n"
 	"  Restore:  /REPLACE /OWNER=ORIGINAL|DEFAULT|user /INCREMENTAL /ORIGINAL (no output)\n"
 	"  Device:   /dev/sdb1 disk.bck /PHYSICAL      disk.bck /dev/sdc1 /PHYSICAL /REPLACE\n"
 	"  Volume:   /mnt/data vol.bck /IMAGE          vol.bck /dev/sdc1 /IMAGE /REPLACE\n"
 	"  Common:   /SELECT=(pat,...) /EXCLUDE=(pat,...) /[NO]XATTRS /LOG /CONFIRM\n"
+	"            /KEY_FILE=file - the passphrase of an encrypted saveset, its first line\n"
 	"\n"
 	"Wildcards are expanded by the utility itself - quote them: '/home/.../*.c'\n"
 	"The full description is a help library:  vbackup /HELP [topic]\n"
@@ -677,6 +690,12 @@ ASC		l_val;
 		else	return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "DATA_FORMAT");
 		}
 
+	/* /ENCRYPT: format.md 6.10; the passphrase is asked for when the saveset is made, never taken from the command */
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_ENCRYPT, NULL) )
+		a_opts->encrypt	= 1;
+
+	s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_KEY_FILE, a_opts->keyfile, sizeof(a_opts->keyfile));
+
 	if ( (1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_FORMAT, l_str, sizeof(l_str))) && !strncasecmp(l_str, "LS", strlen(l_str)) )
 		a_opts->lstfmt	= VBACKUP$K_LST_LS;
 
@@ -684,6 +703,53 @@ ASC		l_val;
 	s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_EXTRACT, a_opts->extract, sizeof(a_opts->extract));
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  Qualifiers glued to a parameter, as DCL takes them: TTR3.SAV/SAVE/LOG.
+**  The word is cut at the first slash from which on every piece is a
+**  qualifier - and only when the word is not the name of a file as a
+**  whole.  A value with a slash in it (/JOURNAL=/var/...) is not taken
+**  from a glued word: it is given apart.  Returns the length of the
+**  parameter, 0 - the word is not cut.
+*/
+static	size_t	s_vbk$glued	(
+	const	char *		a_word
+			)
+{
+struct stat	l_st;
+char		l_piece [VBACKUP$K_SZ_STR + 2];
+const char *	l_p, *l_q;
+size_t		l_n;
+int		l_ok;
+
+	if ( a_word [0] == '/' ? !strchr(a_word + 1, '/') : !strchr(a_word, '/') )
+		return	0;
+
+	if ( !lstat(a_word, &l_st) )
+		return	0;
+
+	for ( l_p = strchr(a_word + 1, '/'); l_p; l_p = strchr(l_p + 1, '/') )
+		{
+		for ( l_ok = 1, l_q = l_p; l_ok && *l_q; l_q += l_n )
+			{
+			l_n	= 1 + strcspn(l_q + 1, "/");
+
+			if ( l_n >= sizeof(l_piece) )
+				l_ok = 0;
+			else	{
+				memcpy(l_piece, l_q, l_n);
+				l_piece [l_n] = '\0';
+				l_ok	= (l_n > 1) && (1 & s_vbk$isqual(l_piece));
+				}
+			}
+
+		if ( l_ok )
+			return	(size_t) (l_p - a_word);
+		}
+
+	return	0;
 }
 
 
@@ -700,7 +766,27 @@ size_t	l_len = strlen(a_spec);
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_SAVE_SET, NULL) || !strcmp(a_spec, "-") )
 		return	1;
 
-	return	(l_len > 4) && !strcasecmp(a_spec + l_len - 4, ".bck");
+	/* .BCK and .SAV: the names savesets have on OpenVMS */
+	return	(l_len > 4) && (!strcasecmp(a_spec + l_len - 4, ".bck") || !strcasecmp(a_spec + l_len - 4, ".sav"));
+}
+
+
+/*
+**  Has a specification a wildcard or "..." in it?  Such an input names
+**  files the walk finds - it does not exist as one file, and is no saveset.
+*/
+static	int	s_vbk$haswild	(
+	const	char *		a_spec
+			)
+{
+	if ( strpbrk(a_spec, "*?%") )
+		return	1;
+
+	for ( const char *l_p = a_spec; (l_p = strstr(l_p, "...")); l_p += 3 )
+		if ( ((l_p == a_spec) || (l_p [-1] == '/')) && ((l_p [3] == '/') || !l_p [3]) )
+			return	1;
+
+	return	0;
 }
 
 
@@ -712,6 +798,8 @@ int	main	(
 static	VBK$OPTS	l_opts;
 CLI_CTX *	l_clictx = NULL;
 char *		l_argv [1 + 64], *l_words [2 + VBACKUP$K_MAXSPEC];
+const char *	l_glued [8];
+int		l_nglued = 0;
 int		l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
 size_t		l_cmdlen = 0;
 
@@ -776,6 +864,37 @@ size_t		l_cmdlen = 0;
 			continue;
 			}
 
+		/* A parameter with qualifiers glued to it: the qualifiers go to the CLI, the rest is the word */
+		{
+		size_t	l_cut = s_vbk$glued(a_argv [i]);
+
+		if ( l_cut )
+			{
+			char *	l_w = strdup(a_argv [i]), *l_p, *l_e;
+
+			if ( !l_w )
+				return	VBACKUP$K_EXIT_ERROR;
+
+			l_glued [l_nglued++ % $ARRSZ(l_glued)] = a_argv [i];
+
+			for ( l_p = l_w + l_cut; *l_p; l_p = l_e )
+				{
+				l_e	= strchr(l_p + 1, '/');
+				l_e	= l_e ? l_e : l_p + strlen(l_p);
+
+				if ( l_argc < (int) $ARRSZ(l_argv) )
+					l_argv [l_argc++] = strndup(l_p, (size_t) (l_e - l_p));
+				}
+
+			l_w [l_cut] = '\0';
+
+			if ( l_wordcnt < (int) $ARRSZ(l_words) )
+				l_words [l_wordcnt++] = l_w;
+
+			continue;
+			}
+		}
+
 		if ( l_wordcnt < (int) $ARRSZ(l_words) )
 			l_words [l_wordcnt++] = a_argv [i];
 		}
@@ -795,6 +914,10 @@ size_t		l_cmdlen = 0;
 
 	if ( !(1 & __cli$parse(s_verbs, CLI$M_OPSIGNAL, l_argc, l_argv, (void **) &l_clictx)) )
 		return	VBACKUP$K_EXIT_ERROR;
+
+	/* Said once, so that a mistyped name of a file is not taken for a qualifier unseen */
+	for ( int i = 0; (i < l_nglued) && (i < (int) $ARRSZ(l_glued)); i++ )
+		$VBKMSG(VBACKUP$_GLUED, l_glued [i]);
 
 	/* Every lookup from here on is an optional one: the signalling is dropped */
 	l_clictx->opts	&= ~CLI$M_OPSIGNAL;
@@ -816,6 +939,15 @@ size_t		l_cmdlen = 0;
 		__cli$cleanup(l_clictx);
 
 		return	vbk$exitcode();
+		}
+
+	/* A third word: most often a qualifier mistyped - ".log" for "/LOG" - and never to be ignored */
+	if ( l_wordcnt > 2 )
+		{
+		$VBKMSG(VBACKUP$_MAXPARM, l_words [2]);
+		__cli$cleanup(l_clictx);
+
+		return	VBACKUP$K_EXIT_ERROR;
 		}
 
 	if ( !(1 & s_vbk$split(l_words [0], VBACKUP$K_MAXSPEC, l_opts.input, &l_opts.ninput)) )
@@ -843,7 +975,7 @@ size_t		l_cmdlen = 0;
 	l_status = STS$K_SUCCESS;
 
 	for ( unsigned i = 0; (i < l_opts.ninput) && (l_status == STS$K_SUCCESS); i++ )
-		l_status = vbk$rd_probe(l_opts.input [i]);
+		l_status = s_vbk$haswild(l_opts.input [i]) ? STS$K_WARN : vbk$rd_probe(l_opts.input [i]);
 
 	if ( l_opts.extract [0] )
 		l_opts.op	= VBACKUP$K_OP_EXTRACT;
@@ -870,6 +1002,14 @@ size_t		l_cmdlen = 0;
 
 			return	VBACKUP$K_EXIT_ERROR;
 			}
+
+	if ( l_opts.encrypt && (l_opts.op != VBACKUP$K_OP_SAVE) )
+		{
+		$VBKMSG(VBACKUP$_QUALUSE, "ENCRYPT", "a saveset is made encrypted by a save; one that is, is known by itself - give /KEY_FILE or nothing");
+		__cli$cleanup(l_clictx);
+
+		return	VBACKUP$K_EXIT_ERROR;
+		}
 
 	switch ( l_opts.op )
 		{
@@ -947,7 +1087,7 @@ size_t		l_cmdlen = 0;
 		default:
 			if ( !l_opts.output [0] )
 				$VBKMSG(VBACKUP$_NOPARAM, (l_status == STS$K_ERROR) ? "input specification - it does not exist" : "output specification");
-			else	$VBKMSG(VBACKUP$_IVOP, "the input does not exist");
+			else	$VBKMSG(VBACKUP$_IVOP, "the input does not exist - and for a save the output must be named .bck or .sav, or /SAVE_SET given");
 		}
 
 	__cli$cleanup(l_clictx);
