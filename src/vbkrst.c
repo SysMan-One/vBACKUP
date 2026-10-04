@@ -37,6 +37,7 @@
 **		DATAZ: the compressed data is restored and extracted.
 **
 **	X01-03		 3-OCT-2026	RRL
+**		/ORIGINAL: back to the bases of the SUMMARY.
 **		/INCREMENTAL removes in the order of the names, not in that of
 **		a hash table and of readdir.  A restore that lost blocks names every file of the catalog it
 **		did not get to (FILLOST), or says that it cannot (UNNAMED).
@@ -105,6 +106,8 @@ typedef struct vbk_rest_t
 
 	uint8_t *	seen;			/* FILENOs of the FILE records read, a bit each	*/
 	uint8_t *	zbuf;			/* A DATAZ record decompressed, VBK$K_MAXDATA	*/
+	char **		bases;			/* /ORIGINAL, several bases: each file to its own */
+	unsigned	nbases;
 	uint32_t	seensz;			/* ... octets of it				*/
 } VBK$REST;
 
@@ -328,6 +331,7 @@ int	vbk$rst_file	(
 {
 VBK$OPTS *	l_o = a_rst->opts;
 VBK$ATTR *	l_a = &a_rst->attr;
+const char *	l_outdir = l_o->output;
 char		l_name [VBACKUP$K_SZ_PATH], l_tgt [VBACKUP$K_SZ_PATH];
 mode_t		l_type = 0;
 int		l_status;
@@ -384,7 +388,11 @@ int		l_status;
 	if ( l_o->nselect && (l_a->ftype == VBK$K_FT_DIR) && !(1 & vbk$match(l_name, l_o->select, l_o->nselect)) )
 		return	STS$K_SUCCESS;
 
-	if ( !(1 & vbk$mkpath(l_o->output, l_a->path, l_a->pathlen, a_rst->path, sizeof(a_rst->path))) )
+	/* /ORIGINAL with several bases: each file back under its own */
+	if ( a_rst->nbases && (l_a->baseidx < a_rst->nbases) )
+		l_outdir = a_rst->bases [l_a->baseidx];
+
+	if ( !(1 & vbk$mkpath(l_outdir, l_a->path, l_a->pathlen, a_rst->path, sizeof(a_rst->path))) )
 		return	$VBKMSG(VBACKUP$_OPENOUT, l_name, EINVAL, "a name that leads out of the output directory"), STS$K_SUCCESS;
 
 	if ( l_o->confirm )
@@ -396,7 +404,7 @@ int		l_status;
 			return	STS$K_SUCCESS;
 		}
 
-	if ( !(1 & s_vbk$parents(a_rst->path, strlen(l_o->output))) )
+	if ( !(1 & s_vbk$parents(a_rst->path, strlen(l_outdir))) )
 		return	$VBKMSG(VBACKUP$_OPENOUT, a_rst->path, errno, strerror(errno)), STS$K_SUCCESS;
 
 	a_rst->fd	= -1;
@@ -444,11 +452,16 @@ int		l_status;
 			return	STS$K_SUCCESS;
 
 		case	VBK$K_FT_HARDLINK:
-			if ( !l_a->link || !(1 & vbk$mkpath(l_o->output, l_a->link, l_a->linklen, l_tgt, sizeof(l_tgt))) )
+			if ( !l_a->link || !(1 & vbk$mkpath(l_outdir, l_a->link, l_a->linklen, l_tgt, sizeof(l_tgt))) )
 				return	$VBKMSG(VBACKUP$_BADREC, a_rst->rctx ? a_rst->rctx->payblk : 0, a_rst->rctx ? a_rst->rctx->payvol : 0), STS$K_SUCCESS;
 
+			/* Several bases: the first name may be under another one - the one where it is */
+			for ( unsigned i = 0; a_rst->nbases && (i < a_rst->nbases) && access(l_tgt, F_OK); i++ )
+				if ( 1 & vbk$mkpath(a_rst->bases [i], l_a->link, l_a->linklen, l_tgt, sizeof(l_tgt)) )
+					l_outdir = a_rst->bases [i];
+
 			/* The first name, too, must not lead out through a link */
-			if ( !(1 & s_vbk$parents(l_tgt, strlen(l_o->output))) )
+			if ( !(1 & s_vbk$parents(l_tgt, strlen(l_outdir))) )
 				return	$VBKMSG(VBACKUP$_OPENOUT, a_rst->path, errno, strerror(errno)), STS$K_SUCCESS;
 
 			if ( !(1 & s_vbk$clear(a_rst)) )
@@ -751,6 +764,11 @@ int	vbk$rst_finish	(
 
 	free(a_rst->file);
 	free(a_rst->zbuf);
+
+	for ( unsigned i = 0; i < a_rst->nbases; i++ )
+		free(a_rst->bases [i]);
+
+	free(a_rst->bases);
 	free(a_rst->seen);
 	free(a_rst);
 
@@ -1178,6 +1196,106 @@ char		l_name [VBACKUP$K_SZ_PATH], l_out [VBACKUP$K_SZ_PATH];
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	/ORIGINAL: where the files of a saveset came from - its BASE items,
+**	absolute since X01-02.  One base: it becomes the output directory,
+**	and the restore is any restore (/INCREMENTAL included).  Several:
+**	each file goes under its own (VBK$RST_FILE), and the output is the
+**	first, for what needs one.  Where they go is always said.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_opts		The command: OUTPUT is set
+**	a_rctx		The saveset, open
+**	a_spec		Its name
+**	a_bases		Receives the bases, several - the caller's to free
+**	a_nbases	Receives how many
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS, or STS$K_ERROR - refused and said why.
+**--
+*/
+static	int	s_vbk$original	(
+		VBK$OPTS *	a_opts,
+		VBK$RCTX *	a_rctx,
+	const	char *		a_spec,
+		char ***	a_bases,
+		unsigned *	a_nbases
+			)
+{
+const uint8_t *	l_val;
+uint32_t	l_pos = 0, l_vlen;
+uint16_t	l_tag;
+int		l_kind = 0;
+char **		l_b = NULL;
+unsigned	l_n = 0;
+
+	while ( 1 & vbk$tlv_next(a_rctx->summary, a_rctx->sumlen, &l_pos, &l_tag, &l_vlen, &l_val) )
+		{
+		if ( l_tag == VBK$K_TAG_KIND )
+			l_kind	= 1;
+
+		if ( (l_tag != VBK$K_TAG_BASE) || !l_vlen || (l_val [0] != '/') || (l_vlen >= VBACKUP$K_SZ_PATH) || memchr(l_val, 0, l_vlen) )
+			continue;
+
+		{
+		char **	l_p = realloc(l_b, (l_n + 1) * sizeof(char *));
+
+		if ( !l_p || !(l_p [l_n] = strndup((const char *) l_val, l_vlen)) )
+			{
+			free(l_p ? l_p : l_b);
+
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+			}
+
+		l_b	= l_p;
+		l_n++;
+		}
+		}
+
+	/* Before X01-02 a base was kept as it was given, maybe relative: no place to go back to */
+	if ( !l_kind || !l_n )
+		{
+		for ( unsigned i = 0; i < l_n; i++ )
+			free(l_b [i]);
+
+		free(l_b);
+
+		return	$VBKMSG(VBACKUP$_ORIGNOBASE, a_spec);
+		}
+
+	if ( (l_n > 1) && a_opts->incremental )
+		{
+		for ( unsigned i = 0; i < l_n; i++ )
+			free(l_b [i]);
+
+		free(l_b);
+
+		return	$VBKMSG(VBACKUP$_QUALUSE, "ORIGINAL", "with /INCREMENTAL, only for a saveset of one base");
+		}
+
+	for ( unsigned i = 0; i < l_n; i++ )
+		$VBKMSG(VBACKUP$_ORIGTARGET, a_spec, l_b [i]);
+
+	vbk$strcpy(sizeof(a_opts->output), a_opts->output, l_b [0]);
+
+	if ( l_n == 1 )
+		{
+		free(l_b [0]);
+		free(l_b);
+		l_b	= NULL;
+		}
+
+	*a_bases  = l_b;
+	*a_nbases = l_n;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	The restore of one saveset.
 **
 **  FORMAL PARAMETERS:
@@ -1208,6 +1326,8 @@ uint64_t	l_nf = 0, l_nb = 0;
 uint32_t	l_len;
 uint16_t	l_type;
 int		l_status, l_quit = 0, l_lossy = 0, l_end = 0;
+char **		l_bases = NULL;
+unsigned	l_nbases = 0;
 
 	if ( !(1 & (l_status = vbk$rd_open(&l_rctx, a_spec, vbk$rdevent, (void *) a_spec))) )
 		return	(l_status == STS$K_WARN) ? $VBKMSG(VBACKUP$_NOTSAVESET, a_spec) : $VBKMSG(VBACKUP$_OPENIN, a_spec, l_rctx.err, strerror(l_rctx.err));
@@ -1215,11 +1335,24 @@ int		l_status, l_quit = 0, l_lossy = 0, l_end = 0;
 	if ( !l_rctx.trailer && !a_opts->incremental )
 		$VBKMSG(VBACKUP$_NOTRAILER, a_spec);
 
+	/* /ORIGINAL: the absolute bases of the SUMMARY (X01-02 and later) are the output */
+	if ( a_opts->original && !(1 & s_vbk$original(a_opts, &l_rctx, a_spec, &l_bases, &l_nbases)) )
+		{
+		vbk$rd_close(&l_rctx);
+
+		return	STS$K_ERROR;
+		}
+
 	/* /INCREMENTAL: the catalog first, before a single file is touched */
 	if ( a_opts->incremental && !(1 & s_vbk$catnames(&l_rctx, a_spec, &l_names)) )
 		{
 		vbk$hash_free(&l_names, 0);
 		vbk$rd_close(&l_rctx);
+
+		for ( unsigned i = 0; l_bases && (i < l_nbases); i++ )
+			free(l_bases [i]);
+
+		free(l_bases);
 
 		return	STS$K_ERROR;
 		}
@@ -1229,10 +1362,22 @@ int		l_status, l_quit = 0, l_lossy = 0, l_end = 0;
 		vbk$hash_free(&l_names, 0);
 		vbk$rd_close(&l_rctx);
 
+		for ( unsigned i = 0; l_bases && (i < l_nbases); i++ )
+			free(l_bases [i]);
+
+		free(l_bases);
+
 		return	STS$K_ERROR;
 		}
 
 	l_rst->rctx	= &l_rctx;
+
+	if ( l_nbases > 1 )
+		{
+		l_rst->bases	= l_bases;
+		l_rst->nbases	= l_nbases;
+		l_bases		= NULL;
+		}
 
 	while ( 1 & vbk$rd_next(&l_rctx, &l_type, &l_body, &l_len, NULL) )
 		{

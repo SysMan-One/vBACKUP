@@ -135,6 +135,44 @@ in the other volumes can still be restored.
 
 Keeps the text in the saveset. /LIST shows it.
 
+## /ORIGINAL -- restore the files where they came from
+
+```
+vbackup /mnt/usb/home.bck /ORIGINAL
+vbackup /mnt/usb/home.bck /ORIGINAL /REPLACE     over the files that are there
+```
+
+No output is given: every file goes back to the directory it was saved
+from (the saveset keeps it, as an absolute name, since X01-02). VBACKUP
+says where the files go before it writes them. Files that are there
+are kept unless you give /REPLACE.
+
+A saveset made before X01-02 does not know where its files came from:
+give an output directory (ORIGNOBASE). A saveset of several inputs puts
+each file back under its own; /INCREMENTAL works with a saveset of one
+input only.
+
+Be careful with savesets you did not make yourself: /ORIGINAL writes
+wherever the saveset says.
+
+## /DELETE -- delete the files after saving them
+
+```
+vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
+```
+
+Saves the files, reads the saveset back and compares it with the disk
+(/VERIFY, which is required), and only then deletes the files from the
+disk. A file is deleted only if the comparison found no differences at
+all and the file has not changed since it was saved (same inode, size,
+modification and change time); otherwise it is kept and SRCKEPT says
+why. Directories are kept. /CONFIRM asks for each file; /LOG names each
+file deleted.
+
+/DELETE is refused with /PHYSICAL, /IMAGE, /SINCE and /BEFORE, and does
+nothing when the saveset goes to the standard output (it cannot be
+verified).
+
 ## /PHYSICAL -- a whole device, block by block
 
 ```
@@ -744,6 +782,12 @@ that were in the cache stay there.
 %VBACKUP-W-IMGNOID      the label or UUID is not known
 %VBACKUP-I-IMGCMD       /LOG: the mkfs command
 %VBACKUP-I-IMGSUMM      /IMAGE: the totals
+%VBACKUP-E-ORIGNOBASE   /ORIGINAL: the saveset does not say where from
+%VBACKUP-I-ORIGTARGET   /ORIGINAL: where the files go back to
+%VBACKUP-I-SRCDELETED   /DELETE /LOG: a file saved, verified, deleted
+%VBACKUP-W-SRCKEPT      /DELETE: a file kept, and why
+%VBACKUP-I-DELSUMM      /DELETE: the totals
+%VBACKUP-E-QUALUSE      a qualifier where it cannot be used, and why
 %VBACKUP-E-CRCERR       the data restored differ from the data saved
 %VBACKUP-E-COMPARERR    a difference between the saveset and the disk
 %VBACKUP-W-ATTRERR      an attribute could not be restored

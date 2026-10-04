@@ -134,6 +134,43 @@ $ vbackup /home home.bck /VOLUME_SIZE=4G
 
 Сохраняет текст в saveset-е; /LIST его показывает.
 
+## /ORIGINAL -- восстановить файлы туда, откуда они взяты
+
+```
+vbackup /mnt/usb/home.bck /ORIGINAL
+vbackup /mnt/usb/home.bck /ORIGINAL /REPLACE     поверх существующих файлов
+```
+
+Выходной каталог не указывается: каждый файл возвращается в тот каталог,
+откуда был сохранён (saveset хранит его абсолютным именем с X01-02).
+Прежде чем писать, VBACKUP говорит, куда пойдут файлы. Существующие
+файлы не трогаются без /REPLACE.
+
+Saveset, сделанный до X01-02, не знает, откуда его файлы: укажите
+выходной каталог (ORIGNOBASE). Saveset из нескольких входов кладёт
+каждый файл под свой; /INCREMENTAL -- только для saveset-а с одним
+входом.
+
+Осторожно с чужими saveset-ами: /ORIGINAL пишет туда, куда говорит
+saveset.
+
+## /DELETE -- удалить файлы после сохранения
+
+```
+vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
+```
+
+Сохраняет файлы, перечитывает saveset и сравнивает его с диском
+(/VERIFY обязателен) и только потом удаляет файлы с диска. Файл
+удаляется, только если сравнение не нашло никаких различий и файл не
+менялся после сохранения (тот же inode, размер, время изменения данных и
+метаданных); иначе он остаётся, и SRCKEPT говорит почему. Каталоги
+остаются. /CONFIRM спрашивает про каждый файл, /LOG называет каждый
+удалённый.
+
+/DELETE не сочетается с /PHYSICAL, /IMAGE, /SINCE и /BEFORE и ничего не
+удаляет, если saveset идёт на стандартный вывод (его нельзя проверить).
+
 ## /PHYSICAL -- устройство целиком, поблочно
 
 ```
@@ -745,6 +782,12 @@ VBACKUP_PREFETCH=n задаёт число потоков, 0 выключает 
 %VBACKUP-W-IMGNOID      метка или UUID неизвестны
 %VBACKUP-I-IMGCMD       /LOG: команда mkfs
 %VBACKUP-I-IMGSUMM      /IMAGE: итоги
+%VBACKUP-E-ORIGNOBASE   /ORIGINAL: saveset не знает, откуда файлы
+%VBACKUP-I-ORIGTARGET   /ORIGINAL: куда возвращаются файлы
+%VBACKUP-I-SRCDELETED   /DELETE /LOG: файл сохранён, проверен, удалён
+%VBACKUP-W-SRCKEPT      /DELETE: файл оставлен, и почему
+%VBACKUP-I-DELSUMM      /DELETE: итоги
+%VBACKUP-E-QUALUSE      квалификатор там, где его нельзя, и почему
 %VBACKUP-E-CRCERR       восстановленные данные не совпали с сохранёнными
 %VBACKUP-E-COMPARERR    saveset и диск различаются
 %VBACKUP-W-ATTRERR      атрибут не восстановлен

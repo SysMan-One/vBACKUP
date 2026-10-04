@@ -26,7 +26,8 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		The heading says PHYSICAL, the device size and sector, and
-**		whether the data is compressed.
+**		whether the data is compressed; of /IMAGE the file system type,
+**		label, UUID, the bytes in use and the mount options.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		The PRESENT entries of an incremental catalog are counted, not
@@ -222,6 +223,12 @@ VBK$TIME	l_t;
 			case	VBK$K_TAG_DEVSIZE:	fprintf(a_lst->out, "Device size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
 			case	VBK$K_TAG_SECTORSIZE:	fprintf(a_lst->out, "Sector size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
 			case	VBK$K_TAG_COMPRESS:	fprintf(a_lst->out, "Data format:       compressed (LZ4)\n");				break;
+			case	VBK$K_TAG_IMAGE:	fprintf(a_lst->out, "Image:             a whole file system (/IMAGE)\n");			break;
+			case	VBK$K_TAG_FSTYPE:	fprintf(a_lst->out, "File system:       %.*s\n", (int) l_vlen, l_val);			break;
+			case	VBK$K_TAG_FSLABEL:	fprintf(a_lst->out, "Label:             %.*s\n", (int) l_vlen, l_val);			break;
+			case	VBK$K_TAG_FSUUID:	fprintf(a_lst->out, "UUID:              %.*s\n", (int) l_vlen, l_val);			break;
+			case	VBK$K_TAG_FSUSED:	fprintf(a_lst->out, "In use:            %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
+			case	VBK$K_TAG_MOUNTOPTS:	fprintf(a_lst->out, "Mounted with:      %.*s\n", (int) l_vlen, l_val);			break;
 			case	VBK$K_TAG_BLOCKSIZE:	fprintf(a_lst->out, "Block size:        %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));	break;
 			case	VBK$K_TAG_GROUPSIZE:	fprintf(a_lst->out, "Group size:        %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));	break;
 

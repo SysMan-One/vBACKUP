@@ -37,7 +37,8 @@
 **		/DATA_FORMAT=COMPRESSED: a DATAZ record where LZ4 pays, DATA
 **		elsewhere; the SUMMARY says COMPRESS.  /PHYSICAL: a device
 **		saved as one file, the runs of zeros left out (S_VBK$PHYSICAL).
-**		/IMAGE: the identity of the volume in the SUMMARY.
+**		/IMAGE: the identity of the volume in the SUMMARY.  /DELETE:
+**		the files saved and verified, unchanged since, deleted.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files are read SEQUENTIAL; a cold one is dropped from the
@@ -968,6 +969,113 @@ int		l_first = 1, l_status = STS$K_SUCCESS;
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	/DELETE: the files of the saveset deleted from the disk, once it
+**	has been written and verified.  Only the entries saved whole
+**	(STATUS OK), only regular files and links - directories stay - and
+**	only a file that is still the one saved: the same inode, size,
+**	modification and change time as its catalog entry.  A file changed
+**	since is kept and said so.  /CONFIRM asks for each.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_sav		The save: its catalog spool
+**	a_base		The bases of the inputs
+**	a_nbase		How many
+**
+**  RETURN VALUE:
+**	None; DELSUMM says what was done.
+**--
+*/
+static	void	s_vbk$delete	(
+		VBK$SAVE *	a_sav,
+		char		a_base [][VBACKUP$K_SZ_PATH],
+		unsigned	a_nbase
+			)
+{
+VBK$OPTS *	l_o = a_sav->opts;
+VBK$ATTR	l_attr;
+struct stat	l_st;
+uint8_t		l_len [4], *l_buf = NULL;
+uint32_t	l_elen, l_bufsz = 0;
+uint64_t	l_ndel = 0, l_nkept = 0;
+char		l_path [VBACKUP$K_SZ_PATH];
+int		l_status;
+
+	rewind(a_sav->spool);
+
+	while ( 1 == fread(l_len, sizeof(l_len), 1, a_sav->spool) )
+		{
+		l_elen	= vbk$get32(l_len);
+
+		if ( l_elen > l_bufsz )
+			{
+			uint8_t *	l_p = realloc(l_buf, l_elen);
+
+			if ( !l_p )
+				break;
+
+			l_buf	= l_p;
+			l_bufsz	= l_elen;
+			}
+
+		if ( (1 != fread(l_buf, l_elen, 1, a_sav->spool)) || !(1 & vbk$atr_parse(l_buf, l_elen, &l_attr)) )
+			break;
+
+		if ( (l_attr.status != VBK$K_FS_OK) || ((l_attr.ftype != VBK$K_FT_REG) && (l_attr.ftype != VBK$K_FT_SYMLINK) && (l_attr.ftype != VBK$K_FT_HARDLINK)) )
+			continue;
+
+		if ( (l_attr.baseidx >= a_nbase) || !(1 & vbk$mkpath(a_base [l_attr.baseidx], l_attr.path, l_attr.pathlen, l_path, sizeof(l_path))) )
+			continue;
+
+		if ( lstat(l_path, &l_st) )
+			continue;
+
+		/* Still the file that was saved?  The inode, and - but for a further name - its size and times */
+		if ( (l_attr.hasdevino && (((uint64_t) l_st.st_ino != l_attr.ino) || ((uint64_t) l_st.st_dev != l_attr.dev)))
+			|| ((l_attr.ftype != VBK$K_FT_HARDLINK) && (((uint64_t) l_st.st_size != l_attr.size)
+			|| (l_st.st_mtim.tv_sec != l_attr.mtime.sec) || ((uint32_t) l_st.st_mtim.tv_nsec != l_attr.mtime.nsec)
+			|| (l_attr.hasctime && ((l_st.st_ctim.tv_sec != l_attr.ctime.sec) || ((uint32_t) l_st.st_ctim.tv_nsec != l_attr.ctime.nsec))))) )
+			{
+			$VBKMSG(VBACKUP$_SRCKEPT, l_path, "it changed after it was saved");
+			l_nkept++;
+			continue;
+			}
+
+		if ( l_o->confirm )
+			{
+			if ( STS$K_FATAL == (l_status = vbk$confirm("Delete", l_path)) )
+				break;
+
+			if ( !(1 & l_status) )
+				{
+				l_nkept++;
+				continue;
+				}
+			}
+
+		if ( unlink(l_path) )
+			{
+			$VBKMSG(VBACKUP$_SRCKEPT, l_path, strerror(errno));
+			l_nkept++;
+			continue;
+			}
+
+		l_ndel++;
+
+		if ( l_o->log )
+			$VBKMSG(VBACKUP$_SRCDELETED, l_path);
+		}
+
+	free(l_buf);
+
+	$VBKMSG(VBACKUP$_DELSUMM, l_ndel, l_nkept);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	The save operation.
 **
 **  FORMAL PARAMETERS:
@@ -983,6 +1091,7 @@ int	vbk$save	(
 		VBK$OPTS *	a_opts
 			)
 {
+int		l_verified = 0;
 VBK$SAVE *	l_sav;
 VBK$TLVB	l_sum = {0}, l_trl = {0};
 VBK$LOC		l_catloc = {0};
@@ -1102,7 +1211,6 @@ int		l_status = STS$K_SUCCESS;
 			$VBKMSG(VBACKUP$_INCRSUMM, l_sav->npresent);
 		}
 
-	fclose(l_sav->spool);
 	vbk$tlv_free(&l_sum);
 	vbk$tlv_free(&l_trl);
 	vbk$tlv_free(&l_sav->xbuf);
@@ -1117,7 +1225,6 @@ int		l_status = STS$K_SUCCESS;
 
 	free(l_sav->iobuf);
 	free(l_sav->zbuf);
-	free(l_base);
 
 	/* /VERIFY: the saveset just written, read back and compared with the disk */
 	if ( a_opts->verify && strcmp(a_opts->output, "-") )
@@ -1125,8 +1232,20 @@ int		l_status = STS$K_SUCCESS;
 		$VBKMSG(VBACKUP$_VERIFYING, a_opts->output);
 
 		l_status = vbk$compare(a_opts, a_opts->output);
+		l_verified = (l_status == STS$K_SUCCESS);
 		}
 	else	l_status = STS$K_SUCCESS;
+
+	/* /DELETE: only what a verify that found nothing has seen - and nothing that changed since */
+	if ( a_opts->delete )
+		{
+		if ( l_verified )
+			s_vbk$delete(l_sav, l_base, a_opts->ninput);
+		else	$VBKMSG(VBACKUP$_SRCKEPT, "every file", strcmp(a_opts->output, "-") ? "the saveset did not verify" : "a saveset on the standard output cannot be verified");
+		}
+
+	fclose(l_sav->spool);
+	free(l_base);
 
 	/*
 	**  /RECORD: the saveset and the state of its files into the journal -

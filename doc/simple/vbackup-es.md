@@ -37,6 +37,8 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 
 Esto es todo lo que necesitas. Abajo, paso a paso.
 
+Y más: hacer la caja más pequeña, sección 7; guardar un disco entero, secciones 8 y 9.
+
 ---
 
 ## Antes de empezar
@@ -287,7 +289,164 @@ Con `/LOG`, VBACKUP muestra cada archivo:
 
 ---
 
-## 7. ¿No hay VBACKUP? Usa vbkx
+## 7. Hacer la caja más pequeña
+
+**Para qué:** para que la caja ocupe menos sitio en la memoria USB.
+
+**Qué escribir:**
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /DATA_FORMAT=COMPRESSED
+```
+
+**Qué verás:** nada. Eso es bueno. La caja está lista, y es más pequeña.
+
+Compara la misma carpeta sin y con compresión:
+
+```
+sin compresión:  1048576 bytes
+con compresión:   655360 bytes
+```
+
+**Qué significa:** las cartas y los documentos se encogen bien.
+Las fotos, los vídeos y los archivos comprimidos (`.jpg`, `.mp4`, `.zip`) ya
+están comprimidos: VBACKUP los guarda tal cual. No se rompe nada.
+
+Sacar una caja pequeña es igual que siempre, no hay que añadir nada:
+
+```
+vbackup /mnt/usb/ivan.bck /home/ivan/restored
+```
+
+**Cuidado:** un VBACKUP antiguo (antes de X01-04) no entiende una caja
+pequeña. Dice que los archivos están dañados:
+
+```
+%VBACKUP-E-CRCERR, /home/ivan/restored/ivan/letters/letter1.txt: checksum mismatch, the data differ from what was saved
+%VBACKUP-E-FILDAMAGED, /home/ivan/restored/ivan/letters/letter1.txt is incomplete: its data was lost in bad blocks
+```
+
+Los archivos de la caja están bien. Solo instala el VBACKUP nuevo.
+
+---
+
+## 8. Guardar un disco o una partición entera, tal como está
+
+**Para qué:** para hacer una copia exacta de todo el disco, trocito a trocito.
+Así se copia el disco con el que arranca el ordenador, o un disco cifrado.
+
+Esto solo lo puede hacer el usuario jefe del ordenador: **root**.
+
+**Primero averigua el nombre del disco.** Esto es muy importante:
+
+```
+lsblk
+```
+
+Verás una lista de discos, por ejemplo `sdb`, y en él una partición `sdb1`.
+El nombre completo de la partición es `/dev/sdb1`.
+
+**Antes de guardar:** nadie puede escribir en ese disco.
+Desconéctalo del sistema (`umount`) o conéctalo «solo para leer».
+Si no, la copia sale rota y no te darás cuenta.
+
+**Qué escribir:**
+
+```
+vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL
+```
+
+**Qué verás:**
+
+```
+%VBACKUP-I-PHYSSUMM, /dev/sdb1: 67108864 bytes, 1507328 of them data, the rest zeros
+```
+
+**Qué significa:** se guardó un disco de 64 MB. Tenía 1,5 MB de datos de
+verdad. Los sitios vacíos (ceros) no ocupan sitio en la caja.
+
+**Volver a ponerlo en un disco.** ¡Esto **borra todo** lo que hay en `/dev/sdc1`!
+Comprueba el nombre con `lsblk` dos veces.
+
+```
+vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
+```
+
+VBACKUP pregunta:
+
+```
+Everything on /dev/sdc1 (134217728 bytes) is to be overwritten with the device saved in /mnt/usb/sdb1.bck.
+Type YES to go on:
+```
+
+Escribe `YES` en mayúsculas y pulsa Enter. Cualquier otra respuesta es «no».
+
+**Qué verás:**
+
+```
+%VBACKUP-I-PHYSLARGER, /dev/sdc1 holds 134217728 bytes, the device saved held 67108864: the rest stays as it is, the file system keeps its old size
+%VBACKUP-I-PHYSUUID, /dev/sdc1 now carries the labels and UUIDs of the device saved: never mount it beside the original
+%VBACKUP-I-PHYSSUMM, /dev/sdc1: 67108864 bytes, 1507328 of them data, the rest zeros
+```
+
+**Qué significa:**
+
+- el disco nuevo es más grande: la copia queda al principio, el resto no se toca;
+- la copia es gemela del disco viejo. **Nunca conectes** el viejo y el nuevo
+  a la vez: se confunden;
+- un disco más pequeño que el guardado no sirve: VBACKUP se niega.
+
+**Ponerlo en un archivo imagen** (no borra nada):
+
+```
+vbackup /mnt/usb/sdb1.bck /home/ivan/sdb1.img /PHYSICAL
+```
+
+---
+
+## 9. Guardar un sistema de archivos entero y crearlo de nuevo en otro disco
+
+**En qué se diferencia de la sección 8:** la sección 8 copia cada trocito del
+disco; aquí VBACKUP copia todos los **archivos** del disco y recuerda qué disco era.
+El disco nuevo puede tener otro tamaño.
+
+Esto también lo hace solo **root**.
+
+**Qué escribir** (`/mnt/photos` es donde está conectado el disco):
+
+```
+vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
+```
+
+**Qué verás:** nada. Eso es bueno.
+
+**Crear el disco de nuevo en `/dev/sdc1`.** ¡Esto **borra todo** en `/dev/sdc1`!
+
+```
+vbackup /mnt/usb/photos.bck /dev/sdc1 /IMAGE /REPLACE
+```
+
+**Qué verás:**
+
+```
+%VBACKUP-I-PHYSUUID, /dev/sdc1 now carries the labels and UUIDs of the device saved: never mount it beside the original
+%VBACKUP-I-IMGSUMM, /dev/sdc1: a ext4 file system made, 11 files, 760000 bytes restored
+```
+
+**Qué significa:** en `/dev/sdc1` se hizo un disco nuevo del mismo tipo (ext4)
+con el mismo nombre, y se pusieron en él todos los archivos.
+
+Recuerda:
+
+- hace falta el programa que crea discos de ese tipo (`mkfs.ext4`,
+  `mkfs.vfat` …). Lo instala quien te preparó el ordenador;
+- así **no** se puede mover el disco con el que arranca el ordenador.
+  Para eso guarda el disco entero (`/dev/sdb`, no `/dev/sdb1`) como en la sección 8;
+- no conectes el disco viejo y el nuevo a la vez: son gemelos.
+
+---
+
+## 10. ¿No hay VBACKUP? Usa vbkx
 
 **Para qué:** estás en otro ordenador y allí no está VBACKUP.
 Pero existe `vbkx` — un solo programa pequeño. Llévalo en la misma memoria USB.
@@ -355,7 +514,7 @@ Para reemplazarlo, añade `-f`.
 
 ---
 
-## 8. Si algo salió mal
+## 11. Si algo salió mal
 
 Un mensaje se ve así: `%VBACKUP-E-NOMBRE, texto`.
 La letra después de `VBACKUP-` te dice lo grave que es:
@@ -571,9 +730,144 @@ Después haz la caja otra vez.
 vbackup /mnt/usb/ivan.bck /home/ivan/restored
 ```
 
+### PHYSMOUNTED
+
+**Qué ves:**
+
+```
+%VBACKUP-E-PHYSMOUNTED, /dev/sdb1 is mounted read-write on /mnt/photos: unmount it, mount it read-only, or save a snapshot
+```
+
+**Qué pasó:** el disco está conectado y se puede escribir en él. La copia saldría rota.
+
+**Qué hacer:** desconecta el disco y vuelve a intentarlo:
+
+```
+umount /mnt/photos
+vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL
+```
+
+Al devolver una caja, el mismo mensaje significa: VBACKUP no escribe nada en un
+disco conectado. Desconéctalo.
+
+### PHYSHELD
+
+**Qué ves:**
+
+```
+%VBACKUP-E-PHYSHELD, /dev/sdb2 is in use (swap): free it first, or save what uses it
+```
+
+**Qué pasó:** el propio sistema usa este disco (swap, LVM, RAID, cifrado).
+
+**Qué hacer:** pide ayuda a quien te preparó el ordenador. No toques este disco tú solo.
+
+### PHYSREPLACE
+
+**Qué ves:**
+
+```
+%VBACKUP-E-PHYSREPLACE, /dev/sdc1 is a device: everything on it is overwritten - give /REPLACE to do so
+```
+
+**Qué pasó:** VBACKUP protege el disco: sin `/REPLACE` no lo borra.
+
+**Qué hacer:** comprueba el nombre del disco (`lsblk`). Si seguro que es ese, añade `/REPLACE`.
+
+### PHYSSMALL
+
+**Qué ves:**
+
+```
+%VBACKUP-E-PHYSSMALL, /dev/sdc1 holds 33554432 bytes, the device saved held 67108864: nothing written
+```
+
+**Qué pasó:** el disco nuevo es más pequeño que el guardado. No cabe todo.
+
+**Qué hacer:** usa un disco más grande. O pon la caja en un archivo imagen (sección 8).
+
+### PHYSABORT
+
+**Qué ves:**
+
+```
+%VBACKUP-E-PHYSABORT, /dev/sdc1 not overwritten: the answer was not YES
+```
+
+**Qué pasó:** no contestaste `YES`. No se borró nada.
+
+**Qué hacer:** si de verdad lo quieres, repite y escribe `YES` en mayúsculas.
+
+### IMGNOTVOL
+
+**Qué ves:**
+
+```
+%VBACKUP-E-IMGNOTVOL, /home/ivan is neither the mount point of a file system nor a device: /IMAGE saves a whole volume
+```
+
+**Qué pasó:** `/IMAGE` guarda un disco entero, y tú diste una carpeta normal.
+
+**Qué hacer:** da el sitio donde está conectado el disco (por ejemplo `/mnt/photos`),
+o guarda la carpeta de la forma normal (sección 1).
+
+### IMGNOTMNT
+
+**Qué ves:**
+
+```
+%VBACKUP-E-IMGNOTMNT, /dev/sdb1 is not mounted: mount it (read-only is enough) and give the mount point or the device
+```
+
+**Qué pasó:** el disco no está conectado: VBACKUP no puede leer sus archivos.
+
+**Qué hacer:** conéctalo solo para leer y vuelve a intentarlo:
+
+```
+mount -o ro /dev/sdb1 /mnt/photos
+vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
+```
+
+### IMGUNSUPP
+
+**Qué ves:**
+
+```
+%VBACKUP-E-IMGUNSUPP, /mnt/usb/old.bck: VBACKUP does not make a file system of type minix - use /PHYSICAL for it
+```
+
+**Qué pasó:** VBACKUP no sabe crear un disco de ese tipo.
+
+**Qué hacer:** guarda ese disco como en la sección 8 (`/PHYSICAL`).
+O saca de la caja solo los archivos (sección 3).
+
+### IMGMKFS
+
+**Qué ves** (por ejemplo):
+
+```
+%VBACKUP-E-IMGMKFS, mkfs.xfs -f -q -L PHOTOS /dev/sdc1 failed: the program is not installed
+```
+
+**Qué pasó:** no se pudo crear el disco nuevo. Casi siempre falta el programa.
+
+**Qué hacer:** pide a quien te preparó el ordenador que lo instale (aquí, `mkfs.xfs`).
+
+### IMGSMALL
+
+**Qué ves:**
+
+```
+%VBACKUP-E-IMGSMALL, /dev/sdc1 holds 8388608 bytes, the files need about 17596518: nothing written
+```
+
+**Qué pasó:** los archivos no caben en este disco.
+
+**Qué hacer:** usa un disco más grande.
+
 ---
 
-## 9. Ayuda, no entiendo nada
+## 12. Ayuda, no entiendo nada
 
 No pasa nada. Pide ayuda al mismo programa.
 
@@ -618,3 +912,8 @@ Y sobre todo: pide ayuda a quien te preparó el ordenador. Enséñale el mensaje
 - **Diario** — el cuaderno de VBACKUP donde apunta lo que ya está guardado.
 - **Bloque** — un trocito de la caja. Si uno se rompe, VBACKUP lo arregla solo.
 - **Índice (catálogo)** — la lista de todos los archivos al final de la caja.
+- **Partición** — una parte de un disco. Un disco se puede dividir en varias particiones: `sdb1`, `sdb2`.
+- **Sistema de archivos** — el orden en que los archivos están en un disco. Tiene un tipo: ext4, vfat …
+- **Punto de montaje** — la carpeta por la que ves un disco conectado. Por ejemplo `/mnt/photos`.
+- **Imagen** — un solo archivo que guarda un disco entero, trocito a trocito.
+- **UUID** — el número largo de un disco, como un pasaporte. Una copia tiene el mismo que el original.

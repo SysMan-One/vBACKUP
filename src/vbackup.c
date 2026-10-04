@@ -44,7 +44,8 @@
 **	X01-04		 4-OCT-2026	RRL
 **		Stage 4: /DATA_FORMAT=COMPRESSED - the data of the files in DATAZ
 **		records, LZ4 block format.  /PHYSICAL: a device block by block.
-**		/IMAGE: a whole file system, made again by a restore.
+**		/IMAGE: a whole file system, made again by a restore.  /ORIGINAL,
+**		/DELETE.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		Stage 3: the saveset is written by a thread of its own; hints
@@ -112,6 +113,8 @@ enum	{
 	VBACKUP$K_QUAL_DATA_FORMAT,
 	VBACKUP$K_QUAL_PHYSICAL,
 	VBACKUP$K_QUAL_IMAGE,
+	VBACKUP$K_QUAL_ORIGINAL,
+	VBACKUP$K_QUAL_DELETE,
 
 	VBACKUP$K_QUAL_MAX
 	};
@@ -172,6 +175,8 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("DATA_FORMAT")},	.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_dfmkwd },
 	{ .name = {$ASCINI("PHYSICAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("IMAGE")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("ORIGINAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("DELETE")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
 
@@ -202,7 +207,8 @@ static	const char	s_usage [] = {
 	"            /SINCE=time /BEFORE=time /MODIFIED /CREATED /CHANGED\n"
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
 	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
-	"  Restore:  /REPLACE /OWNER=ORIGINAL|DEFAULT|user /INCREMENTAL\n"
+	"            /DELETE (with /VERIFY: the files saved and verified are deleted)\n"
+	"  Restore:  /REPLACE /OWNER=ORIGINAL|DEFAULT|user /INCREMENTAL /ORIGINAL (no output)\n"
 	"  Device:   /dev/sdb1 disk.bck /PHYSICAL      disk.bck /dev/sdc1 /PHYSICAL /REPLACE\n"
 	"  Volume:   /mnt/data vol.bck /IMAGE          vol.bck /dev/sdc1 /IMAGE /REPLACE\n"
 	"  Common:   /SELECT=(pat,...) /EXCLUDE=(pat,...) /[NO]XATTRS /LOG /CONFIRM\n"
@@ -635,6 +641,27 @@ ASC		l_val;
 				: a_opts->hasowner ? "BY_OWNER" : "SELECT, /EXCLUDE");
 		}
 
+	/* /ORIGINAL: back where the files came from - no output directory, nothing of a device */
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_ORIGINAL, NULL) )
+		{
+		a_opts->original = 1;
+
+		if ( a_opts->physical || a_opts->image )
+			return	$VBKMSG(VBACKUP$_CONFQUAL, "ORIGINAL", a_opts->physical ? "PHYSICAL" : "IMAGE");
+		}
+
+	/* /DELETE: never without /VERIFY - a file goes only once its copy has been read back and compared */
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_DELETE, NULL) )
+		{
+		a_opts->delete	= 1;
+
+		if ( !a_opts->verify )
+			return	$VBKMSG(VBACKUP$_QUALUSE, "DELETE", "a file is deleted only once its copy has been read back and compared - give /VERIFY too");
+
+		if ( a_opts->physical || a_opts->image || a_opts->timefilter )
+			return	$VBKMSG(VBACKUP$_CONFQUAL, "DELETE", a_opts->physical ? "PHYSICAL" : a_opts->image ? "IMAGE" : "SINCE, /BEFORE");
+		}
+
 	/* /DATA_FORMAT=COMPRESSED: the data in DATAZ records, LZ4 (format.md, 6.7) */
 	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_DATA_FORMAT, l_str, sizeof(l_str)) )
 		{
@@ -844,7 +871,7 @@ size_t		l_cmdlen = 0;
 		case	VBACKUP$K_OP_SAVE:
 			if ( (l_opts.physical || l_opts.image) && (l_opts.ninput != 1) )
 				{
-				$VBKMSG(VBACKUP$_CONFQUAL, l_opts.physical ? "PHYSICAL" : "IMAGE", "several inputs: one volume a saveset");
+				$VBKMSG(VBACKUP$_QUALUSE, l_opts.physical ? "PHYSICAL" : "IMAGE", "one input - one device or volume - a saveset");
 				break;
 				}
 
@@ -879,12 +906,16 @@ size_t		l_cmdlen = 0;
 			break;
 
 		case	VBACKUP$K_OP_RESTORE:
-			if ( !l_opts.output [0] )
+			if ( l_opts.original && l_opts.output [0] )
+				$VBKMSG(VBACKUP$_QUALUSE, "ORIGINAL", "no output is given: the files go back where they came from");
+			else if ( l_opts.original )
+				l_status = vbk$restore(&l_opts);
+			else if ( !l_opts.output [0] )
 				$VBKMSG(VBACKUP$_NOPARAM, l_opts.physical ? "output device" : "output directory");
 			else if ( l_opts.physical )
-				l_status = (l_opts.ninput == 1) ? vbk$phy_restore(&l_opts) : $VBKMSG(VBACKUP$_CONFQUAL, "PHYSICAL", "several savesets");
+				l_status = (l_opts.ninput == 1) ? vbk$phy_restore(&l_opts) : $VBKMSG(VBACKUP$_QUALUSE, "PHYSICAL", "one saveset at a time");
 			else if ( l_opts.image )
-				l_status = (l_opts.ninput == 1) ? vbk$img_restore(&l_opts) : $VBKMSG(VBACKUP$_CONFQUAL, "IMAGE", "several savesets");
+				l_status = (l_opts.ninput == 1) ? vbk$img_restore(&l_opts) : $VBKMSG(VBACKUP$_QUALUSE, "IMAGE", "one saveset at a time");
 			else	l_status = vbk$restore(&l_opts);
 			break;
 

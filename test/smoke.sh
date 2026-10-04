@@ -33,6 +33,8 @@
 #					(the guards, the gaps zeroed, nothing beyond).
 #					/IMAGE: an ext4 volume made again on a loop
 #					device - the tree, the root, label and UUID.
+#					/ORIGINAL (two bases), /DELETE (only after a
+#					clean /VERIFY).
 #
 #		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
 #
@@ -518,6 +520,25 @@ if [ $ROOT = 1 ] && command -v losetup > /dev/null 2>&1 && PATH=$PATH:/sbin:/usr
 	fi
 	freeloops
 fi
+
+#
+#	11b. /ORIGINAL - back where the files came from; /DELETE - after /VERIFY, nothing changed
+#
+mkdir -p orig/one/sub orig/two && echo 1 > orig/one/a && echo 2 > orig/one/sub/b && echo 3 > orig/two/c
+$VB orig/one,orig/two og.bck > /dev/null 2>&1
+rm -rf orig/one orig/two
+$VB og.bck /ORIGINAL > og.log 2>&1
+check '[ $? = 0 ] && [ "$(cat orig/one/sub/b)" = 2 ] && [ "$(cat orig/two/c)" = 3 ] && [ "$(grep -c ORIGTARGET og.log)" = 2 ]' "/ORIGINAL, two bases: $(cat og.log)"
+$VB og.bck ogout /ORIGINAL > ogo.log 2>&1
+check '[ $? = 2 ] && grep -q QUALUSE ogo.log' "/ORIGINAL with an output accepted"
+$VB orig/one dl0.bck /DELETE > dl0.log 2>&1
+check '[ $? = 2 ] && grep -q QUALUSE dl0.log && [ -e orig/one/a ]' "/DELETE without /VERIFY: $(cat dl0.log)"
+$VB orig/one dl.bck /VERIFY /DELETE > dl.log 2>&1
+check '[ $? = 0 ] && [ ! -e orig/one/a ] && [ ! -e orig/one/sub/b ] && [ -d orig/one/sub ]' "/DELETE: the files saved and verified are not gone, $(cat dl.log)"
+$VB dl.bck /ORIGINAL > /dev/null 2>&1
+check '[ "$(cat orig/one/a)" = 1 ]' "after /DELETE the files do not come back with /ORIGINAL"
+$VB orig/two - /VERIFY /DELETE > /dev/null 2> dlt.log; true
+check '[ -e orig/two/c ] && grep -q SRCKEPT dlt.log' "/DELETE deleted a file that could not be verified: $(cat dlt.log)"
 
 #
 #	12. VBKX, the stand-alone extractor

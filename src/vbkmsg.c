@@ -22,7 +22,7 @@
 **
 **	X01-03		 3-OCT-2026	RRL
 **		FILLOST and UNNAMED: the files a damaged restore lost.  The
-**		messages of /PHYSICAL and /IMAGE.
+**		messages of /PHYSICAL, /IMAGE, /ORIGINAL and /DELETE.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		The messages of stage 2: the journal, /INCREMENTAL, the copy.
@@ -130,7 +130,13 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_IMGSMALL,	"IMGSMALL, !AZ holds !UQ bytes, the files need about !UQ: nothing written"),
 	$VBKREC(VBACKUP$_IMGNOID,	"IMGNOID, !AZ: the !AZ of the file system is not known - the new one gets a new one"),
 	$VBKREC(VBACKUP$_IMGCMD,	"IMGCMD, !AZ"),
-	$VBKREC(VBACKUP$_IMGSUMM,	"IMGSUMM, !AZ: a !AZ file system made, !UQ file!%S, !UQ byte!%S restored")
+	$VBKREC(VBACKUP$_IMGSUMM,	"IMGSUMM, !AZ: a !AZ file system made, !UQ file!%S, !UQ byte!%S restored"),
+	$VBKREC(VBACKUP$_ORIGNOBASE,	"ORIGNOBASE, !AZ does not say where its files came from (made before X01-02): give an output directory"),
+	$VBKREC(VBACKUP$_ORIGTARGET,	"ORIGTARGET, the files of !AZ go back to !AZ"),
+	$VBKREC(VBACKUP$_SRCDELETED,	"SRCDELETED, !AZ deleted: it is in the saveset and verified"),
+	$VBKREC(VBACKUP$_SRCKEPT,	"SRCKEPT, !AZ not deleted: !AZ"),
+	$VBKREC(VBACKUP$_DELSUMM,	"DELSUMM, !UQ file!%S deleted, !UQ kept"),
+	$VBKREC(VBACKUP$_QUALUSE,	"QUALUSE, /!AZ: !AZ")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

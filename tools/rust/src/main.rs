@@ -53,6 +53,12 @@
 **		length or an offset out of bounds makes it a bad record, and
 **		its file is named incomplete.
 **
+**  VOLUMES:	a saveset of vbackup /PHYSICAL (format.md 6.8) holds one device:
+**		it comes out as one sparse file, the image of that device
+**		(sdb1); one of vbackup /IMAGE (6.9) comes out as the plain tree
+**		of the files of the volume - making the file system again is
+**		vbackup's business, not this one's.
+**
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
@@ -84,6 +90,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the data compressed in the LZ4 block format.
+**		/PHYSICAL and /IMAGE savesets said in the manual above.
 **
 **	X01-03		 4-OCT-2026	RRL
 **		Initial version.

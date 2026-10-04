@@ -13,7 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
-.\"		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED, /PHYSICAL, /IMAGE.
+.\"		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED, /PHYSICAL, /IMAGE,
+.\"					/ORIGINAL, /DELETE.
 .\"
 .\"		 3-OCT-2026	RRL	X-03 : Stage 3: ENVIRONMENT (VBACKUP_PIPELINE,
 .\"					VBACKUP_PREFETCH), NOTES (the page cache).
@@ -79,6 +80,14 @@ Cut the saveset into volumes of this size (K, M, G, T): x.bck, x.bck.002, ...
 .TP
 .BI /COMMENT= text
 A note kept in the saveset.
+.TP
+.B /ORIGINAL
+Restore without an output: each file back to the directory it was saved
+from.  /REPLACE to overwrite.
+.TP
+.B /DELETE
+With /VERIFY: delete the files once saved and verified, unless they
+changed since.  Directories stay.
 .TP
 .B /IMAGE
 A whole file system: every file of it, its type, label and UUID.  The
@@ -170,6 +179,8 @@ $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 $ vbackup full.bck,mon.bck /restore /INCREMENTAL
 $ vbackup /home/rrl /mnt/disk2 /VERIFY
 $ vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+$ vbackup /backup/rrl.bck /ORIGINAL
+$ vbackup /home/rrl/old /backup/old.bck /VERIFY /DELETE
 $ vbackup /mnt/data /mnt/usb/data.bck /IMAGE
 $ vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE
 $ vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL

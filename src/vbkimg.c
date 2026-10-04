@@ -554,7 +554,7 @@ int		l_image = 0, l_status, l_fd;
 	if ( !s_vbk$mkfsargs(l_fstype, l_label, l_uuid, l_out, l_argv, l_buf) )
 		l_status = $VBKMSG(VBACKUP$_IMGUNSUPP, l_spec, l_fstype);
 	else if ( a_opts->confirm )
-		l_status = $VBKMSG(VBACKUP$_CONFQUAL, "IMAGE", "CONFIRM: a whole volume is made, not file by file");
+		l_status = $VBKMSG(VBACKUP$_CONFQUAL, "IMAGE", "CONFIRM");
 	else if ( stat(l_out, &l_st) )
 		l_status = $VBKMSG(VBACKUP$_OPENOUT, l_out, errno, strerror(errno));
 	else if ( !S_ISBLK(l_st.st_mode) )

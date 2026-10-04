@@ -33,7 +33,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		COMPRESS: /DATA_FORMAT=COMPRESSED.  PHYSICAL and its messages.
-**		IMAGE and its messages.
+**		IMAGE and its messages.  ORIGINAL, DELETE and theirs.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		NOPIPE: VBACKUP_PIPELINE=0; PRE and VBK$PRE_*: the read-ahead.
@@ -160,6 +160,12 @@ enum	{
 	VBACKUP$K_MSG_IMGNOID,			/* ... label or UUID not known			*/
 	VBACKUP$K_MSG_IMGCMD,			/* ... the mkfs command, /LOG			*/
 	VBACKUP$K_MSG_IMGSUMM,			/* ... the totals				*/
+	VBACKUP$K_MSG_ORIGNOBASE,		/* /ORIGINAL: the saveset does not say where	*/
+	VBACKUP$K_MSG_ORIGTARGET,		/* ... where the files go back to		*/
+	VBACKUP$K_MSG_SRCDELETED,		/* /DELETE: a file saved and verified, deleted	*/
+	VBACKUP$K_MSG_SRCKEPT,			/* ... kept: changed since, or not verified	*/
+	VBACKUP$K_MSG_DELSUMM,			/* ... the totals				*/
+	VBACKUP$K_MSG_QUALUSE,			/* A qualifier used where it cannot be		*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -239,6 +245,12 @@ enum	{
 #define	VBACKUP$_IMGNOID	$VBKSTS(VBACKUP$K_MSG_IMGNOID,		STS$K_WARN)
 #define	VBACKUP$_IMGCMD		$VBKSTS(VBACKUP$K_MSG_IMGCMD,		STS$K_INFO)
 #define	VBACKUP$_IMGSUMM	$VBKSTS(VBACKUP$K_MSG_IMGSUMM,		STS$K_INFO)
+#define	VBACKUP$_ORIGNOBASE	$VBKSTS(VBACKUP$K_MSG_ORIGNOBASE,	STS$K_ERROR)
+#define	VBACKUP$_ORIGTARGET	$VBKSTS(VBACKUP$K_MSG_ORIGTARGET,	STS$K_INFO)
+#define	VBACKUP$_SRCDELETED	$VBKSTS(VBACKUP$K_MSG_SRCDELETED,	STS$K_INFO)
+#define	VBACKUP$_SRCKEPT	$VBKSTS(VBACKUP$K_MSG_SRCKEPT,		STS$K_WARN)
+#define	VBACKUP$_DELSUMM	$VBKSTS(VBACKUP$K_MSG_DELSUMM,		STS$K_INFO)
+#define	VBACKUP$_QUALUSE	$VBKSTS(VBACKUP$K_MSG_QUALUSE,		STS$K_ERROR)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -358,6 +370,8 @@ typedef struct vbk_opts_t
 	uint64_t	imgused;		/* ... bytes in use (statvfs)			*/
 	VBK$TLVB	imgroot;		/* ... the attributes of its root directory	*/
 	uint64_t	rstfiles, rstbytes;	/* The totals of the last restore		*/
+	int		original;		/* /ORIGINAL: back where the files came from	*/
+	int		delete;			/* /DELETE: the files saved and verified go	*/
 	struct vbk_pre_t *pre;			/* The read-ahead of files, NULL - none		*/
 	char		jnlspec [VBACKUP$K_SZ_PATH];	/* /JOURNAL=file, "" - the default	*/
 	struct vbk_jnl_t *jnl;			/* The journal, when one is open		*/
