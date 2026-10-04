@@ -8,6 +8,7 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-03 : PLUGINS, the plugins of MC and far2l.
 #		 4-OCT-2026	RRL	X-04 : WIN, vbkx.exe under wine.
 #
 #		 4-OCT-2026	RRL	X-03 : GEEKS, vbkx-go and vbkx-rs, when they are built;
@@ -68,3 +69,11 @@ if ( VBACKUP_WINVBKX AND VBACKUP_WINE )
 		VBKXEXE=${VBACKUP_WINVBKX} WINE=${VBACKUP_WINE} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/win.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/win.sh)
 endif()
+
+#	The plugins of the file managers: the commands always; the real mc and far2l when tmux and they are there
+add_test(NAME plugins
+	COMMAND ${CMAKE_COMMAND} -E env
+		VBACKUP=$<TARGET_FILE:vbackup>
+		VBKX=$<TARGET_FILE:vbkx>
+		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/plugins.d
+		sh ${CMAKE_CURRENT_SOURCE_DIR}/plugins.sh)
