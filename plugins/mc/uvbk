@@ -1,0 +1,67 @@
+#! /bin/sh
+#+++
+#
+#	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+#
+#	MODULE:		plugins/mc/uvbk
+#
+#	ABSTRACT:	The extfs of Midnight Commander for VBACKUP savesets:
+#			enter a .bck file like a directory, view and copy its
+#			files out.  Read only - a saveset is not changed.
+#
+#	DESCRIPTION:	MC calls it as
+#
+#			    uvbk list    ARCHIVE
+#			    uvbk copyout ARCHIVE NAME TARGET
+#
+#			list gives the catalog of the saveset as ls -l lines
+#			(vbackup ARCHIVE /LIST /FORMAT=LS) - the catalog only,
+#			so a saveset of hundreds of gigabytes opens at once;
+#			copyout takes one file through its place in the catalog
+#			(vbackup ARCHIVE TARGET /EXTRACT=NAME).  Anything else -
+#			copyin, rm, mkdir, rmdir - is refused: a saveset is not
+#			written to, as with BACKUP.
+#
+#			Installed into the extfs directory of MC (/usr/lib/mc/
+#			extfs.d, or ~/.local/share/mc/extfs.d for one user), with
+#			this section in mc.ext.ini before [Default]:
+#
+#			    [vbackup]
+#			    Shell=.bck
+#			    ShellIgnoreCase=true
+#			    Open=%cd %p/uvbk://
+#			    View=%view{ascii} vbackup %f /LIST /FULL
+#
+#			A saveset of several volumes is opened from a local disk
+#			only: inside another VFS (an archive, ftp) MC hands the
+#			script a temporary copy of volume 1, and the others are
+#			not beside it.  VBACKUP names another image of vbackup.
+#
+#	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#	CREATION DATE:	 4-OCT-2026
+#
+#	MODIFICATION HISTORY:
+#
+#		 4-OCT-2026	RRL	X-01 : Initial version.
+#
+#---
+
+VB=${VBACKUP:-vbackup}
+PATH=$PATH:/usr/local/bin
+export PATH
+
+case "$1" in
+	list)
+		exec "$VB" "$2" /SAVE_SET /LIST /FORMAT=LS 2> /dev/null
+		;;
+
+	copyout)
+		exec "$VB" "$2" /SAVE_SET "$4" "/EXTRACT=$3" /REPLACE 2> /dev/null
+		;;
+
+	*)
+		echo "uvbk: $1 - a saveset is not changed: read only" >&2
+		exit 1
+		;;
+esac

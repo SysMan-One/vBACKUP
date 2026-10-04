@@ -14,6 +14,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : Stage 5: the plugins of MC and far2l installed where
+#					those are found (cmake/plugcfg.cmake); VBKPHY, VBKIMG,
+#					VBKZPL.
+#
 #		 4-OCT-2026	RRL	X-04 : VBKLZ4; Windows: with cmake/mingw-w64.cmake (or a
 #					MinGW of Windows) VBKX alone is built - the reading
 #					core and the extractor, no StarLet, no tests; on
@@ -371,7 +375,62 @@ if ( VBACKUP$M_INSTALL_DOC )
 		DESTINATION ${CMAKE_INSTALL_DOCDIR})
 endif()
 
+#
+#	The plugins of the file managers (stage 5): the files for a hand
+#	installation always under share/vbackup/plugins; and where MC and
+#	far2l are found, put into their places - uvbk into the extfs of MC,
+#	the sections into mc.ext.ini and into the custom.ini of MultiArc
+#	(between markers: the uninstallation takes them out exactly).
+#
+option(VBACKUP$M_PLUGINS "Install the file manager plugins where MC and far2l are found" ON)
+
+install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/uvbk DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/mc)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/mc.ext.ini.vbackup DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/mc)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/far/vbackup.ini DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/far)
+
+set(VBACKUP_MCEXTFS "")
+set(VBACKUP_MCEXTINI "")
+set(VBACKUP_FARCUSTOM "")
+
+if ( VBACKUP$M_PLUGINS )
+	foreach ( D /usr/lib/mc/extfs.d /usr/libexec/mc/extfs.d /usr/local/libexec/mc/extfs.d )
+		if ( IS_DIRECTORY ${D} AND NOT VBACKUP_MCEXTFS )
+			set(VBACKUP_MCEXTFS ${D})
+		endif()
+	endforeach()
+
+	foreach ( F /etc/mc/mc.ext.ini /usr/local/etc/mc/mc.ext.ini )
+		if ( EXISTS ${F} AND NOT VBACKUP_MCEXTINI )
+			set(VBACKUP_MCEXTINI ${F})
+		endif()
+	endforeach()
+
+	foreach ( F /usr/share/far2l/Plugins/multiarc/plug/custom.ini /usr/local/share/far2l/Plugins/multiarc/plug/custom.ini )
+		if ( EXISTS ${F} AND NOT VBACKUP_FARCUSTOM )
+			set(VBACKUP_FARCUSTOM ${F})
+		endif()
+	endforeach()
+
+	if ( VBACKUP_MCEXTFS )
+		install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/uvbk DESTINATION ${VBACKUP_MCEXTFS})
+	endif()
+
+	if ( VBACKUP_MCEXTINI )
+		install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -DMODE=add -DTARGET=\$ENV{DESTDIR}${VBACKUP_MCEXTINI}
+			-DSNIPPET=${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/mc.ext.ini.vbackup \"-DBEFORE=[Default]\"
+			-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)")
+	endif()
+
+	if ( VBACKUP_FARCUSTOM )
+		install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -DMODE=add -DTARGET=\$ENV{DESTDIR}${VBACKUP_FARCUSTOM}
+			-DSNIPPET=${CMAKE_CURRENT_SOURCE_DIR}/plugins/far/vbackup.ini -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)")
+	endif()
+
+	message(STATUS "VBACKUP: plugins - MC extfs ${VBACKUP_MCEXTFS}, ${VBACKUP_MCEXTINI}; far2l ${VBACKUP_FARCUSTOM}")
+endif()
+
 if ( NOT TARGET uninstall )
+	set(VBACKUP_PLUGCFG ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)
 	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/uninstall.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/uninstall.cmake @ONLY)
 
 	add_custom_target(uninstall

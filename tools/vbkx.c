@@ -18,8 +18,9 @@
 **		whose archive plugins want a plain command with a plain
 **		listing.  It is linked statically where the system allows it.
 **
-**		    vbkx l saveset			list, from the catalog
-**		    vbkx x saveset [-C dir] [-f] [name...]	extract
+**		    vbkx l saveset [-m]			list, from the catalog (-m:
+**							no "-> target", for programs)
+**		    vbkx x saveset [-C dir] [-f] [-j] [name...] extract (-j: no dirs)
 **		    vbkx p saveset name			a file to stdout
 **		    vbkx t saveset			test: read all, check CRCs
 **
@@ -82,7 +83,9 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-04		 4-OCT-2026	RRL
-**		DATAZ: the data compressed with /DATA_FORMAT=COMPRESSED.
+**		DATAZ: the data compressed with /DATA_FORMAT=COMPRESSED.  l -m:
+**		the listing without link targets, for MultiArc.  x -j: the files
+**		by their last component, without directories.
 **		Windows: the calls that make files gathered into one layer
 **		(s_vbkx$os_*), a second one for Windows (UTF-16 names under
 **		\\?\, reparse points refused, names Windows cannot hold
@@ -152,7 +155,7 @@ typedef struct vbkx_dir_t			/* A directory whose mode and times wait	*/
 
 static	const char *	s_spec;			/* The saveset				*/
 static	const char *	s_outdir = ".";
-static	int		s_force, s_root, s_bad;
+static	int		s_force, s_root, s_bad, s_bare, s_junk;
 
 static	VBKX$DIR *	s_dirs;
 static	size_t		s_ndirs, s_szdirs;
@@ -1219,6 +1222,22 @@ int		l_rc = 0;
 		return;
 		}
 
+	/* -j: by the last component only, no directories - MultiArc's "extract without pathnames" */
+	if ( s_junk )
+		{
+		char *	l_slash = strrchr(a_out->name, '/');
+
+		if ( l_e->ftype == VBK$K_FT_DIR )
+			{
+			a_out->active	= 0;
+
+			return;
+			}
+
+		if ( l_slash )
+			memmove(a_out->name, l_slash + 1, strlen(l_slash + 1) + 1);
+		}
+
 	if ( !s_vbkx$nameok(a_out->name, strlen(a_out->name)) )
 		{
 		s_vbkx$msg("%s: a name that leads out of the output directory, not extracted", a_out->name);
@@ -1703,7 +1722,8 @@ char		l_ts [32];
 	printf("%s %12llu %c%04o %.*s", l_ts, (unsigned long long) a_e->size, s_vbkx$tchar(a_e->ftype), a_e->mode & 07777,
 		(int) a_e->pathlen, a_e->path);
 
-	if ( a_e->link && ((a_e->ftype == VBK$K_FT_SYMLINK) || (a_e->ftype == VBK$K_FT_HARDLINK)) )
+	/* -m: for a program that parses the lines (MultiArc), the name and nothing after it */
+	if ( !s_bare && a_e->link && ((a_e->ftype == VBK$K_FT_SYMLINK) || (a_e->ftype == VBK$K_FT_HARDLINK)) )
 		printf(" %s %.*s", (a_e->ftype == VBK$K_FT_SYMLINK) ? "->" : "link to", (int) a_e->linklen, a_e->link);
 
 	putchar('\n');
@@ -1896,8 +1916,8 @@ static	int	s_vbkx$usage	(void)
 	fprintf(stderr,
 		"VBKX " __IDENT__ " - the stand-alone extractor of VBACKUP savesets\n"
 		"\n"
-		"  vbkx l saveset                       list the files\n"
-		"  vbkx x saveset [-C dir] [-f] [name...]  extract (all, or the names given)\n"
+		"  vbkx l saveset [-m]                  list the files (-m: no link targets, for programs)\n"
+		"  vbkx x saveset [-C dir] [-f] [-j] [name...]  extract (all, or the names given; -j: no directories)\n"
 		"  vbkx p saveset name                  write one file to the standard output\n"
 		"  vbkx t saveset                       test: read it all, check the checksums\n"
 		"\n"
@@ -1964,6 +1984,10 @@ int		l_nnames = 0, l_status, l_rc;
 			s_outdir = argv [++i];
 		else if ( !strcmp(argv [i], "-f") && (l_op == 'x') )
 			s_force	= 1;
+		else if ( !strcmp(argv [i], "-m") && (l_op == 'l') )
+			s_bare	= 1;
+		else if ( !strcmp(argv [i], "-j") && (l_op == 'x') )
+			s_junk	= 1;
 		else	l_names [l_nnames++] = argv [i];
 		}
 

@@ -24,6 +24,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		  4-OCT-2026	RRL	X-02 : The sections of the file manager plugins taken out.
+#
 #		  3-OCT-2026	RRL	X-01 : Initial version, taken over from SEARCH.
 #
 #---
@@ -49,5 +51,12 @@ foreach ( F ${FILES} )
 		endif()
 	else()
 		message(STATUS "Not there: ${P}")
+	endif()
+endforeach()
+
+#	The sections of VBACKUP in the configuration of the file managers
+foreach ( F "@VBACKUP_MCEXTINI@" "@VBACKUP_FARCUSTOM@" )
+	if ( F )
+		execute_process(COMMAND ${CMAKE_COMMAND} -DMODE=remove "-DTARGET=$ENV{DESTDIR}${F}" -P "@VBACKUP_PLUGCFG@")
 	endif()
 endforeach()
