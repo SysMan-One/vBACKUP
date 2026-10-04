@@ -23,6 +23,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-02 : TAP=1 - the Test Anything Protocol (test/tap.sh).
+#
 #		 4-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
@@ -35,12 +37,9 @@ S=${SCRATCH:?"SCRATCH must name a scratch directory"}
 
 export WINEDEBUG=-all TZ=UTC
 
-FAILS=0
-CHECKS=0
-
-ok ()	{ CHECKS=$((CHECKS + 1)); }
-fail ()	{ CHECKS=$((CHECKS + 1)); FAILS=$((FAILS + 1)); echo "%VBACKUP-E-WIN, $*"; }
-check () { if eval "$1"; then ok; else fail "$2"; fi; }
+#	ok, fail, check, bail, tap_end - plain output, or TAP with TAP=1
+TAPNAME=WIN
+. "$(dirname "$0")/tap.sh"
 
 #	vbkx.exe under wine, with a ceiling: a hang is a failure, not a wait
 vw ()	{ timeout 300 $WINE "$VW" "$@"; }
@@ -242,6 +241,4 @@ check '[ $? = 2 ]' "no parameters: completion code"
 vw l nosuch.bck > /dev/null 2>&1
 check '[ $? = 2 ]' "a saveset not there: completion code"
 
-echo "$CHECKS checks, $FAILS failures"
-
-exit $FAILS
+tap_end
