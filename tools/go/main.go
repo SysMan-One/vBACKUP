@@ -16,10 +16,13 @@
 **		or: make            (the Makefile beside this file)
 **		A static binary needs nothing more: CGO is not used.
 **
-**  USAGE:	vbkx-go l saveset              list the files
-**		vbkx-go x saveset [-C dir]     extract them all into dir
+**  USAGE:	vbkx-go l saveset [-k file]           list the files
+**		vbkx-go x saveset [-C dir] [-k file]  extract them all into dir
 **						(default: the current directory)
-**		vbkx-go t saveset              read it all, check the checksums
+**		vbkx-go t saveset [-k file]           read it all, check the checksums
+**		vbkx-go selftest                      check SHA-256, HMAC, PBKDF2 and
+**						ChaCha20 against the vectors of
+**						their standards
 **
 **		saveset is volume 1 (x.bck); volumes 2, 3, ... are looked
 **		for beside it as x.bck.002, x.bck.003, ...
@@ -60,6 +63,24 @@
 **		of the files of the volume - making the file system again is
 **		vbackup's business, not this one's.
 **
+**  ENCRYPTED:	a saveset of vbackup /ENCRYPT (format.md 6.10) is read with its
+**		passphrase: the first line of the key file given by -k (or
+**		named by VBACKUP_KEY_FILE), without its LF or CR LF - a file
+**		only its owner may read or write (chmod 600) - else it is
+**		asked for on the terminal, without echo (stty).  No terminal:
+**		give -k.  A wrong passphrase is said and nothing is made
+**		(completion 2).  The keys come from PBKDF2-HMAC-SHA256 over
+**		the SALT of the VHDR; every block is checked by its TAG
+**		(HMAC-SHA256) before it is decrypted (ChaCha20, RFC 8439).
+**		A block whose CRC is right and whose TAG is not was changed
+**		on purpose: it is said, and it is a bad block - rebuilt from
+**		its XOR group when it can be, the rebuilt block checked by
+**		its TAG too.  A trailer that fails its TAG is said; the
+**		stream is read all the same.  SHA-256 and HMAC are those of
+**		the Go library; PBKDF2 and ChaCha20 are written out below.
+**
+**		  $ vbkx-go x /mnt/usb/home.bck -C /tmp/restore -k ~/.vbackup.key
+**
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
@@ -85,6 +106,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-06		 5-OCT-2026	RRL
+**		Encrypted savesets (format.md 6.10): EDATA and ETRAILER
+**		blocks, the TAG checked before anything is decrypted, a
+**		forged block repaired from its group; -k keyfile,
+**		VBACKUP_KEY_FILE or the terminal; selftest.
+**
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the data compressed in the LZ4 block format.
 **		/PHYSICAL and /IMAGE savesets said in the manual above.
@@ -97,10 +124,15 @@
 package main
 
 import (
+	"bufio"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash/crc32"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -123,6 +155,12 @@ const (
 	btXor     = 2
 	btVhdr    = 3
 	btTrailer = 4
+	btEdata   = 5 // DATA of an encrypted saveset, format.md 6.10
+	btEtrlr   = 6 // TRAILER of an encrypted saveset
+
+	tagSize = 32   // the TAG at the end of an EDATA/ETRAILER payload
+	kdfMin  = 1000 // the fewest PBKDF2 iterations a reader accepts
+	passMax = 1024 // the longest passphrase
 
 	rtSummary = 1
 	rtFile    = 2
@@ -131,6 +169,8 @@ const (
 	rtCatalog = 5
 	rtEnd     = 6
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
+
+	ident = "X01-06"
 
 	maxData  = 1 << 20 // the most octets a DATA or DATAZ record holds
 	codecLZ4 = 1
@@ -207,7 +247,7 @@ func check(b []byte, bsize uint32, uuid *[16]byte) (bhdr, bool) {
 	h.prvpaylen = u32(b, 56)
 	h.crc = u32(b, 60)
 	psize := bsize - hdrSize
-	if h.bsize != bsize || (uuid != nil && h.uuid != *uuid) || h.typ < btData || h.typ > btTrailer ||
+	if h.bsize != bsize || (uuid != nil && h.uuid != *uuid) || h.typ < btData || h.typ > btEtrlr ||
 		h.paylen > psize || (h.recoff != none && h.recoff >= psize) {
 		return h, false
 	}
@@ -324,6 +364,19 @@ type reader struct {
 	vols    []volume
 	trailer bool
 
+	/* An encrypted saveset (format.md 6.10): the VHDR says so */
+	crypt    bool
+	dtype    uint8  // the type of its DATA blocks: EDATA or DATA
+	ttype    uint8  // ... of its TRAILER: ETRAILER or TRAILER
+	cap      uint32 // the most a DATA block holds: P, or P - 32 for the TAG
+	cipher   uint64 // CIPHER, KDF, KDFITER, SALT, KEYCHECK of the VHDR
+	kdf      uint64
+	kdfiter  uint64
+	salt     []byte
+	keycheck []byte
+	k        keys
+	trlblk   []byte // the ETRAILER, whole, until the key opens it
+
 	curvol  int    // where the next group is read from
 	curpos  uint64 // ... block position in that volume
 	pays    [][]byte
@@ -367,8 +420,11 @@ func blocksIn(f *os.File, bsize uint32) uint64 {
 	return uint64(st.Size()) / uint64(bsize)
 }
 
-/* The group size, out of the SUMMARY record a VHDR carries */
-func summaryGroup(blk []byte, h bhdr) (uint32, bool) {
+/*
+** The group size, out of the SUMMARY record a VHDR carries; and, when it
+** has CIPHER, what an encrypted saveset is opened with (format.md 6.10)
+ */
+func summaryGroup(r *reader, blk []byte, h bhdr) (uint32, bool) {
 	pay := blk[hdrSize : hdrSize+int(h.paylen)]
 	if len(pay) < 8 || u16(pay, 0) != rtSummary {
 		return 0, false
@@ -379,8 +435,19 @@ func summaryGroup(blk []byte, h bhdr) (uint32, bool) {
 	}
 	var grp uint32
 	tlvEach(pay[8:8+blen], func(tag uint16, v []byte) {
-		if tag == 71 {
+		switch tag {
+		case 71:
 			grp = uint32(getu(v))
+		case 88:
+			r.crypt, r.cipher = true, getu(v)
+		case 89:
+			r.kdf = getu(v)
+		case 90:
+			r.kdfiter = getu(v)
+		case 91:
+			r.salt = append([]byte(nil), v...)
+		case 92:
+			r.keycheck = append([]byte(nil), v...)
 		}
 	})
 	return grp, grp <= maxGrp
@@ -399,6 +466,7 @@ func guess(r *reader, f *os.File) bool {
 				continue
 			}
 			r.bsize, r.uuid = bs, h.uuid
+			r.crypt = h.typ == btEdata || h.typ == btEtrlr
 			r.grpsz = 0
 			for p := uint64(1); p <= maxGrp+1; p++ {
 				if x, ok := check(readBlock(f, bs, p), bs, &r.uuid); ok && x.typ == btXor && uint64(x.gindex) == p-1 {
@@ -426,7 +494,7 @@ func open(spec string) (*reader, error) {
 	if bs := u32(head, 8); string(head[0:4]) == "VBKB" && bs >= minBsz && bs <= maxBsz && bs%512 == 0 {
 		blk := readBlock(f, bs, 0)
 		if h, ok := check(blk, bs, nil); ok && h.typ == btVhdr && h.volno == 1 {
-			if grp, ok := summaryGroup(blk, h); ok {
+			if grp, ok := summaryGroup(r, blk, h); ok {
 				r.bsize, r.uuid, r.grpsz, found = bs, h.uuid, grp, true
 			}
 		}
@@ -450,6 +518,10 @@ func open(spec string) (*reader, error) {
 		h, ok := check(readBlock(vf, r.bsize, 0), r.bsize, &r.uuid)
 		if ok && h.typ == btVhdr && h.volno == uint32(n) {
 			first = h.blkno
+			/* Volume 1 had no good VHDR: an encrypted saveset has its keys in every one */
+			if r.crypt && r.salt == nil {
+				summaryGroup(r, readBlock(vf, r.bsize, 0), h)
+			}
 		} else if h, ok = check(readBlock(vf, r.bsize, 1), r.bsize, &r.uuid); ok && h.volno == uint32(n) && h.blkno > 0 {
 			first = h.blkno - 1
 			msg("volume %d: its first block is bad, it is read all the same", n)
@@ -466,13 +538,62 @@ func open(spec string) (*reader, error) {
 		miss = 0
 	}
 
-	/* The TRAILER, last block of the last volume: it is not part of the groups */
+	/* Encrypted: what it is encrypted with must be known here, or nothing of it can be read */
+	r.dtype, r.ttype, r.cap = btData, btTrailer, r.bsize-hdrSize
+	if r.crypt {
+		r.dtype, r.ttype, r.cap = btEdata, btEtrlr, r.bsize-hdrSize-tagSize
+		if r.cipher == 0 && r.salt == nil && r.keycheck == nil {
+			r.close()
+			return nil, fmt.Errorf("%s is encrypted, and no volume has a readable VHDR to give its keys", spec)
+		}
+		if r.cipher != 1 || r.kdf != 1 || r.kdfiter < kdfMin || r.kdfiter > 0xFFFFFFFF || len(r.salt) != 32 || len(r.keycheck) != 32 {
+			r.close()
+			return nil, fmt.Errorf("%s: an encryption this extractor does not know - it cannot be read", spec)
+		}
+	}
+
+	/* The TRAILER, last block of the last volume: it is not part of the groups; an ETRAILER waits for the key */
 	if lv := r.vols[len(r.vols)-1]; lv.nblk > 1 {
-		if th, ok := check(readBlock(lv.f, r.bsize, lv.nblk-1), r.bsize, &r.uuid); ok && th.typ == btTrailer {
+		blk := readBlock(lv.f, r.bsize, lv.nblk-1)
+		if th, ok := check(blk, r.bsize, &r.uuid); ok && th.typ == r.ttype {
 			r.trailer = true
+			if r.crypt {
+				r.trlblk = blk
+			}
 		}
 	}
 	return r, nil
+}
+
+func (r *reader) close() {
+	for _, v := range r.vols {
+		if v.f != nil {
+			v.f.Close()
+		}
+	}
+}
+
+/*
+** The passphrase of an encrypted saveset: the keys derived from it and the
+** SALT, judged by KEYCHECK; then the TAG of the ETRAILER.  0 - right; 1 -
+** right, but the trailer fails its TAG (said); 2 - wrong.
+ */
+func (r *reader) setkey(pass []byte) int {
+	r.k = derive(pass, r.salt, uint32(r.kdfiter))
+	if !hmac.Equal(r.k.check, r.keycheck) {
+		return 2
+	}
+	if r.trlblk != nil {
+		th, _ := check(r.trlblk, r.bsize, &r.uuid)
+		if !r.k.tagOK(&th, r.trlblk[hdrSize:]) {
+			msg("%s: its trailer fails its authentication - read as a saveset without a catalog", r.spec)
+			bad = true
+			return 1
+		}
+		/* Its counts are not needed here: the stream is read from its start, the catalog where it comes */
+		r.k.decrypt(&th, r.trlblk[hdrSize:])
+	}
+	return 0
 }
 
 func (r *reader) volend(n int) uint64 {
@@ -547,8 +668,13 @@ func (r *reader) loadGroup() bool {
 	gdata := int(n) - hasXor
 	nbad, badi := 0, 0
 	for i := 0; i < gdata; i++ {
-		if ok[i] && hdrs[i].typ != btData {
+		if ok[i] && hdrs[i].typ != r.dtype {
 			ok[i] = false
+		}
+		/* A good CRC and a wrong TAG: changed on purpose - a bad block all the same, repairable as any */
+		if ok[i] && r.crypt && !r.k.tagOK(&hdrs[i], blks[i][hdrSize:]) {
+			ok[i] = false
+			msg("block %d of volume %d is not what was written: its CRC is right, its authentication fails", hdrs[i].blkno, r.curvol)
 		}
 		if !ok[i] {
 			nbad++
@@ -572,10 +698,18 @@ func (r *reader) loadGroup() bool {
 			}
 		}
 		s := hdrs[badi+1]
-		h := bhdr{typ: btData, recoff: s.prvrecoff, paylen: s.prvpaylen, blkno: v.firstblk + r.curpos + uint64(badi)}
-		if h.paylen <= r.bsize-hdrSize && (h.recoff == none || h.recoff < h.paylen) {
+		h := bhdr{bsize: r.bsize, typ: r.dtype, gindex: uint16(badi), uuid: r.uuid, volno: uint32(r.curvol),
+			recoff: s.prvrecoff, paylen: s.prvpaylen, blkno: v.firstblk + r.curpos + uint64(badi)}
+		if h.paylen <= r.cap && (h.recoff == none || h.recoff < h.paylen) && (!r.crypt || r.k.tagOK(&h, d)) {
 			hdrs[badi], ok[badi] = h, true
 			msg("block %d of volume %d was bad and has been repaired", h.blkno, r.curvol)
+		}
+	}
+
+	/* Every check done, the repair too: now the good blocks are decrypted where they lie */
+	for i := 0; r.crypt && i < gdata; i++ {
+		if ok[i] {
+			r.k.decrypt(&hdrs[i], blks[i][hdrSize:])
 		}
 	}
 
@@ -686,6 +820,241 @@ func (r *reader) nextRecord() (uint16, []byte, bool) {
 		r.resync = resync
 		return typ, body, true
 	}
+}
+
+/*
+** Encryption, format.md 6.10.  SHA-256 and HMAC are those of the standard
+** library; PBKDF2 (RFC 8018) and ChaCha20 (RFC 8439) are written out here,
+** so that nothing outside the standard library is needed.
+ */
+func hmac256(key []byte, parts ...[]byte) []byte {
+	m := hmac.New(sha256.New, key)
+	for _, p := range parts {
+		m.Write(p)
+	}
+	return m.Sum(nil)
+}
+
+/* PBKDF2-HMAC-SHA256: block T(i) = U1 ^ U2 ^ ... ^ Uc, U1 = HMAC(P, S | i), i big-endian from 1 */
+func pbkdf2(pass, salt []byte, iter uint32, dklen int) []byte {
+	var out []byte
+	for i := uint32(1); len(out) < dklen; i++ {
+		var ib [4]byte
+		binary.BigEndian.PutUint32(ib[:], i)
+		u := hmac256(pass, salt, ib[:])
+		t := append([]byte(nil), u...)
+		for c := uint32(1); c < iter; c++ {
+			u = hmac256(pass, u)
+			for j := range t {
+				t[j] ^= u[j]
+			}
+		}
+		out = append(out, t...)
+	}
+	return out[:dklen]
+}
+
+func rotl(x uint32, n uint) uint32 { return x<<n | x>>(32-n) }
+
+func quarter(s *[16]uint32, a, b, c, d int) {
+	s[a] += s[b]
+	s[d] = rotl(s[d]^s[a], 16)
+	s[c] += s[d]
+	s[b] = rotl(s[b]^s[c], 12)
+	s[a] += s[b]
+	s[d] = rotl(s[d]^s[a], 8)
+	s[c] += s[d]
+	s[b] = rotl(s[b]^s[c], 7)
+}
+
+/* ChaCha20, RFC 8439 2.4: buf ^= the key stream of (key, nonce) from block counter ctr on */
+func chacha20(key, nonce []byte, ctr uint32, buf []byte) {
+	var in, x [16]uint32
+	in[0], in[1], in[2], in[3] = 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574
+	for i := 0; i < 8; i++ {
+		in[4+i] = le.Uint32(key[4*i:])
+	}
+	for i := 0; i < 3; i++ {
+		in[13+i] = le.Uint32(nonce[4*i:])
+	}
+	var ks [64]byte
+	for off := 0; off < len(buf); off += 64 {
+		in[12] = ctr
+		x = in
+		for r := 0; r < 10; r++ {
+			quarter(&x, 0, 4, 8, 12)
+			quarter(&x, 1, 5, 9, 13)
+			quarter(&x, 2, 6, 10, 14)
+			quarter(&x, 3, 7, 11, 15)
+			quarter(&x, 0, 5, 10, 15)
+			quarter(&x, 1, 6, 11, 12)
+			quarter(&x, 2, 7, 8, 13)
+			quarter(&x, 3, 4, 9, 14)
+		}
+		for i := range x {
+			le.PutUint32(ks[4*i:], x[i]+in[i])
+		}
+		for i := 0; i < 64 && off+i < len(buf); i++ {
+			buf[off+i] ^= ks[i]
+		}
+		ctr++
+	}
+}
+
+/* The keys of an encrypted saveset, out of the passphrase and the SALT of its VHDR */
+type keys struct {
+	enc, mac, check []byte
+}
+
+func derive(pass, salt []byte, iter uint32) keys {
+	mk := pbkdf2(pass, salt, iter, 32)
+	return keys{hmac256(mk, []byte("VBACKUP ENC")), hmac256(mk, []byte("VBACKUP MAC")), hmac256(mk, []byte("VBACKUP CHECK"))}
+}
+
+/* The TAG of a block is right (all 32 octets), and PAYLEN leaves room for it; pay is the whole payload area */
+func (k *keys) tagOK(h *bhdr, pay []byte) bool {
+	if len(pay) < tagSize || int64(h.paylen) > int64(len(pay)-tagSize) {
+		return false
+	}
+	m := make([]byte, 43)
+	copy(m, h.uuid[:])
+	le.PutUint32(m[16:], h.bsize)
+	le.PutUint64(m[20:], h.blkno)
+	le.PutUint32(m[28:], h.volno)
+	m[32] = h.typ
+	le.PutUint16(m[33:], h.gindex)
+	le.PutUint32(m[35:], h.recoff)
+	le.PutUint32(m[39:], h.paylen)
+	return hmac.Equal(hmac256(k.mac, m, pay[:h.paylen]), pay[len(pay)-tagSize:])
+}
+
+/* Decrypt PAYLEN octets of a payload in place - one whose TAG was right; the nonce is u32 0, u64 blkno */
+func (k *keys) decrypt(h *bhdr, pay []byte) {
+	var nonce [12]byte
+	le.PutUint64(nonce[4:], h.blkno)
+	chacha20(k.enc, nonce[:], 0, pay[:h.paylen])
+}
+
+/*
+** The passphrase: the first line of the key file (-k, else VBACKUP_KEY_FILE)
+** - one only its owner may read or write - else asked for on the terminal
+** without echo.  nil - none to be had (said).
+ */
+func passphrase(keyfile, spec string) []byte {
+	if keyfile == "" {
+		keyfile = os.Getenv("VBACKUP_KEY_FILE")
+	}
+	var line []byte
+	if keyfile != "" {
+		f, err := os.Open(keyfile)
+		if err != nil {
+			msg("%v", err)
+			return nil
+		}
+		defer f.Close()
+		if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&077 != 0 {
+			msg("%s: not a regular file, or others may read it - chmod 600 it", keyfile)
+			return nil
+		}
+		line, _ = bufio.NewReaderSize(f, passMax+16).ReadSlice('\n')
+		line = append([]byte(nil), line...)
+	} else {
+		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		if err != nil {
+			msg("%s is encrypted: no terminal to ask the passphrase on - give -k file", spec)
+			return nil
+		}
+		defer tty.Close()
+		stty := func(arg string) error {
+			c := exec.Command("stty", arg)
+			c.Stdin = tty
+			return c.Run()
+		}
+		if stty("-echo") != nil {
+			msg("%s is encrypted: no terminal to ask the passphrase on - give -k file", spec)
+			return nil
+		}
+		fmt.Fprintf(tty, "Passphrase for %s: ", spec)
+		line, _ = bufio.NewReaderSize(tty, passMax+16).ReadSlice('\n')
+		line = append([]byte(nil), line...)
+		stty("echo")
+		fmt.Fprintf(tty, "\n")
+	}
+	if n := len(line); n > 0 && line[n-1] == '\n' {
+		line = line[:n-1]
+	}
+	if n := len(line); n > 0 && line[n-1] == '\r' {
+		line = line[:n-1]
+	}
+	if len(line) == 0 || len(line) > passMax {
+		msg("no passphrase, or one longer than %d bytes", passMax)
+		return nil
+	}
+	return line
+}
+
+/* The primitives against the vectors of their standards (those of test/units.c) */
+func selftest() int {
+	failed := 0
+	try := func(name string, got []byte, want string) {
+		if hex.EncodeToString(got) == want {
+			fmt.Printf("selftest: %s: ok\n", name)
+		} else {
+			fmt.Printf("selftest: %s: FAILED\n", name)
+			failed++
+		}
+	}
+	sha := func(b []byte) []byte { s := sha256.Sum256(b); return s[:] }
+	rep := func(c byte, n int) []byte {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = c
+		}
+		return b
+	}
+
+	try("SHA-256 \"\"", sha(nil), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	try("SHA-256 \"abc\"", sha([]byte("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+	try("SHA-256 448 bits", sha([]byte("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
+		"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+	try("SHA-256 a million 'a'", sha(rep('a', 1000000)), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+
+	try("HMAC-SHA256 RFC 4231 case 1", hmac256(rep(0x0b, 20), []byte("Hi There")),
+		"b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+	try("HMAC-SHA256 RFC 4231 case 2", hmac256([]byte("Jefe"), []byte("what do ya want for nothing?")),
+		"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+	try("HMAC-SHA256 RFC 4231 case 6", hmac256(rep(0xaa, 131), []byte("Test Using Larger Than Block-Size Key - Hash Key First")),
+		"60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
+
+	try("PBKDF2-HMAC-SHA256 passwd/salt/1", pbkdf2([]byte("passwd"), []byte("salt"), 1, 64),
+		"55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc"+
+			"49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783")
+	try("PBKDF2-HMAC-SHA256 Password/NaCl/80000", pbkdf2([]byte("Password"), []byte("NaCl"), 80000, 64),
+		"4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56"+
+			"a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d")
+	try("PBKDF2-HMAC-SHA256 password/salt/4096", pbkdf2([]byte("password"), []byte("salt"), 4096, 32),
+		"c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")
+
+	pt := []byte("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.")
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	nonce := []byte{0, 0, 0, 0, 0, 0, 0, 0x4a, 0, 0, 0, 0}
+	buf := append([]byte(nil), pt...)
+	chacha20(key, nonce, 1, buf)
+	try("ChaCha20 RFC 8439 2.4.2", buf, "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0b"+
+		"f91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc"+
+		"514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d")
+	chacha20(key, nonce, 1, buf)
+	try("ChaCha20 decrypted back", buf, hex.EncodeToString(pt))
+
+	if failed > 0 {
+		fmt.Printf("selftest: %d failed\n", failed)
+		return 1
+	}
+	fmt.Printf("selftest: all primitives right\n")
+	return 0
 }
 
 /* A stored name that is safe to use: relative, no "", "." or ".." component, no NUL */
@@ -1111,23 +1480,32 @@ func list(r *reader) {
 }
 
 func usage() int {
-	fmt.Fprintf(os.Stderr, "vbkx-go X01-04 - the extractor of last resort for VBACKUP savesets\n\n"+
-		"  vbkx-go l saveset              list the files (times in UTC)\n"+
-		"  vbkx-go x saveset [-C dir]     extract them all\n"+
-		"  vbkx-go t saveset              read it all, check the checksums\n\n"+
+	fmt.Fprintf(os.Stderr, "vbkx-go "+ident+" - the extractor of last resort for VBACKUP savesets\n\n"+
+		"  vbkx-go l saveset [-k file]           list the files (times in UTC)\n"+
+		"  vbkx-go x saveset [-C dir] [-k file]  extract them all\n"+
+		"  vbkx-go t saveset [-k file]           read it all, check the checksums\n"+
+		"  vbkx-go selftest                      check the ciphers against their standards\n\n"+
+		"  -k file the passphrase of an encrypted saveset: the first line of file\n"+
+		"          (else VBACKUP_KEY_FILE, else it is asked for on the terminal)\n\n"+
 		"Completion: 0 - done; 1 - something damaged or not done; 2 - not usable.\n")
 	return 2
 }
 
 func main1() int {
 	args := os.Args
+	if len(args) == 2 && args[1] == "selftest" {
+		return selftest()
+	}
 	if len(args) < 3 || len(args[1]) != 1 || !strings.Contains("lxt", args[1]) {
 		return usage()
 	}
-	op, spec, out := args[1][0], args[2], "."
+	op, spec, out, keyfile := args[1][0], args[2], ".", ""
 	for i := 3; i < len(args); i++ {
 		if args[i] == "-C" && i+1 < len(args) && op == 'x' {
 			out = args[i+1]
+			i++
+		} else if args[i] == "-k" && i+1 < len(args) {
+			keyfile = args[i+1]
 			i++
 		} else {
 			return usage()
@@ -1137,6 +1515,17 @@ func main1() int {
 	if err != nil {
 		msg("%v", err)
 		return 2
+	}
+	/* Encrypted: nothing of it is read, nothing is made, before the passphrase is right */
+	if r.crypt {
+		pass := passphrase(keyfile, spec)
+		if pass == nil {
+			return 2
+		}
+		if r.setkey(pass) == 2 {
+			msg("the passphrase does not open %s", spec)
+			return 2
+		}
 	}
 	switch op {
 	case 'l':
