@@ -1,0 +1,6 @@
+[plugininstall]
+description=VBACKUP savesets (.bck): list, extract, test - read only
+type=wcx
+file=vbackup.wcx
+defaultdir=vbackup
+defaultextension=bck

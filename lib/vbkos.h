@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-04"
+#define	__IDENT__	"X01-05"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.4.0"
+#define	__REV__		"1.5.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-05		 4-OCT-2026	RRL
+**		VBK_NOSTARLET: the status values and the CRC of its own on
+**		Linux too, for the WCX plugin (a shared object).
 **
 **	X01-04		 4-OCT-2026	RRL
 **		Windows (_WIN32): the STS$K values and the CRC of its own, no
@@ -51,17 +55,14 @@
 #include	<errno.h>
 #include	<fcntl.h>
 
-#ifdef	_WIN32
+#if	defined(_WIN32) || defined(VBK_NOSTARLET)
 
 /*
-**  Windows: no StarLet there.  The status values the core returns, the
-**  same as StarLet's (utility_routines.h), and the CRC done here.
+**  No StarLet - Windows, or a plugin that must not link it (VBK_NOSTARLET:
+**  the .so of Double Commander wants position-independent code, and
+**  StarLet is a static library).  The status values the core returns,
+**  the same as StarLet's (utility_routines.h), and the CRC done here.
 */
-#include	<windows.h>
-#include	<io.h>
-#include	<sys/types.h>
-#include	<sys/stat.h>
-
 enum	{
 	STS$K_WARN	= 0,
 	STS$K_SUCCESS	= 1,
@@ -108,6 +109,15 @@ const	uint8_t *	l_p = (const uint8_t *) a_buf;
 }
 
 #define	$VBK_CRC(crc, buf, len)		vbk$os_crc32((uint32_t) (crc), (buf), (size_t) (len))
+
+#endif
+
+#ifdef	_WIN32
+
+#include	<windows.h>
+#include	<io.h>
+#include	<sys/types.h>
+#include	<sys/stat.h>
 
 /*
 **  A name in UTF-8 - as a saveset and the command line give it - turned
@@ -245,6 +255,7 @@ struct _stati64	l_st;
 #include	<sys/mman.h>
 #include	<sys/stat.h>
 
+#ifndef	VBK_NOSTARLET
 #include	"utility_routines.h"
 
 /*
@@ -252,6 +263,7 @@ struct _stati64	l_st;
 **  one, its name notwithstanding: CRC("123456789") = 0xCBF43926.
 */
 #define	$VBK_CRC(crc, buf, len)		((uint32_t) __util$crc32c((unsigned) (crc), (buf), (size_t) (len)))
+#endif
 
 /*
 **  The 16 random octets of a saveset UUID

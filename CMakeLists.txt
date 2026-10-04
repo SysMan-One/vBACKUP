@@ -14,6 +14,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-05 : Stage 5: the WCX plugin of Total Commander and
+#					Double Commander - vbackup.wcx (Linux, the target
+#					VBKWCX), and with MinGW-w64 vbackup.wcx64 and the
+#					32-bit vbackup.wcx; plugins/ into the kit.
+#
 #		 4-OCT-2026	RRL	X-04 : Stage 5: the plugins of MC and far2l installed where
 #					those are found (cmake/plugcfg.cmake); VBKPHY, VBKIMG,
 #					VBKZPL.
@@ -152,7 +157,21 @@ if ( WIN32 )
 
 	install(TARGETS vbkx RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-	message(STATUS "VBACKUP: Windows - vbkx.exe alone")
+	#	The WCX plugin of Total Commander: a DLL, the __stdcall names undecorated
+	add_library(vbkwcx MODULE plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c)
+	target_include_directories(vbkwcx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+	target_link_libraries(vbkwcx PRIVATE vbackup_options)
+	target_link_options(vbkwcx PRIVATE -static -Wl,--kill-at)
+
+	if ( CMAKE_SIZEOF_VOID_P EQUAL 8 )
+		set_target_properties(vbkwcx PROPERTIES PREFIX "" OUTPUT_NAME vbackup SUFFIX .wcx64)
+	else()
+		set_target_properties(vbkwcx PROPERTIES PREFIX "" OUTPUT_NAME vbackup SUFFIX .wcx)
+	endif()
+
+	install(TARGETS vbkwcx LIBRARY DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+	message(STATUS "VBACKUP: Windows - vbkx.exe and the WCX plugin alone")
 
 	return()
 endif()
@@ -309,6 +328,64 @@ if ( VBACKUP$M_WINVBKX )
 	endif()
 endif()
 
+#
+#	The WCX plugin (plugins/wcx/vbkwcx.c), stage 5: vbackup.wcx for Double
+#	Commander on Linux - a shared object without StarLet (VBK_NOSTARLET:
+#	StarLet is a static library, not position-independent); with
+#	MinGW-w64, vbackup.wcx64 and the 32-bit vbackup.wcx for Total
+#	Commander, the same command lines as plugins/wcx/Makefile
+#
+add_library(vbkwcx MODULE plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c)
+target_include_directories(vbkwcx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+target_compile_definitions(vbkwcx PRIVATE VBK_NOSTARLET)
+target_link_libraries(vbkwcx PRIVATE vbackup_options)
+set_target_properties(vbkwcx PROPERTIES PREFIX "" OUTPUT_NAME vbackup SUFFIX .wcx
+	LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/wcx C_VISIBILITY_PRESET hidden)
+
+install(TARGETS vbkwcx LIBRARY DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/wcx)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/wcx/pluginst.inf DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/wcx)
+
+set(VBACKUP_WCX64 "")
+set(VBACKUP_WCX32 "")
+
+if ( VBACKUP$M_WINVBKX )
+	find_program(VBACKUP_MINGW32 i686-w64-mingw32-gcc)
+
+	set(L_SRC plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c)
+	set(L_DEP ${L_SRC} lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h)
+
+	if ( VBACKUP_MINGW )
+		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/win/vbackup.wcx64
+			COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/win
+			COMMAND ${VBACKUP_MINGW} -O2 -Wall -Wextra -Wno-unused-parameter -shared -Ilib -o ${CMAKE_CURRENT_BINARY_DIR}/win/vbackup.wcx64
+				${L_SRC} -static -Wl,--kill-at
+			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+			DEPENDS ${L_DEP}
+			COMMENT "Building vbackup.wcx64 (MinGW-w64)")
+		add_custom_target(vbkwcx-win64 ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/win/vbackup.wcx64)
+		set(VBACKUP_WCX64 ${CMAKE_CURRENT_BINARY_DIR}/win/vbackup.wcx64)
+		install(FILES ${VBACKUP_WCX64} DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/wcx/win)
+	endif()
+
+	if ( VBACKUP_MINGW32 )
+		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/win32/vbackup.wcx
+			COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/win32
+			COMMAND ${VBACKUP_MINGW32} -O2 -Wall -Wextra -Wno-unused-parameter -shared -Ilib -o ${CMAKE_CURRENT_BINARY_DIR}/win32/vbackup.wcx
+				${L_SRC} -static -Wl,--kill-at
+			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+			DEPENDS ${L_DEP}
+			COMMENT "Building vbackup.wcx (MinGW-w64, 32 bits)")
+		add_custom_target(vbkwcx-win32 ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/win32/vbackup.wcx)
+		set(VBACKUP_WCX32 ${CMAKE_CURRENT_BINARY_DIR}/win32/vbackup.wcx)
+		install(FILES ${VBACKUP_WCX32} DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/wcx/win)
+	endif()
+
+	if ( VBACKUP_WCX64 OR VBACKUP_WCX32 )
+		install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/wcx/pluginst.inf DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/wcx/win)
+		message(STATUS "VBACKUP: WCX plugin for Windows: ${VBACKUP_WCX64} ${VBACKUP_WCX32}")
+	endif()
+endif()
+
 target_include_directories(vbackup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(vbackup PRIVATE vbkcore StarLet::starlet vbackup_options)
 
@@ -455,6 +532,7 @@ add_custom_target(kit
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/doc     ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/doc
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/test    ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/test
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/cmake   ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/cmake
+	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/plugins ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/plugins
 	COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt ${CMAKE_CURRENT_SOURCE_DIR}/README.md
 			${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/
 	COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_CURRENT_BINARY_DIR}/kit

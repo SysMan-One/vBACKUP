@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-04"
+#define	__IDENT__	"X01-05"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.4.0"
+#define	__REV__		"1.5.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-05		 4-OCT-2026	RRL
+**		VBK$RD_ADDVOL.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		No more of VBKWRT.H: the reader stands without the writer.
@@ -121,6 +124,7 @@ typedef struct vbk_rctx_t
 int	vbk$rd_probe	(const char *a_spec);
 int	vbk$rd_open	(VBK$RCTX *a_ctx, const char *a_spec, void (*a_evcb) (void *, int, uint32_t, uint64_t), void *a_evarg);
 void	vbk$rd_close	(VBK$RCTX *a_ctx);
+int	vbk$rd_addvol	(VBK$RCTX *a_ctx, uint32_t a_volno, const char *a_spec);
 int	vbk$rd_rewind	(VBK$RCTX *a_ctx);
 int	vbk$rd_seek	(VBK$RCTX *a_ctx, const VBK$LOC *a_loc);
 int	vbk$rd_next	(VBK$RCTX *a_ctx, uint16_t *a_type, const uint8_t **a_body, uint32_t *a_len, VBK$LOC *a_loc);

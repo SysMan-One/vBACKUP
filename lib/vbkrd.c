@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-05"
+#define	__REV__		"1.5.0"
 
 /*
 **++
@@ -31,6 +31,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-05		 4-OCT-2026	RRL
+**		VBK$RD_ADDVOL: a volume found by the user (a WCX plugin asks).
 **
 **	X01-04		 4-OCT-2026	RRL
 **		The volumes are opened, read and measured through VBKOS.H
@@ -378,6 +381,88 @@ int		l_fd, l_isreg = 0;
 
 		return	STS$K_FATAL;
 		}
+
+	return	vbk$rd_rewind(a_ctx);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Take in a volume that was not found beside volume 1 - a file
+**	manager asked the user for it.  It must be volume <a_volno> of this
+**	saveset; a volume that becomes the last one gives the TRAILER, if
+**	the saveset has none yet.  To be called before the first record is
+**	read (it rewinds).
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ctx		The saveset, open
+**	a_volno		The number of the volume, from 2
+**	a_spec		Its file
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- taken in;
+**	STS$K_ERROR	- it cannot be opened, or is not that volume.
+**--
+*/
+int	vbk$rd_addvol	(
+		VBK$RCTX *	a_ctx,
+		uint32_t	a_volno,
+	const	char *		a_spec
+			)
+{
+VBK$BHDR	l_bhdr;
+uint8_t *	l_blk;
+uint64_t	l_size = 0;
+int		l_fd, l_isreg = 0;
+
+	if ( (a_volno < 2) || (a_volno > VBK$K_MAXVOL) || (a_ctx->vols [a_volno - 1].fd >= 0) )
+		return	STS$K_ERROR;
+
+	if ( !(l_blk = malloc(a_ctx->bsize)) )
+		return	STS$K_ERROR;
+
+	if ( 0 > (l_fd = vbk$os_open(a_spec)) )
+		{
+		free(l_blk);
+
+		return	STS$K_ERROR;
+		}
+
+	if ( !(1 & s_vbk$vhdr(a_ctx, l_fd, a_volno, l_blk, &l_bhdr)) )
+		{
+		vbk$os_close(l_fd);
+		free(l_blk);
+
+		return	STS$K_ERROR;
+		}
+
+	vbk$os_fsize(l_fd, &l_size, &l_isreg);
+
+	a_ctx->vols [a_volno - 1].fd	   = l_fd;
+	a_ctx->vols [a_volno - 1].firstblk = l_bhdr.blkno;
+	a_ctx->vols [a_volno - 1].nblk	   = l_size / a_ctx->bsize;
+
+	if ( a_volno > a_ctx->nvols )
+		a_ctx->nvols	= a_volno;
+
+	/* The last volume now, and no TRAILER yet: its last block may be it */
+	if ( !a_ctx->trailer && (a_volno == a_ctx->nvols) && (a_ctx->vols [a_volno - 1].nblk > 1) )
+		{
+		s_vbk$pread(l_fd, l_blk, a_ctx->bsize, (a_ctx->vols [a_volno - 1].nblk - 1) * a_ctx->bsize);
+
+		if ( (1 & vbk$blk_check(l_blk, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr)) && (l_bhdr.type == VBK$K_BT_TRAILER)
+			&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
+			{
+			memcpy(a_ctx->trailer, l_blk + VBK$K_HDRSZ, l_bhdr.paylen);
+			a_ctx->trllen	= l_bhdr.paylen;
+			a_ctx->trlblk	= l_bhdr.blkno;
+			}
+		}
+
+	free(l_blk);
 
 	return	vbk$rd_rewind(a_ctx);
 }
