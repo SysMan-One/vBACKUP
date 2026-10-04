@@ -97,6 +97,7 @@ void	vbk$crp_decrypt		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, uint8_t *a
 int	vbk$crp_open		(const VBK$KEYS *a_keys, const VBK$BHDR *a_hdr, uint8_t *a_pay, uint32_t a_psize);
 int	vbk$crp_equal		(const uint8_t *a_a, const uint8_t *a_b, size_t a_len);
 void	vbk$crp_wipe		(void *a_p, size_t a_len);
+int	vbk$crp_hw		(int a_on);
 
 #ifdef	__cplusplus
 }

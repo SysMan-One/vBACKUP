@@ -707,6 +707,44 @@ char		l_spec [1100];
 	$CHECK(s_hexeq(l_d, 32, "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"), "password/salt/4096");
 	}
 
+	s_begin("SHA-256: the instructions of the CPU, where there are any, give the bytes of the portable code");
+	{
+	static uint8_t	l_m [70000];
+	uint8_t		l_a [VBK$K_KEYSZ], l_b [VBK$K_KEYSZ], l_d [32];
+	VBK$SHA256	l_s;
+	uint32_t	l_bad = 0, l_seed = 7;
+	int		l_hw = vbk$crp_hw(1);
+
+	$NOTE("the SHA-256 instructions: %s", l_hw ? "in use" : "none here, or not passed - the portable code only");
+
+	for ( size_t i = 0; i < sizeof(l_m); i++ )
+		l_m [i] = (uint8_t) ((l_seed = l_seed * 1103515245U + 12345U) >> 16);
+
+	for ( size_t l_n = 0; l_hw && (l_n < sizeof(l_m)); l_n += (l_n < 300) ? 1 : 4093 )
+		{
+		vbk$crp_hw(1);
+		vbk$sha256_init(&l_s); vbk$sha256_update(&l_s, l_m, l_n); vbk$sha256_final(&l_s, l_a);
+		vbk$crp_hw(0);
+		vbk$sha256_init(&l_s); vbk$sha256_update(&l_s, l_m, l_n); vbk$sha256_final(&l_s, l_b);
+
+		if ( memcmp(l_a, l_b, sizeof(l_a)) )
+			l_bad++;
+		}
+
+	$CHECK(!l_bad, "%u lengths hashed otherwise by the instructions", l_bad);
+
+	/* The vectors once more by each way */
+	for ( int l_way = 0; l_way < 2; l_way++ )
+		{
+		vbk$crp_hw(l_way);
+		vbk$pbkdf2("password", 8, (const uint8_t *) "salt", 4, 4096, l_d, 32);
+		$CHECK(s_hexeq(l_d, 32, "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"), "PBKDF2 by way %d", l_way);
+		s_sha("abc", 3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+		}
+
+	vbk$crp_hw(1);
+	}
+
 	s_begin("ChaCha20, RFC 8439 2.4.2");
 	{
 	static const char	l_pt [] = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, "

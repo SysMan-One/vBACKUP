@@ -19,6 +19,14 @@
 **		lines a reader of the format can check by eye.  test/units.c
 **		holds the vectors of the RFCs.
 **
+**		On aarch64 Linux the block function of SHA-256 has a second
+**		form, the SHA-256 instructions of ARMv8 (a Cortex-A35 hashes
+**		ten times faster with them - PBKDF2 and the TAG of every block
+**		are all SHA-256).  It is taken only when the CPU has them and
+**		they agree with the portable form on a self-test;
+**		VBACKUP_NOHWCRYPTO=1 keeps to the portable form.  x86 keeps to
+**		it always: no machine here has SHA-NI to prove such code on.
+**
 **		On top of them the three things of the format: the keys of a
 **		saveset out of a passphrase and its SALT, the TAG of a block
 **		over its header fields and its ciphertext, and the sealing
@@ -32,12 +40,23 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-06		 5-OCT-2026	RRL
-**		Initial version.
+**		Initial version.  The SHA-256 instructions of ARMv8, checked
+**		against the portable code before they are used.
 **
 **--
 */
 
+#include	<stdlib.h>
 #include	<string.h>
+
+#if	defined(__aarch64__) && defined(__linux__)
+#define	VBK$K_HWSHA	1
+#include	<arm_neon.h>
+#include	<sys/auxv.h>
+#ifndef	HWCAP_SHA2
+#define	HWCAP_SHA2	(1 << 6)
+#endif
+#endif
 
 #include	"vbkcrp.h"
 #include	"vbkos.h"
@@ -91,6 +110,126 @@ uint32_t	l_w [64], l_a, l_b, l_c, l_d, l_e, l_f, l_g, l_hh, l_t1, l_t2;
 	a_h [4] += l_e; a_h [5] += l_f; a_h [6] += l_g; a_h [7] += l_hh;
 }
 
+#ifdef	VBK$K_HWSHA
+/*
+**  The same block through the SHA-256 instructions of ARMv8 (SHA256H,
+**  SHA256H2, SHA256SU0, SHA256SU1): four rounds an instruction pair.
+**  The state goes in as ABCD and EFGH, the order of H [] itself.  Used
+**  only when the CPU says it has them and the self-test agrees with the
+**  portable code above (S_VBK$HWINIT).
+*/
+__attribute__((target("+crypto")))
+static	void	s_vbk$sha256_hw	(
+		uint32_t	a_h [8],
+	const	uint8_t *	a_p
+			)
+{
+uint32x4_t	l_abcd = vld1q_u32(a_h), l_efgh = vld1q_u32(a_h + 4), l_abcd0 = l_abcd, l_efgh0 = l_efgh, l_m [4], l_t, l_s;
+
+	for ( int i = 0; i < 4; i++ )
+		l_m [i] = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(a_p + 16 * i)));
+
+	for ( int j = 0; j < 16; j++ )
+		{
+		l_t	= vaddq_u32(l_m [j & 3], vld1q_u32(s_vbk$k256 + 4 * j));
+		l_s	= l_abcd;
+		l_abcd	= vsha256hq_u32(l_abcd, l_efgh, l_t);
+		l_efgh	= vsha256h2q_u32(l_efgh, l_s, l_t);
+
+		/* W[4j+16 .. 4j+19], in the place of W[4j .. 4j+3], which is spent */
+		if ( j < 12 )
+			l_m [j & 3] = vsha256su1q_u32(vsha256su0q_u32(l_m [j & 3], l_m [(j + 1) & 3]), l_m [(j + 2) & 3], l_m [(j + 3) & 3]);
+		}
+
+	vst1q_u32(a_h, vaddq_u32(l_abcd, l_abcd0));
+	vst1q_u32(a_h + 4, vaddq_u32(l_efgh, l_efgh0));
+}
+#endif
+
+
+/*
+**  Which block function: -1 - not decided yet, 0 - the portable one,
+**  1 - the instructions.  Decided once, by the first block hashed: the
+**  CPU must have them, VBACKUP_NOHWCRYPTO=1 must not forbid them, and
+**  they must give the very bytes the portable code gives on a few
+**  blocks - else the portable code it is.  Threads that race here all
+**  come to the same answer.
+*/
+static	int	s_vbk$hw = -1;
+
+static	int	s_vbk$hwinit	(void)
+{
+int	l_hw = 0;
+
+#ifdef	VBK$K_HWSHA
+const char *	l_env = getenv("VBACKUP_NOHWCRYPTO");
+
+	if ( (getauxval(AT_HWCAP) & HWCAP_SHA2) && !(l_env && !strcmp(l_env, "1")) )
+		{
+		uint8_t		l_blk [64];
+		uint32_t	l_a [8], l_b [8];
+
+		l_hw	= 1;
+
+		for ( int k = 0; l_hw && (k < 8); k++ )
+			{
+			for ( int i = 0; i < 64; i++ )
+				l_blk [i] = (uint8_t) ((i * 37) + (k * 101) + (k ? 0 : 0x61));
+
+			for ( int i = 0; i < 8; i++ )
+				l_a [i] = l_b [i] = s_vbk$k256 [i * 7 + k];
+
+			s_vbk$sha256_block(l_a, l_blk);
+			s_vbk$sha256_hw(l_b, l_blk);
+			l_hw	= !memcmp(l_a, l_b, sizeof(l_a));
+			}
+		}
+#endif
+	__atomic_store_n(&s_vbk$hw, l_hw, __ATOMIC_RELEASE);
+
+	return	l_hw;
+}
+
+static	void	s_vbk$block	(
+		uint32_t	a_h [8],
+	const	uint8_t *	a_p
+			)
+{
+int	l_hw = __atomic_load_n(&s_vbk$hw, __ATOMIC_ACQUIRE);
+
+	if ( l_hw < 0 )
+		l_hw = s_vbk$hwinit();
+
+#ifdef	VBK$K_HWSHA
+	if ( l_hw )
+		{
+		s_vbk$sha256_hw(a_h, a_p);
+		return;
+		}
+#endif
+	s_vbk$sha256_block(a_h, a_p);
+}
+
+
+/*
+**  For the tests: the instructions on (when they are there and pass) or
+**  off; returns whether they are in use
+*/
+int	vbk$crp_hw		(
+		int		a_on
+			)
+{
+	if ( !a_on )
+		{
+		__atomic_store_n(&s_vbk$hw, 0, __ATOMIC_RELEASE);
+
+		return	0;
+		}
+
+	return	s_vbk$hwinit();
+}
+
+
 void	vbk$sha256_init		(
 		VBK$SHA256 *	a_ctx
 			)
@@ -127,12 +266,12 @@ size_t		l_n;
 		if ( a_ctx->nbuf < 64 )
 			return;
 
-		s_vbk$sha256_block(a_ctx->h, a_ctx->buf);
+		s_vbk$block(a_ctx->h, a_ctx->buf);
 		a_ctx->nbuf	= 0;
 		}
 
 	for ( ; a_len >= 64; l_p += 64, a_len -= 64 )
-		s_vbk$sha256_block(a_ctx->h, l_p);
+		s_vbk$block(a_ctx->h, l_p);
 
 	memcpy(a_ctx->buf, l_p, a_len);
 	a_ctx->nbuf	= (uint32_t) a_len;
