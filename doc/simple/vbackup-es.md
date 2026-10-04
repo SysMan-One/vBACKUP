@@ -37,7 +37,8 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 
 Esto es todo lo que necesitas. Abajo, paso a paso.
 
-Y más: hacer la caja más pequeña, sección 7; guardar un disco entero, secciones 8 y 9.
+Y más: hacer la caja más pequeña, sección 7; cerrarla con contraseña, sección 8;
+guardar un disco entero, secciones 9 y 10.
 
 ---
 
@@ -49,8 +50,12 @@ Y más: hacer la caja más pequeña, sección 7; guardar un disco entero, seccio
 
 Reglas importantes:
 
-- El nombre de una caja **siempre** termina en `.bck`. Por ejemplo: `ivan.bck`.
-  Si olvidas `.bck`, VBACKUP no hace una caja. Solo copia la carpeta.
+- El nombre de una caja **siempre** termina en `.bck` o `.sav`. Por ejemplo: `ivan.bck`.
+  Si lo olvidas, VBACKUP no hace una caja. Solo copia la carpeta.
+  (¿Otro nombre? Entonces añade `/SAVE_SET`.)
+- Una palabra como `/LOG` o `/LIST` es un «calificador». **Siempre** empieza por `/`.
+  Si escribes `.log` en vez de `/LOG`, VBACKUP dice `MAXPARM` y no hace nada.
+- Un calificador pegado al nombre también funciona: `box.sav/sav/log`. Entonces VBACKUP dice `GLUED`.
 - Los espacios entre las partes de la orden son necesarios. No los quites.
 - Las mayúsculas y las minúsculas importan: `/home/ivan` y `/Home/Ivan` son distintos.
 - Si no aparece nada como respuesta, está bien. Quiere decir que funcionó.
@@ -330,7 +335,96 @@ Los archivos de la caja están bien. Solo instala el VBACKUP nuevo.
 
 ---
 
-## 8. Guardar un disco o una partición entera, tal como está
+## 8. Cerrar la caja con una contraseña
+
+**Para qué:** para que nadie más pueda mirar dentro de la caja.
+Por ejemplo, si la memoria USB se pierde o la roban.
+
+**Qué escribir:**
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /ENCRYPT
+```
+
+VBACKUP pide la contraseña dos veces:
+
+```
+Passphrase for /mnt/usb/ivan.bck:
+The same passphrase again:
+```
+
+Escribe la contraseña y pulsa Enter. Luego escríbela otra vez, igual.
+Mientras escribes, **no se ve nada** en la pantalla, ni siquiera asteriscos. Así debe ser.
+
+**Qué significa:** la caja está cerrada. Sin la contraseña nadie puede mirar
+dentro ni sacar archivos. Ni siquiera se ven los nombres de los archivos.
+
+**Abrir una caja cerrada:** igual que antes — ver qué hay dentro (parte 2),
+recuperar archivos (partes 3 y 4). No hay que añadir nada:
+
+```
+vbackup /mnt/usb/ivan.bck /home/ivan/restored
+```
+
+VBACKUP ve solo que la caja está cerrada y pregunta:
+
+```
+Passphrase for /mnt/usb/ivan.bck:
+```
+
+En un ordenador pequeño abrirla tarda un segundo o unos pocos. Es a propósito:
+así adivinar la contraseña es muy lento.
+
+**La contraseña es la llave. ¡Muy importante!**
+
+- Si se pierde la contraseña, **NADIE** puede abrir la caja. Ni tú, ni quien te
+  preparó el ordenador, ni siquiera el autor de VBACKUP.
+- Usa una contraseña larga: cinco o más palabras al azar.
+- Escríbela en un papel. Guarda el papel en un sitio seguro.
+
+**¿Guardar sin ti, a una hora fija (cron)? ¿Un gestor de archivos?** Allí nadie escribe la contraseña.
+Entonces pon la contraseña en un archivo. Solo cuenta la primera línea.
+Y haz el archivo privado — solo tú puedes leerlo:
+
+```
+printf 'my long password words here\n' > /root/backup.key
+chmod 600 /root/backup.key
+```
+
+Ahora da el archivo en vez de escribir:
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /ENCRYPT /KEY_FILE=/root/backup.key
+```
+
+O dilo una vez, y VBACKUP toma el archivo solo cada vez:
+
+```
+export VBACKUP_KEY_FILE=/root/backup.key
+```
+
+Para cerrar una caja nueva, escribe `/ENCRYPT` de todos modos.
+
+Los gestores de archivos (MC, far2l, Total Commander, Double Commander) no saben
+pedir una contraseña. Abren una caja cerrada solo así, con `VBACKUP_KEY_FILE`.
+
+**vbkx** (sección 11) también abre una caja cerrada. Dale el archivo con `-k`, o te la pide:
+
+```
+vbkx x /mnt/usb/ivan.bck -k /root/backup.key
+```
+
+**Bueno saber:**
+
+- Una caja cerrada rota se arregla como antes (`BLKFIXED`). Para eso no hace falta la contraseña.
+- Si alguien cambió la caja a propósito, VBACKUP lo nota (`BLKFORGED`, sección 12).
+
+**Cuidado:** un VBACKUP antiguo (antes de X01-06) no puede abrir una caja cerrada.
+Solo dice que se perdieron bloques y no escribe nada. Instala el VBACKUP nuevo.
+
+---
+
+## 9. Guardar un disco o una partición entera, tal como está
 
 **Para qué:** para hacer una copia exacta de todo el disco, trocito a trocito.
 Así se copia el disco con el que arranca el ordenador, o un disco cifrado.
@@ -404,9 +498,9 @@ vbackup /mnt/usb/sdb1.bck /home/ivan/sdb1.img /PHYSICAL
 
 ---
 
-## 9. Guardar un sistema de archivos entero y crearlo de nuevo en otro disco
+## 10. Guardar un sistema de archivos entero y crearlo de nuevo en otro disco
 
-**En qué se diferencia de la sección 8:** la sección 8 copia cada trocito del
+**En qué se diferencia de la sección 9:** la sección 9 copia cada trocito del
 disco; aquí VBACKUP copia todos los **archivos** del disco y recuerda qué disco era.
 El disco nuevo puede tener otro tamaño.
 
@@ -441,12 +535,12 @@ Recuerda:
 - hace falta el programa que crea discos de ese tipo (`mkfs.ext4`,
   `mkfs.vfat` …). Lo instala quien te preparó el ordenador;
 - así **no** se puede mover el disco con el que arranca el ordenador.
-  Para eso guarda el disco entero (`/dev/sdb`, no `/dev/sdb1`) como en la sección 8;
+  Para eso guarda el disco entero (`/dev/sdb`, no `/dev/sdb1`) como en la sección 9;
 - no conectes el disco viejo y el nuevo a la vez: son gemelos.
 
 ---
 
-## 10. ¿No hay VBACKUP? Usa vbkx
+## 11. ¿No hay VBACKUP? Usa vbkx
 
 **Para qué:** estás en otro ordenador y allí no está VBACKUP.
 Pero existe `vbkx` — un solo programa pequeño. Llévalo en la misma memoria USB.
@@ -514,7 +608,7 @@ Para reemplazarlo, añade `-f`.
 
 ---
 
-## 11. Si algo salió mal
+## 12. Si algo salió mal
 
 Un mensaje se ve así: `%VBACKUP-E-NOMBRE, texto`.
 La letra después de `VBACKUP-` te dice lo grave que es:
@@ -619,6 +713,37 @@ que querías guardar algo y no dijiste dónde.
 ls /home/ivan
 ```
 
+¿Lo primero es una caja? Entonces su nombre debe terminar en `.bck` o `.sav`.
+O añade `/SAVE_SET`.
+
+### MAXPARM
+
+**Qué ves:**
+
+```
+%VBACKUP-E-MAXPARM, too many parameters: .log - only an input and an output are taken; a qualifier begins with /
+```
+
+**Qué pasó:** demasiadas palabras. Seguramente escribiste `.log` en vez de `/LOG`.
+
+**Qué hacer:** un calificador siempre empieza por `/`:
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /LOG
+```
+
+### GLUED
+
+**Qué ves:**
+
+```
+%VBACKUP-I-GLUED, box.sav/sav: the qualifiers glued to it are taken as qualifiers
+```
+
+**Qué pasó:** solo informa. `box.sav/sav` se entendió como `box.sav /SAVE_SET`.
+
+**Qué hacer:** nada. Todo va bien.
+
 ### BLKFIXED
 
 **Qué ves:**
@@ -632,6 +757,22 @@ ls /home/ivan
 
 **Qué hacer:** quizá la memoria USB empieza a fallar.
 Pronto haz una caja nueva en otra memoria USB.
+
+### BLKFORGED
+
+**Qué ves:**
+
+```
+%VBACKUP-W-BLKFORGED, block 3 of volume 1 is not what was written: its CRC is right, its authentication fails
+```
+
+**Qué pasó:** alguien cambió un trocito de una caja cerrada **a propósito**.
+Su suma de control parece correcta, pero la cerradura dice: esto no es lo que escribió VBACKUP.
+
+Si justo después sale `BLKFIXED`, el trocito se arregló. **Tus archivos están bien.**
+
+**Qué hacer:** averigua quién pudo escribir en la caja.
+Guarda tus cajas donde nadie más pueda cambiarlas.
 
 ### BLKLOST y FILDAMAGED
 
@@ -730,6 +871,77 @@ Después haz la caja otra vez.
 vbackup /mnt/usb/ivan.bck /home/ivan/restored
 ```
 
+### WRONGKEY
+
+**Qué ves:**
+
+```
+%VBACKUP-E-WRONGKEY, the passphrase does not open /mnt/usb/ivan.bck
+```
+
+**Qué pasó:** la contraseña no es la correcta. No se escribió nada.
+
+**Qué hacer:** prueba otra vez, despacio. Revisa las mayúsculas y las minúsculas (¡la tecla **Bloq Mayús**!).
+¿La contraseña viene de un archivo de clave? Solo cuenta su primera línea. Mírala:
+
+```
+head -1 /root/backup.key
+```
+
+### NOKEY
+
+**Qué ves:**
+
+```
+%VBACKUP-E-NOKEY, /mnt/usb/ivan.bck needs a passphrase and there is no terminal to ask it on: give /KEY_FILE=file or VBACKUP_KEY_FILE
+```
+
+**Qué pasó:** la caja está cerrada y no hay dónde pedir la contraseña
+(cron, un gestor de archivos).
+
+**Qué hacer:** da el archivo de clave (sección 8):
+
+```
+vbackup /mnt/usb/ivan.bck /home/ivan/restored /KEY_FILE=/root/backup.key
+```
+
+o dilo una vez:
+
+```
+export VBACKUP_KEY_FILE=/root/backup.key
+```
+
+### KEYFILE
+
+**Qué ves:**
+
+```
+%VBACKUP-E-KEYFILE, passphrase from /root/backup.key: others may read or change it - chmod 600 it
+```
+
+**Qué pasó:** otras personas pueden leer el archivo de clave. VBACKUP no se fía de él.
+
+**Qué hacer:** hazlo privado:
+
+```
+chmod 600 /root/backup.key
+```
+
+El mismo mensaje sale si el archivo está vacío o su primera línea es demasiado larga.
+Entonces escribe la contraseña en él otra vez (sección 8).
+
+### KEYMATCH
+
+**Qué ves:**
+
+```
+%VBACKUP-E-KEYMATCH, the two passphrases differ: nothing saved
+```
+
+**Qué pasó:** las dos contraseñas que escribiste no son iguales. No se guardó nada.
+
+**Qué hacer:** prueba otra vez, despacio. Mientras escribes no se ve nada, así que escribe con cuidado.
+
 ### PHYSMOUNTED
 
 **Qué ves:**
@@ -784,7 +996,7 @@ disco conectado. Desconéctalo.
 
 **Qué pasó:** el disco nuevo es más pequeño que el guardado. No cabe todo.
 
-**Qué hacer:** usa un disco más grande. O pon la caja en un archivo imagen (sección 8).
+**Qué hacer:** usa un disco más grande. O pon la caja en un archivo imagen (sección 9).
 
 ### PHYSABORT
 
@@ -838,7 +1050,7 @@ vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
 
 **Qué pasó:** VBACKUP no sabe crear un disco de ese tipo.
 
-**Qué hacer:** guarda ese disco como en la sección 8 (`/PHYSICAL`).
+**Qué hacer:** guarda ese disco como en la sección 9 (`/PHYSICAL`).
 O saca de la caja solo los archivos (sección 3).
 
 ### IMGMKFS
@@ -867,7 +1079,7 @@ O saca de la caja solo los archivos (sección 3).
 
 ---
 
-## 12. Ayuda, no entiendo nada
+## 13. Ayuda, no entiendo nada
 
 No pasa nada. Pide ayuda al mismo programa.
 
@@ -906,7 +1118,7 @@ Y sobre todo: pide ayuda a quien te preparó el ordenador. Enséñale el mensaje
 - **Archivo** — una carta, una foto, una canción.
 - **Orden** — una línea que escribes en el terminal y envías con la tecla Enter.
 - **Terminal** — la ventana donde escribes las órdenes.
-- **Saveset (caja)** — un archivo grande que guarda todos tus archivos. Su nombre termina en `.bck`.
+- **Saveset (caja)** — un archivo grande que guarda todos tus archivos. Su nombre termina en `.bck` o `.sav`.
 - **Volumen (trozo)** — una parte de una caja cortada: `ivan.bck.002`, `ivan.bck.003`.
 - **Memoria USB** — un disco pequeño que se enchufa al ordenador.
 - **Diario** — el cuaderno de VBACKUP donde apunta lo que ya está guardado.
@@ -917,3 +1129,9 @@ Y sobre todo: pide ayuda a quien te preparó el ordenador. Enséñale el mensaje
 - **Punto de montaje** — la carpeta por la que ves un disco conectado. Por ejemplo `/mnt/photos`.
 - **Imagen** — un solo archivo que guarda un disco entero, trocito a trocito.
 - **UUID** — el número largo de un disco, como un pasaporte. Una copia tiene el mismo que el original.
+- **Calificador** — una palabra con `/` delante, como `/LOG`. Le dice a VBACKUP cómo trabajar.
+- **Contraseña (passphrase)** — las palabras secretas que cierran y abren una caja. Como la llave de una puerta:
+  si la pierdes, la puerta queda cerrada para siempre.
+- **Archivo de clave** — un archivo pequeño con la contraseña en su primera línea. Solo tú puedes leerlo (`chmod 600`).
+- **Caja cerrada (cifrada)** — una caja hecha con `/ENCRYPT`. Sin la contraseña nadie puede mirar dentro,
+  ni siquiera los nombres de los archivos.

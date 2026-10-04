@@ -37,7 +37,8 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 
 That is all you need. Below, step by step.
 
-And more: make the box smaller — section 7; save a whole disk — sections 8 and 9.
+And more: make the box smaller — section 7; lock it with a password — section 8;
+save a whole disk — sections 9 and 10.
 
 ---
 
@@ -49,8 +50,12 @@ And more: make the box smaller — section 7; save a whole disk — sections 8 a
 
 Important rules:
 
-- The name of a box **always** ends with `.bck`. For example: `ivan.bck`.
-  If you forget `.bck`, VBACKUP does not make a box. It just copies the folder.
+- The name of a box **always** ends with `.bck` or `.sav`. For example: `ivan.bck`.
+  If you forget it, VBACKUP does not make a box. It just copies the folder.
+  (Another name? Then add `/SAVE_SET`.)
+- A word like `/LOG` or `/LIST` is a "qualifier". It **always** starts with `/`.
+  If you type `.log` instead of `/LOG`, VBACKUP says `MAXPARM` and does nothing.
+- A qualifier glued to the name works too: `box.sav/sav/log`. VBACKUP then says `GLUED`.
 - The spaces between the parts of a command matter. Do not leave them out.
 - Big and small letters matter: `/home/ivan` and `/Home/Ivan` are different.
 - If nothing is written back, that is good. It means it worked.
@@ -330,7 +335,96 @@ The files in the box are fine. Just install the new VBACKUP.
 
 ---
 
-## 8. Save a whole disk or partition, just as it is
+## 8. Lock the box with a password
+
+**Why:** so that nobody else can look into the box.
+For example, if the USB stick is lost or stolen.
+
+**What to type:**
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /ENCRYPT
+```
+
+VBACKUP asks for the password two times:
+
+```
+Passphrase for /mnt/usb/ivan.bck:
+The same passphrase again:
+```
+
+Type the password and press Enter. Then type it once more, the same.
+While you type, **nothing is shown** on the screen, not even stars. That is right.
+
+**What it means:** the box is locked. Without the password nobody can look
+inside or take files out. Not even the names of the files can be seen.
+
+**Open a locked box:** exactly as before — see inside (section 2),
+get files back (sections 3 and 4). Nothing to add:
+
+```
+vbackup /mnt/usb/ivan.bck /home/ivan/restored
+```
+
+VBACKUP sees by itself that the box is locked and asks:
+
+```
+Passphrase for /mnt/usb/ivan.bck:
+```
+
+On a small computer opening takes a second or a few. That is on purpose:
+it makes guessing the password very slow.
+
+**The password is the key. Very important!**
+
+- If the password is lost, **NOBODY** can open the box. Not you, not the person
+  who set up your computer, not even the author of VBACKUP.
+- Take a long password: five or more random words.
+- Write it on paper. Keep the paper in a safe place.
+
+**Saving without you, at a set time (cron)? A file manager?** Nobody is there to type the password.
+Then put the password into a file. Only the first line counts.
+And make the file private — only you may read it:
+
+```
+printf 'my long password words here\n' > /root/backup.key
+chmod 600 /root/backup.key
+```
+
+Now give the file instead of typing:
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /ENCRYPT /KEY_FILE=/root/backup.key
+```
+
+Or say it once, and VBACKUP takes the file by itself every time:
+
+```
+export VBACKUP_KEY_FILE=/root/backup.key
+```
+
+To lock a new box, still write `/ENCRYPT`.
+
+File managers (MC, far2l, Total Commander, Double Commander) cannot ask
+for a password. They open a locked box only this way, with `VBACKUP_KEY_FILE`.
+
+**vbkx** (section 11) opens a locked box too. Give it the file with `-k`, or it asks:
+
+```
+vbkx x /mnt/usb/ivan.bck -k /root/backup.key
+```
+
+**Good to know:**
+
+- A broken locked box is repaired as before (`BLKFIXED`). For that no password is needed.
+- If somebody changed the box on purpose, VBACKUP notices it (`BLKFORGED`, section 12).
+
+**Careful:** an old VBACKUP (before X01-06) cannot open a locked box.
+It just says blocks are lost and writes nothing. Install the new VBACKUP.
+
+---
+
+## 9. Save a whole disk or partition, just as it is
 
 **Why:** to make an exact copy of the whole disk — every little piece of it.
 This is how you copy the disk the computer starts from, or an encrypted disk.
@@ -404,9 +498,9 @@ vbackup /mnt/usb/sdb1.bck /home/ivan/sdb1.img /PHYSICAL
 
 ---
 
-## 9. Save a whole file system and make it again on another disk
+## 10. Save a whole file system and make it again on another disk
 
-**How it differs from section 8:** section 8 copies every piece of the disk;
+**How it differs from section 9:** section 9 copies every piece of the disk;
 here VBACKUP copies all the **files** of the disk and remembers what disk it was.
 The new disk may have another size.
 
@@ -441,12 +535,12 @@ Remember:
 - it needs the program that makes disks of that kind
   (`mkfs.ext4`, `mkfs.vfat` …). The person who set up your computer installs it;
 - this way you **cannot** move the disk the computer starts from.
-  For that, save the whole disk (`/dev/sdb`, not `/dev/sdb1`) as in section 8;
+  For that, save the whole disk (`/dev/sdb`, not `/dev/sdb1`) as in section 9;
 - do not connect the old and the new disk at the same time — they are twins.
 
 ---
 
-## 10. No VBACKUP here? Use vbkx
+## 11. No VBACKUP here? Use vbkx
 
 **Why:** you are on another computer, and VBACKUP is not installed there.
 But there is `vbkx` — one small program. Bring it on the same USB stick.
@@ -514,7 +608,7 @@ To replace it, add `-f`.
 
 ---
 
-## 11. If something went wrong
+## 12. If something went wrong
 
 A message looks like this: `%VBACKUP-E-NAME, text`.
 The letter after `VBACKUP-` tells you how serious it is:
@@ -619,6 +713,37 @@ you wanted to save something, and you did not say where to.
 ls /home/ivan
 ```
 
+Is the first thing a box? Then its name should end with `.bck` or `.sav`.
+Or add `/SAVE_SET`.
+
+### MAXPARM
+
+**What you see:**
+
+```
+%VBACKUP-E-MAXPARM, too many parameters: .log - only an input and an output are taken; a qualifier begins with /
+```
+
+**What happened:** too many words. You probably typed `.log` instead of `/LOG`.
+
+**What to do:** a qualifier always starts with `/`:
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /LOG
+```
+
+### GLUED
+
+**What you see:**
+
+```
+%VBACKUP-I-GLUED, box.sav/sav: the qualifiers glued to it are taken as qualifiers
+```
+
+**What happened:** just telling you. `box.sav/sav` was understood as `box.sav /SAVE_SET`.
+
+**What to do:** nothing. All is well.
+
 ### BLKFIXED
 
 **What you see:**
@@ -632,6 +757,22 @@ ls /home/ivan
 
 **What to do:** the USB stick may be starting to fail.
 Soon make a new box on another USB stick.
+
+### BLKFORGED
+
+**What you see:**
+
+```
+%VBACKUP-W-BLKFORGED, block 3 of volume 1 is not what was written: its CRC is right, its authentication fails
+```
+
+**What happened:** a piece of a locked box was changed **on purpose**.
+Its checksum looks right, but the lock says: this is not what VBACKUP wrote.
+
+If `BLKFIXED` comes right after it, the piece was repaired. **Your files are fine.**
+
+**What to do:** find out who could write to the box.
+Keep your boxes where nobody else can change them.
 
 ### BLKLOST and FILDAMAGED
 
@@ -730,6 +871,77 @@ Then make the box again.
 vbackup /mnt/usb/ivan.bck /home/ivan/restored
 ```
 
+### WRONGKEY
+
+**What you see:**
+
+```
+%VBACKUP-E-WRONGKEY, the passphrase does not open /mnt/usb/ivan.bck
+```
+
+**What happened:** the password is not the right one. Nothing was written.
+
+**What to do:** try again, slowly. Check big and small letters (the **Caps Lock** key!).
+Password from a key file? Only its first line counts. Look at it:
+
+```
+head -1 /root/backup.key
+```
+
+### NOKEY
+
+**What you see:**
+
+```
+%VBACKUP-E-NOKEY, /mnt/usb/ivan.bck needs a passphrase and there is no terminal to ask it on: give /KEY_FILE=file or VBACKUP_KEY_FILE
+```
+
+**What happened:** the box is locked, and there is no place to ask for the password
+(cron, a file manager).
+
+**What to do:** give the key file (section 8):
+
+```
+vbackup /mnt/usb/ivan.bck /home/ivan/restored /KEY_FILE=/root/backup.key
+```
+
+or say once:
+
+```
+export VBACKUP_KEY_FILE=/root/backup.key
+```
+
+### KEYFILE
+
+**What you see:**
+
+```
+%VBACKUP-E-KEYFILE, passphrase from /root/backup.key: others may read or change it - chmod 600 it
+```
+
+**What happened:** other people can read the key file. VBACKUP does not trust it.
+
+**What to do:** make it private:
+
+```
+chmod 600 /root/backup.key
+```
+
+The same message comes when the file is empty, or its first line is too long.
+Then write the password into it again (section 8).
+
+### KEYMATCH
+
+**What you see:**
+
+```
+%VBACKUP-E-KEYMATCH, the two passphrases differ: nothing saved
+```
+
+**What happened:** the two passwords you typed are not the same. Nothing was saved.
+
+**What to do:** try again, slowly. Nothing is shown while you type, so type carefully.
+
 ### PHYSMOUNTED
 
 **What you see:**
@@ -784,7 +996,7 @@ a connected disk. Disconnect it.
 
 **What happened:** the new disk is smaller than the one saved. It does not all fit.
 
-**What to do:** take a bigger disk. Or put the box into an image file (section 8).
+**What to do:** take a bigger disk. Or put the box into an image file (section 9).
 
 ### PHYSABORT
 
@@ -838,7 +1050,7 @@ vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
 
 **What happened:** VBACKUP cannot make a disk of this kind.
 
-**What to do:** save such a disk as in section 8 (`/PHYSICAL`).
+**What to do:** save such a disk as in section 9 (`/PHYSICAL`).
 Or take just the files out of the box (section 3).
 
 ### IMGMKFS
@@ -867,7 +1079,7 @@ Or take just the files out of the box (section 3).
 
 ---
 
-## 12. Help, I do not understand anything
+## 13. Help, I do not understand anything
 
 That is all right. Ask the program itself for help.
 
@@ -906,7 +1118,7 @@ And most of all: ask the person who set up your computer. Show them the message.
 - **File** — one letter, one photo, one song.
 - **Command** — a line you type in the terminal and send with the Enter key.
 - **Terminal** — the window where you type commands.
-- **Saveset (box)** — one big file that holds all your files. Its name ends with `.bck`.
+- **Saveset (box)** — one big file that holds all your files. Its name ends with `.bck` or `.sav`.
 - **Volume (piece)** — one part of a box that was cut up: `ivan.bck.002`, `ivan.bck.003`.
 - **USB stick** — a small disk you plug into the computer.
 - **Journal** — VBACKUP's notebook, where it writes down what is already saved.
@@ -917,3 +1129,9 @@ And most of all: ask the person who set up your computer. Show them the message.
 - **Mount point** — the folder through which you see a connected disk. For example `/mnt/photos`.
 - **Image** — one file that holds a whole disk, piece by piece.
 - **UUID** — the long number of a disk, like a passport. A copy has the same one as the original.
+- **Qualifier** — a word with `/` in front, like `/LOG`. It tells VBACKUP how to work.
+- **Password (passphrase)** — the secret words that lock and open a box. Like the key of a door:
+  lose it, and the door stays shut forever.
+- **Key file** — a small file with the password on its first line. Only you may read it (`chmod 600`).
+- **Locked (encrypted) box** — a box made with `/ENCRYPT`. Without the password nobody can look inside,
+  not even at the names of the files.
