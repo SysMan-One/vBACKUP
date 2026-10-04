@@ -33,6 +33,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-02 : An encrypted saveset through VBACKUP_KEY_FILE; without
+#					it the commands fail at once.
+#
 #		 4-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
@@ -147,6 +150,21 @@ check '[ $? = 0 ] && cmp -s "far.j/a b.txt" "tree/a b.txt" && cmp -s far.j/фа�
 sh -c "$(ini Test | sed "s#%%AQ#x.bck#")" > far.tlog 2>&1
 check '[ $? = 0 ]' "MultiArc Test: $(cat far.tlog)"
 check '[ -z "$(ini Delete)" ] && [ -z "$(ini Add)" ]' "MultiArc: the format offers to change a saveset"
+
+#	An encrypted saveset: through VBACKUP_KEY_FILE; without it the commands fail at once, never ask on the screen
+printf 'plugin passphrase\n' > key && chmod 600 key
+VBACKUP_KDFITER=1000 VBACKUP_KEY_FILE=$S/key $VB tree e.bck /ENCRYPT > /dev/null 2>&1
+VBACKUP_KEY_FILE=$S/key sh "$UVBK" list e.bck > mce.lst 2> mce.err
+check '[ $? = 0 ] && [ "$(cat mce.lst)" = "$(cat mc.lst)" ]' "uvbk list of an encrypted saveset: $(head -2 mce.err)"
+VBACKUP_KEY_FILE=$S/key sh "$UVBK" copyout e.bck "tree/a b.txt" out/e.txt 2>> mce.err
+check '[ $? = 0 ] && cmp -s out/e.txt "tree/a b.txt"' "uvbk copyout of an encrypted saveset"
+env -u VBACKUP_KEY_FILE timeout 20 sh "$UVBK" list e.bck > mcn.lst 2>&1 < /dev/null
+RC=$?
+check '[ $RC = 1 ] || [ $RC = 2 ]' "uvbk list of an encrypted saveset without a key: hung or succeeded"
+VBACKUP_KEY_FILE=$S/key sh -c "$(ini List | sed 's/%%AQ/e.bck/')" > fare.lst 2>&1
+check '[ $? = 0 ] && [ "$(cat fare.lst)" = "$(cat far.lst)" ]' "MultiArc List of an encrypted saveset: $(head -2 fare.lst)"
+env -u VBACKUP_KEY_FILE timeout 20 sh -c "$(ini List | sed 's/%%AQ/e.bck/')" > farn.lst 2>&1
+check '[ $? = 2 ] && grep -q "give -k" farn.lst' "MultiArc List without a key: $(head -1 farn.lst)"
 
 #
 #	3. The real programs, in tmux

@@ -23,7 +23,8 @@
 **		    vbkx x saveset [-C dir] [-f] [-j] [name...] extract (-j: no dirs)
 **		    vbkx p saveset name			a file to stdout
 **		    vbkx t saveset			test: read all, check CRCs
-**		    ... [-k keyfile]			an encrypted saveset
+**		    ... [-k keyfile] [-n]		an encrypted saveset; -n: never
+**							ask on the terminal (programs)
 **
 **		A name is a stored name as the listing shows it; a directory
 **		name takes what is below it.  Without names the whole saveset
@@ -1929,6 +1930,8 @@ int		l_hole, l_found = 0;
 **  else asked for on the terminal without echo.  Returns its length, -1 -
 **  none to be had (said).
 */
+static	int	s_noprompt;			/* -n, VBACKUP_NOPROMPT=1: no questions		*/
+
 static	int	s_vbkx$pass	(
 	const	char *		a_keyfile,
 	const	char *		a_spec,
@@ -1963,6 +1966,8 @@ size_t		l_n = 0;
 
 		fclose(l_fp);
 		}
+	else if ( s_noprompt )
+		return	s_vbkx$msg("%s is encrypted: give -k file or VBACKUP_KEY_FILE (no questions asked: -n)", a_spec), -1;
 	else	{
 #ifdef	_WIN32
 		/* The console, UTF-16 without echo, made UTF-8 - the bytes Linux would have taken */
@@ -2040,6 +2045,7 @@ static	int	s_vbkx$usage	(void)
 		"  -f      overwrite files that are there\n"
 		"  -k file the passphrase of an encrypted saveset: the first line of file\n"
 		"          (else VBACKUP_KEY_FILE, else it is asked for on the terminal)\n"
+		"  -n      no questions: never ask for a passphrase (for programs; so does VBACKUP_NOPROMPT=1)\n"
 		"\n"
 		"Completion: 0 - done; 1 - something damaged or not done; 2 - not usable.\n");
 
@@ -2108,6 +2114,8 @@ const char *	l_keyfile = NULL;
 			s_junk	= 1;
 		else if ( !strcmp(argv [i], "-k") && ((i + 1) < argc) )
 			l_keyfile = argv [++i];
+		else if ( !strcmp(argv [i], "-n") )
+			s_noprompt = 1;
 		else	l_names [l_nnames++] = argv [i];
 		}
 
@@ -2122,6 +2130,9 @@ const char *	l_keyfile = NULL;
 
 		return	2;
 		}
+
+	if ( getenv("VBACKUP_NOPROMPT") && !strcmp(getenv("VBACKUP_NOPROMPT"), "1") )
+		s_noprompt = 1;
 
 	/* Encrypted: nothing of it is read before the passphrase is right */
 	if ( l_rctx.crypt )

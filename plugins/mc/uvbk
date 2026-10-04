@@ -43,11 +43,18 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-02 : An encrypted saveset: the passphrase from
+#					VBACKUP_KEY_FILE, never asked on the screen of mc.
+#
 #		 4-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
 
 VB=${VBACKUP:-vbackup}
+
+#	An encrypted saveset: the passphrase from VBACKUP_KEY_FILE only - a question would land on the screen of mc
+VBACKUP_NOPROMPT=1
+export VBACKUP_NOPROMPT
 PATH=$PATH:/usr/local/bin
 export PATH
 

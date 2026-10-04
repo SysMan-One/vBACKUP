@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWCX"
-#define	__IDENT__	"X01-05"
-#define	__REV__		"1.5.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -47,6 +47,11 @@
 **
 **  LIMITATIONS
 **
+**		    - an encrypted saveset (format.md 6.10) is opened with the
+**		      first line of the file VBACKUP_KEY_FILE names (on Linux
+**		      readable by its owner only): the API has no way to ask
+**		      for a passphrase.  Without it - E_EOPEN, with a wrong one
+**		      - E_BAD_ARCHIVE;
 **		    - no add, delete, change: a saveset is written by vbackup
 **		      only;
 **		    - owners, ACLs, extended attributes, chattr flags are not
@@ -89,11 +94,11 @@
 **		Linux .so (Double Commander), from the root of the sources:
 **		    gcc -O2 -shared -fPIC -DVBK_NOSTARLET -D_GNU_SOURCE -Ilib
 **			-o vbackup.wcx plugins/wcx/vbkwcx.c lib/vbkfmt.c
-**			lib/vbkrd.c lib/vbklz4.c
+**			lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c
 **		Windows, 64 and 32 bits:
 **		    x86_64-w64-mingw32-gcc -O2 -shared -Ilib -o vbackup.wcx64
 **			plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c
-**			lib/vbklz4.c -static -Wl,--kill-at
+**			lib/vbklz4.c lib/vbkcrp.c -static -Wl,--kill-at
 **		    i686-w64-mingw32-gcc ... -o vbackup.wcx ... (the same)
 **		or make -f plugins/wcx/Makefile linux|win64|win32|all.
 **
@@ -102,6 +107,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		Encrypted savesets: the passphrase from VBACKUP_KEY_FILE.
 **
 **	X01-05		 4-OCT-2026	RRL
 **		Initial version.
@@ -750,6 +758,64 @@ uint32_t	l_last = l_r->nvols + (l_r->trailer ? 0 : 1);
 }
 
 
+
+/*
+**  The passphrase of an encrypted saveset: the first line of the file
+**  VBACKUP_KEY_FILE names (on Linux one only its owner may read).
+**  Returns STS$K_SUCCESS / STS$K_WARN (opened, the TRAILER fails) from
+**  VBK$RD_SETKEY, STS$K_ERROR - the passphrase is wrong, STS$K_FATAL -
+**  there is none to be had.
+*/
+static	int	s_vbkw$unlock	(
+		VBK$RCTX *	a_rctx
+			)
+{
+char		l_pass [VBK$K_PASSMAX + 2], l_kf [VBK$K_SZ_SPEC];
+size_t		l_n = 0;
+FILE *		l_fp;
+int		l_c, l_status;
+#ifdef	_WIN32
+const WCHAR *	l_wkf = _wgetenv(L"VBACKUP_KEY_FILE");
+
+	if ( !l_wkf || !*l_wkf || !(l_fp = _wfopen(l_wkf, L"rb")) )
+		return	STS$K_FATAL;
+
+	(void) l_kf;
+#else
+const char *	l_env = getenv("VBACKUP_KEY_FILE");
+struct stat	l_st;
+
+	if ( !l_env || !*l_env )
+		return	STS$K_FATAL;
+
+	snprintf(l_kf, sizeof(l_kf), "%s", l_env);
+
+	if ( !(l_fp = fopen(l_kf, "rb")) )
+		return	STS$K_FATAL;
+
+	if ( fstat(fileno(l_fp), &l_st) || !S_ISREG(l_st.st_mode) || (l_st.st_mode & (S_IRWXG | S_IRWXO)) )
+		{
+		fclose(l_fp);
+
+		return	STS$K_FATAL;
+		}
+#endif
+	while ( ((l_c = fgetc(l_fp)) != EOF) && (l_c != '\n') )
+		if ( l_n < sizeof(l_pass) )
+			l_pass [l_n++] = (char) l_c;
+
+	fclose(l_fp);
+
+	if ( l_n && (l_n < sizeof(l_pass)) && (l_pass [l_n - 1] == '\r') )
+		l_n--;
+
+	l_status = (l_n && (l_n <= VBK$K_PASSMAX)) ? vbk$rd_setkey(a_rctx, l_pass, l_n) : STS$K_FATAL;
+	vbk$crp_wipe(l_pass, sizeof(l_pass));
+
+	return	l_status;
+}
+
+
 /*
 **  Open an archive: the name in UTF-16
 */
@@ -779,6 +845,17 @@ int		l_status;
 		if ( l_status != STS$K_ERROR )
 			vbk$rd_close(&l_arc->rctx);
 
+		free(l_arc->zbuf);
+		free(l_arc);
+
+		return	NULL;
+		}
+
+	/* Encrypted (format.md 6.10): the passphrase from the key file of VBACKUP_KEY_FILE - the API has no way to ask for one */
+	if ( l_arc->rctx.crypt && (STS$K_SUCCESS != (l_status = s_vbkw$unlock(&l_arc->rctx))) && (l_status != STS$K_WARN) )
+		{
+		*a_result = (l_status == STS$K_ERROR) ? WCX$K_E_BAD_ARCHIVE : WCX$K_E_EOPEN;
+		vbk$rd_close(&l_arc->rctx);
 		free(l_arc->zbuf);
 		free(l_arc);
 

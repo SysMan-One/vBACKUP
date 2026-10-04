@@ -20,7 +20,8 @@
 **		that a slip of a finger does not make a saveset nobody can
 **		open.  With neither, a saveset that needs one is not read
 **		and none is made: the command never waits on a terminal it
-**		does not have.
+**		does not have - nor on one it must not use: VBACKUP_NOPROMPT=1,
+**		set by the plugins of the file managers.
 **
 **		The passphrase is asked for once per command and kept for
 **		the savesets that follow (a /VERIFY after the save, the
@@ -266,6 +267,10 @@ int		l_fd, l_n, l_m;
 				return	STS$K_ERROR;
 			}
 		else	{
+			/* VBACKUP_NOPROMPT=1: a file manager runs the command - a question on its screen would hang it */
+			if ( getenv("VBACKUP_NOPROMPT") && !strcmp(getenv("VBACKUP_NOPROMPT"), "1") )
+				return	$VBKMSG(VBACKUP$_NOKEY, a_what);
+
 			if ( 0 > (l_fd = open("/dev/tty", O_RDWR | O_NOCTTY | O_CLOEXEC)) )
 				return	$VBKMSG(VBACKUP$_NOKEY, a_what);
 
