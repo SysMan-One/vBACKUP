@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -27,6 +27,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-06		 5-OCT-2026	RRL
+**		The encryption: SHA-256, HMAC, PBKDF2, ChaCha20 by the vectors
+**		of their documents; a block sealed, opened, tampered with.
+**
 **	X01-04		 4-OCT-2026	RRL
 **		The LZ4 block codec: round trips, determinism, damaged blocks.
 **		TAP=1: the Test Anything Protocol.
@@ -50,6 +54,7 @@
 #include	"vbkrd.h"
 #include	"vbkos.h"
 #include	"vbklz4.h"
+#include	"vbkcrp.h"
 
 #define	UNITS$K_NREC	400			/* Records of the synthetic saveset		*/
 #define	UNITS$K_BSZ	8192			/* Small blocks: many of them, many volumes	*/
@@ -279,6 +284,48 @@ static	void	s_begin	(const char *a_what)
 }
 
 
+
+/*
+**  A digest against its hexadecimal form
+*/
+static	int	s_hexeq	(
+	const	uint8_t *	a_d,
+		size_t		a_len,
+	const	char *		a_hex
+			)
+{
+char	l_x [3];
+
+	if ( strlen(a_hex) != (2 * a_len) )
+		return	0;
+
+	for ( size_t i = 0; i < a_len; i++ )
+		{
+		snprintf(l_x, sizeof(l_x), "%02x", a_d [i]);
+
+		if ( memcmp(l_x, a_hex + 2 * i, 2) )
+			return	0;
+		}
+
+	return	1;
+}
+
+static	void	s_sha	(
+	const	char *		a_m,
+		size_t		a_len,
+	const	char *		a_hex
+			)
+{
+VBK$SHA256	l_s;
+uint8_t		l_d [VBK$K_KEYSZ];
+
+	vbk$sha256_init(&l_s);
+	vbk$sha256_update(&l_s, a_m, a_len);
+	vbk$sha256_final(&l_s, l_d);
+
+	$CHECK(s_hexeq(l_d, sizeof(l_d), a_hex), "SHA-256 of %zu octets", a_len);
+}
+
 int	main	(
 		int		a_argc,
 		char **		a_argv
@@ -479,6 +526,162 @@ char		l_spec [1100];
 		}
 
 	$CHECK(l_ok < 20000, "every damaged block decompressed");
+	}
+
+
+	s_begin("SHA-256, FIPS 180-4 examples");
+	{
+	static uint8_t	l_m [1000000];
+	uint8_t		l_d [VBK$K_KEYSZ];
+	VBK$SHA256	l_s;
+
+	s_sha("", 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+	s_sha("abc", 3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+	s_sha("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56,
+		"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+
+	/* A million 'a', fed in pieces of every size from 1 up */
+	memset(l_m, 'a', sizeof(l_m));
+	vbk$sha256_init(&l_s);
+
+	for ( size_t l_o = 0, l_n = 1; l_o < sizeof(l_m); l_o += l_n, l_n = (l_n % 131) + 1 )
+		vbk$sha256_update(&l_s, l_m + l_o, ((sizeof(l_m) - l_o) < l_n) ? (sizeof(l_m) - l_o) : l_n);
+
+	vbk$sha256_final(&l_s, l_d);
+	$CHECK(s_hexeq(l_d, 32, "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"), "a million 'a'");
+	}
+
+	s_begin("HMAC-SHA256, RFC 4231 test cases 1, 2, 6");
+	{
+	uint8_t		l_k [131], l_d [VBK$K_KEYSZ];
+	VBK$HMAC	l_h;
+
+	memset(l_k, 0x0b, 20);
+	vbk$hmac_init(&l_h, l_k, 20);
+	vbk$hmac(&l_h, "Hi There", 8, l_d);
+	$CHECK(s_hexeq(l_d, 32, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"), "case 1");
+
+	vbk$hmac_init(&l_h, "Jefe", 4);
+	vbk$hmac(&l_h, "what do ya want for nothing?", 28, l_d);
+	$CHECK(s_hexeq(l_d, 32, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), "case 2");
+
+	memset(l_k, 0xaa, 131);
+	vbk$hmac_init(&l_h, l_k, 131);
+	vbk$hmac(&l_h, "Test Using Larger Than Block-Size Key - Hash Key First", 54, l_d);
+	$CHECK(s_hexeq(l_d, 32, "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"), "case 6");
+	}
+
+	s_begin("PBKDF2-HMAC-SHA256, RFC 7914 section 11 and the usual 4096");
+	{
+	uint8_t		l_d [64];
+
+	vbk$pbkdf2("passwd", 6, (const uint8_t *) "salt", 4, 1, l_d, 64);
+	$CHECK(s_hexeq(l_d, 64, "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc"
+		"49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783"), "passwd/salt/1");
+
+	vbk$pbkdf2("Password", 8, (const uint8_t *) "NaCl", 4, 80000, l_d, 64);
+	$CHECK(s_hexeq(l_d, 64, "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56"
+		"a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d"), "Password/NaCl/80000");
+
+	vbk$pbkdf2("password", 8, (const uint8_t *) "salt", 4, 4096, l_d, 32);
+	$CHECK(s_hexeq(l_d, 32, "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"), "password/salt/4096");
+	}
+
+	s_begin("ChaCha20, RFC 8439 2.4.2");
+	{
+	static const char	l_pt [] = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, "
+					"sunscreen would be it.";
+	uint8_t		l_key [32], l_nonce [12] = { 0, 0, 0, 0, 0, 0, 0, 0x4a, 0, 0, 0, 0 }, l_buf [sizeof(l_pt) - 1];
+
+	for ( int i = 0; i < 32; i++ )
+		l_key [i] = (uint8_t) i;
+
+	memcpy(l_buf, l_pt, sizeof(l_buf));
+	vbk$chacha20(l_key, l_nonce, 1, l_buf, sizeof(l_buf));
+	$CHECK(s_hexeq(l_buf, sizeof(l_buf), "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0b"
+		"f91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc"
+		"514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d"), "ciphertext");
+
+	vbk$chacha20(l_key, l_nonce, 1, l_buf, sizeof(l_buf));
+	$CHECK(!memcmp(l_buf, l_pt, sizeof(l_buf)), "decrypted back");
+	}
+
+	s_begin("a block sealed, opened, and refused when any octet of it or of its header changes");
+	{
+	static uint8_t	l_pay [UNITS$K_BSZ - VBK$K_HDRSZ], l_orig [sizeof(l_pay)];
+	uint8_t		l_salt [VBK$K_SALTSZ] = { 1, 2, 3 };
+	VBK$KEYS	l_keys, l_other;
+	VBK$BHDR	l_h = {0}, l_h2;
+	uint32_t	l_psz = sizeof(l_pay), l_bad = 0;
+
+	vbk$crp_derive(&l_keys, "correct horse", 13, l_salt, 1000);
+	vbk$crp_derive(&l_other, "correct horsf", 13, l_salt, 1000);
+	$CHECK(!vbk$crp_equal(l_keys.check, l_other.check, 32), "two passphrases, one CHECK");
+
+	l_h.bsize = UNITS$K_BSZ; l_h.type = 5; l_h.blkno = 77; l_h.volno = 2; l_h.gindex = 3;
+	l_h.recoff = 10; l_h.paylen = l_psz - VBK$K_TAGSZ - 100;
+
+	for ( uint32_t i = 0; i < l_h.paylen; i++ )
+		l_pay [i] = (uint8_t) (i * 7);
+
+	memcpy(l_orig, l_pay, sizeof(l_pay));
+	vbk$crp_seal(&l_keys, &l_h, l_pay, l_psz);
+	$CHECK(memcmp(l_pay, l_orig, l_h.paylen), "not encrypted");
+
+	memcpy(l_orig, l_pay, sizeof(l_pay));
+	$CHECK(!(1 & vbk$crp_open(&l_other, &l_h, l_pay, l_psz)), "opened with the wrong key");
+	$CHECK(!memcmp(l_pay, l_orig, sizeof(l_pay)), "a refused block was changed");
+
+	/* Every header field of the TAG, and a sample of the octets of the ciphertext and the TAG */
+	for ( int f = 0; f < 7; f++ )
+		{
+		l_h2 = l_h;
+
+		switch ( f )
+			{
+			case 0:	l_h2.ssuuid [5] ^= 1; break;
+			case 1:	l_h2.blkno++; break;
+			case 2:	l_h2.volno++; break;
+			case 3:	l_h2.type = 1; break;
+			case 4:	l_h2.gindex++; break;
+			case 5:	l_h2.recoff++; break;
+			case 6:	l_h2.paylen--; break;
+			}
+
+		if ( 1 & vbk$crp_open(&l_keys, &l_h2, l_pay, l_psz) )
+			l_bad++;
+		}
+
+	for ( uint32_t i = 0; i < l_psz; i += (i < l_h.paylen) ? 997 : 1 )
+		{
+		if ( (i >= l_h.paylen) && (i < (l_psz - VBK$K_TAGSZ)) )
+			continue;
+
+		l_pay [i] ^= 0x40;
+
+		if ( 1 & vbk$crp_open(&l_keys, &l_h, l_pay, l_psz) )
+			l_bad++;
+
+		l_pay [i] ^= 0x40;
+		}
+
+	$CHECK(!l_bad, "%u changes were not noticed", l_bad);
+	$CHECK(!memcmp(l_pay, l_orig, sizeof(l_pay)), "the probes changed the block");
+
+	/* flags, prvrecoff, prvpaylen are outside the TAG: the repair rebuilds them */
+	l_h2 = l_h; l_h2.flags = 3; l_h2.prvrecoff = 5; l_h2.prvpaylen = 6;
+	$CHECK(1 & vbk$crp_open(&l_keys, &l_h2, l_pay, l_psz), "the right key refused");
+
+	for ( uint32_t i = 0; i < l_h.paylen; i++ )
+		if ( l_pay [i] != (uint8_t) (i * 7) )
+			{
+			l_bad++;
+			break;
+			}
+
+	$CHECK(!l_bad, "decrypted wrong");
+
+	vbk$crp_wipe(&l_keys, sizeof(l_keys));
 	}
 
 	if ( s_tap )
