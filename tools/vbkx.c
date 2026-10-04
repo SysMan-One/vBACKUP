@@ -54,6 +54,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-03		 4-OCT-2026	RRL
+**		The owner, mode and times that cannot be set are said, not
+**		passed over (a warning of glibc on Ubuntu, -Wunused-result).
+**
 **	X01-03		 3-OCT-2026	RRL
 **		Initial version.
 **
@@ -127,6 +131,19 @@ va_list	l_ap;
 	vfprintf(stderr, a_fmt, l_ap);
 	va_end(l_ap);
 	fputc('\n', stderr);
+}
+
+
+/*
+**  An attribute that cannot be put back: said, the file stays as it is -
+**  the data is there, which is what counts
+*/
+static	void	s_vbkx$attrerr	(
+	const	char *		a_name,
+	const	char *		a_what
+			)
+{
+	s_vbkx$msg("%s: the %s cannot be set: %s", a_name, a_what, strerror(errno));
 }
 
 
@@ -331,8 +348,12 @@ int	l_pfd, l_fd;
 				{
 				struct timespec	l_ts [2] = { { l_d->atime.sec, l_d->atime.nsec }, { l_d->mtime.sec, l_d->mtime.nsec } };
 
-				fchmod(l_fd, (mode_t) (l_d->mode & 07777));
-				futimens(l_fd, l_ts);
+				if ( fchmod(l_fd, (mode_t) (l_d->mode & 07777)) )
+					s_vbkx$attrerr(l_d->path, "mode");
+
+				if ( futimens(l_fd, l_ts) )
+					s_vbkx$attrerr(l_d->path, "times");
+
 				close(l_fd);
 				}
 
@@ -567,13 +588,14 @@ l_done:
 		/* What has no data is complete now */
 		struct timespec	l_ts [2] = { { l_e->atime.sec, l_e->atime.nsec }, { l_e->mtime.sec, l_e->mtime.nsec } };
 
-		if ( s_root )
-			fchownat(l_pfd, l_last, l_e->uid, l_e->gid, AT_SYMLINK_NOFOLLOW);
+		if ( s_root && fchownat(l_pfd, l_last, l_e->uid, l_e->gid, AT_SYMLINK_NOFOLLOW) )
+			s_vbkx$attrerr(a_out->name, "owner");
 
-		if ( l_e->ftype != VBK$K_FT_SYMLINK )
-			fchmodat(l_pfd, l_last, (mode_t) (l_e->mode & 07777), 0);
+		if ( (l_e->ftype != VBK$K_FT_SYMLINK) && fchmodat(l_pfd, l_last, (mode_t) (l_e->mode & 07777), 0) )
+			s_vbkx$attrerr(a_out->name, "mode");
 
-		utimensat(l_pfd, l_last, l_ts, AT_SYMLINK_NOFOLLOW);
+		if ( utimensat(l_pfd, l_last, l_ts, AT_SYMLINK_NOFOLLOW) )
+			s_vbkx$attrerr(a_out->name, "times");
 		}
 
 	if ( l_e->ftype != VBK$K_FT_REG )
@@ -705,11 +727,14 @@ int		l_hascrc = 0;
 	if ( ftruncate(a_out->fd, (off_t) l_size) )
 		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
 
-	if ( s_root )
-		fchown(a_out->fd, l_e->uid, l_e->gid);
+	if ( s_root && fchown(a_out->fd, l_e->uid, l_e->gid) )
+		s_vbkx$attrerr(a_out->name, "owner");
 
-	fchmod(a_out->fd, (mode_t) (l_e->mode & 07777));
-	futimens(a_out->fd, l_ts);
+	if ( fchmod(a_out->fd, (mode_t) (l_e->mode & 07777)) )
+		s_vbkx$attrerr(a_out->name, "mode");
+
+	if ( futimens(a_out->fd, l_ts) )
+		s_vbkx$attrerr(a_out->name, "times");
 	}
 
 	if ( close(a_out->fd) )
