@@ -1,0 +1,11 @@
+#	VBACKUP - what is never committed: build trees, kits, the images the
+#	geeks' extractors build in place, the session files of the tools
+.claude/
+.codegraph/
+build/
+build-*/
+*.tar.gz
+tools/go/vbkx-go
+tools/rust/vbkx-rs
+tools/rust/vbkx-rs-check
+tools/rust/target/

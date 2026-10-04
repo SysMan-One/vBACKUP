@@ -1,0 +1,19 @@
+# vbkx-rs - the extractor of last resort for VBACKUP savesets.
+# A convenience only: `rustc -O -o vbkx-rs src/main.rs` builds the same.
+[package]
+name = "vbkx-rs"
+version = "1.3.0"
+edition = "2021"
+authors = ["StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)"]
+description = "Minimal extractor of VBACKUP savesets, standard library only"
+license = "MIT"
+
+[[bin]]
+name = "vbkx-rs"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+overflow-checks = true
+strip = true

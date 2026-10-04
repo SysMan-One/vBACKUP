@@ -1,0 +1,81 @@
+.\"+++
+.\"
+.\"	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+.\"
+.\"	MODULE:		doc/vbkx.1
+.\"
+.\"	ABSTRACT:	The manual page of VBKX, the stand-alone extractor.
+.\"
+.\"	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+.\"
+.\"	CREATION DATE:	 3-OCT-2026
+.\"
+.\"	MODIFICATION HISTORY:
+.\"
+.\"		 3-OCT-2026	RRL	X-01 : Initial version.
+.\"
+.\"---
+.TH VBKX 1 "3 October 2026" "VBACKUP @VBACKUP_IDENT@" "User Commands"
+.SH NAME
+vbkx \- the stand-alone extractor of VBACKUP savesets
+.SH SYNOPSIS
+.B vbkx l
+.I saveset
+.br
+.B vbkx x
+.I saveset
+.RB [ \-C
+.IR dir ]
+.RB [ \-f ]
+.RI [ name ...]
+.br
+.B vbkx p
+.I saveset name
+.br
+.B vbkx t
+.I saveset
+.SH DESCRIPTION
+.B vbkx
+reads savesets made by
+.BR vbackup (1)
+on a machine where VBACKUP is not installed.  It is linked statically.
+.TP
+.B l
+List the files, one line each: time, size, type and mode, name.
+.TP
+.B x
+Extract all files, or the names given; a directory name takes what is
+below it.
+.B \-C
+names the output directory,
+.B \-f
+overwrites files that are there.
+.TP
+.B p
+Write one file to the standard output.
+.TP
+.B t
+Read the whole saveset and check every checksum.
+.PP
+Put back: data, holes, mode, times, symbolic and hard links, FIFOs; as
+root the owner (by number) and device files.  Not put back: ACLs,
+extended attributes, chattr flags.
+.PP
+Names that lead out of the output directory (".." , a leading "/", a
+symbolic link on the way) are refused.  Damage is repaired as far as
+the XOR blocks of the saveset allow; every incomplete file and every
+file that could not be reached is named.
+.SH EXIT STATUS
+0 \- done; 1 \- something damaged or not done; 2 \- the command or the
+saveset cannot be used.
+.SH EXAMPLES
+.nf
+$ vbkx l /mnt/usb/home.bck
+$ vbkx x /mnt/usb/home.bck -C /tmp/restore home/rrl/notes
+$ vbkx p /mnt/usb/home.bck home/rrl/notes/todo.txt | less
+.fi
+.SH SEE ALSO
+.BR vbackup (1),
+.B vbackup /HELP VBKX
+.SH AUTHOR
+StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).

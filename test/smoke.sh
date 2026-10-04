@@ -1,0 +1,482 @@
+#!/bin/sh
+#+++
+#
+#	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+#
+#	MODULE:		test/smoke.sh
+#
+#	ABSTRACT:	Functional checks of the VBACKUP utility: save, restore
+#			and compare of a tree with every kind of file and
+#			attribute; /LIST in its formats; /VERIFY; volumes; the
+#			repair of a damaged saveset and the report of a lost
+#			block; wildcards and "..."; /SELECT, /EXCLUDE; /EXTRACT;
+#			/REPLACE; the nodump flag; a saveset cut short; the
+#			standard output; the completion codes.
+#
+#	DESCRIPTION:	VBACKUP names the image, SCRATCH a directory the script
+#			may fill and remove - it must be on ext4 or xfs: user
+#			xattrs and chattr flags exist there, not on tmpfs.
+#			Run as root the owner and the immutable flag are
+#			checked as well; as anybody else they are skipped.
+#
+#			A failing check prints %VBACKUP-E-SMOKE and the script
+#			goes on; the completion code is the number of failures.
+#			KEEP=1 leaves the scratch directory for a look.
+#
+#	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#	CREATION DATE:	 3-OCT-2026
+#
+#	MODIFICATION HISTORY:
+#
+#		 3-OCT-2026	RRL	X-03 : Stage 3: the writer thread - a save without
+#					it gives the same saveset contents, a volume
+#					switch through the queue, a write error that
+#					comes late is still reported.  The read-ahead
+#					of files: the same saveset without it, a cold
+#					file stays out of the page cache.  VBKX, the
+#					stand-alone extractor (VBKX names it).  Two
+#					saves of one tree list the same; counted XATTR
+#					names; the journal in the order of its names.
+#
+#		 3-OCT-2026	RRL	X-02 : Stage 2: /RECORD, /SINCE=BACKUP, incremental
+#					savesets restored /INCREMENTAL, the journal
+#					listed and rebuilt, the copy disk to disk.
+#					The base in a listing is absolute now; a file
+#					given with a directory is copied there.
+#
+#		 3-OCT-2026	RRL	X-01 : Initial version.
+#
+#---
+
+VB=${VBACKUP:?"VBACKUP must name the image"}
+S=${SCRATCH:?"SCRATCH must name a scratch directory"}
+
+FAILS=0
+CHECKS=0
+
+ok ()	{ CHECKS=$((CHECKS + 1)); }
+fail ()	{ CHECKS=$((CHECKS + 1)); FAILS=$((FAILS + 1)); echo "%VBACKUP-E-SMOKE, $*"; }
+check () { if eval "$1"; then ok; else fail "$2"; fi; }
+
+#	An immutable file cannot be removed: the flag goes first, whatever happened
+wipe ()	{ [ -e "$1" ] && chattr -R -i "$1" 2>/dev/null; rm -rf "$1"; }
+cleanup () { wipe "$S"; }
+[ -n "$KEEP" ] || trap cleanup EXIT
+
+cleanup
+mkdir -p "$S" || exit 1
+cd "$S" || exit 1
+
+ROOT=0
+[ "$(id -u)" = 0 ] && ROOT=1
+
+#
+#	The tree: every kind of file, every kind of attribute
+#
+T=src/tree
+mkdir -p $T/sub/deep $T/empty-dir
+echo hello > $T/a.txt
+: > $T/empty
+head -c 300000 /dev/urandom > $T/sub/rand.bin
+head -c 3000000 /dev/urandom > $T/big.bin
+truncate -s 50M $T/sparse
+printf 'middle' | dd of=$T/sparse bs=1 seek=20000000 conv=notrunc 2>/dev/null
+ln -s a.txt $T/link
+ln -s /nonexistent/target $T/dangling
+ln $T/a.txt $T/sub/hard
+mkfifo $T/fifo
+echo x > "$T/sub/deep/имя с пробелом"
+LONG=$(printf 'n%.0s' $(seq 1 200))
+echo long > "$T/sub/$LONG"
+chmod 750 $T/sub
+chmod 4755 $T/big.bin
+python3 -c "import os; os.setxattr('$T/a.txt', 'user.test', b'value1'); os.setxattr('$T/sub', 'user.dir', b'd')" 2>/dev/null \
+	|| echo "%VBACKUP-W-SMOKE, no user xattrs here: $(stat -f -c %T .)"
+command -v setfacl >/dev/null && setfacl -m u:nobody:r $T/sub/rand.bin && setfacl -d -m u:nobody:rx $T/sub/deep
+touch -d '2001-02-03 04:05:06.789' $T/a.txt $T/sub/deep
+echo nodump > $T/nodump.txt
+chattr +d $T/nodump.txt 2>/dev/null || echo "%VBACKUP-W-SMOKE, no chattr flags here"
+[ $ROOT = 1 ] && chown 65534:65534 $T/empty && chattr +i $T/empty
+
+#	The state of a tree, for comparing two: types, modes, sizes, times, links
+state () {
+	( cd "$1" && {
+	find . -type f ! -name nodump.txt -printf 'f %m %s %T@ %U %P\n'
+	find . -type d -printf 'd %m %T@ %P\n'
+	find . -type l -printf 'l %l %T@ %P\n'
+	find . -type p -printf 'p %m %T@ %P\n'
+	} | sort )
+}
+
+same_tree () {
+	[ "$(state "$1")" = "$(state "$2")" ] || return 1
+
+	( cd "$1" && find . -type f ! -name nodump.txt ) | while read -r F; do
+		cmp -s "$1/$F" "$2/$F" || { echo "  differs: $F"; return 1; }
+	done
+}
+
+#
+#	1. Save, list, restore, compare
+#
+$VB src/tree x.bck > save.log 2>&1
+check '[ $? = 0 ]' "save: completion code, $(cat save.log)"
+check '[ -s x.bck ]' "save: no saveset"
+
+$VB x.bck /LIST > list.txt 2>&1
+check '[ $? = 0 ]' "list: completion code"
+check 'grep -q "^tree/a.txt " list.txt' "list: tree/a.txt not listed"
+check 'grep -q "Total of" list.txt && grep -q "End of save set" list.txt' "list: no totals"
+check '! grep -q nodump.txt list.txt' "list: a nodump file was saved"
+
+$VB x.bck /LIST /FORMAT=LS > ls.txt
+check 'grep -q "^lrwxrwxrwx .* tree/link -> a.txt$" ls.txt' "list /FORMAT=LS: symlink line"
+check 'grep -q "^-rwsr-xr-x .* tree/big.bin$" ls.txt' "list /FORMAT=LS: setuid file line"
+check 'grep -Eq "^-rw-r--r-- +2 .* [0-9]{2}-[0-9]{2}-[0-9]{4} [0-9:]{8} tree/sub/hard -> tree/a.txt$" ls.txt' "list /FORMAT=LS: hard link line"
+
+$VB x.bck /LIST /FULL > full.txt
+check 'grep -q "Checksum:" full.txt' "list /FULL: no checksum"
+
+$VB x.bck out > rest.log 2>&1
+check '[ $? = 0 ]' "restore: completion code, $(cat rest.log)"
+check 'same_tree src/tree out/tree' "restore: the tree differs"
+check '[ "$(stat -c %i out/tree/a.txt)" = "$(stat -c %i out/tree/sub/hard)" ]' "restore: hard link lost"
+check '[ "$(du -k out/tree/sparse | cut -f1)" -lt 1000 ]' "restore: the sparse file is not sparse"
+check '[ "$(python3 -c "import os; print(os.getxattr(\"out/tree/a.txt\", \"user.test\").decode())" 2>/dev/null)" = value1 ]' \
+	"restore: user xattr lost"
+check '[ "$(python3 -c "import os; print(os.getxattr(\"out/tree/sub\", \"user.dir\").decode())" 2>/dev/null)" = d ]' \
+	"restore: user xattr of a directory lost"
+
+if command -v getfacl >/dev/null; then
+	check '[ "$(getfacl -c src/tree/sub/rand.bin)" = "$(getfacl -c out/tree/sub/rand.bin)" ]' "restore: ACL lost"
+	check '[ "$(getfacl -c src/tree/sub/deep)" = "$(getfacl -c out/tree/sub/deep)" ]' "restore: default ACL lost"
+fi
+
+if [ $ROOT = 1 ]; then
+	check 'lsattr -d out/tree/empty | grep -q "^....i"' "restore: immutable flag lost"
+	check '[ "$(stat -c %u:%g out/tree/empty)" = 65534:65534 ]' "restore: owner lost"
+fi
+
+$VB x.bck src /COMPARE > cmp.log 2>&1
+check '[ $? = 0 ]' "compare: completion code, $(cat cmp.log)"
+
+$VB x.bck /COMPARE > cmp2.log 2>&1
+check '[ $? = 0 ]' "compare against the bases: completion code, $(cat cmp2.log)"
+
+echo changed > src/tree/sub/rand.bin.tmp && cp src/tree/a.txt a.save && echo HELLO > src/tree/a.txt
+$VB x.bck src /COMPARE > cmp3.log 2>&1
+check '[ $? = 2 ] && grep -q COMPARERR cmp3.log' "compare: a difference not found"
+cp a.save src/tree/a.txt && touch -d '2001-02-03 04:05:06.789' src/tree/a.txt && rm -f src/tree/sub/rand.bin.tmp
+
+#
+#	2. Restore over what is there: /REPLACE
+#
+$VB x.bck out /SELECT=tree/a.txt > repl.log 2>&1
+check '[ $? = 1 ] && grep -q FILEEXISTS repl.log' "restore over a file: no FILEEXISTS"
+$VB x.bck out /SELECT=tree/a.txt /REPLACE > repl2.log 2>&1
+check '[ $? = 0 ]' "restore /REPLACE: completion code, $(cat repl2.log)"
+
+#
+#	3. /VERIFY, volumes, the repair of a block, a lost block
+#
+$VB src/tree v.bck /VERIFY /VOLUME_SIZE=300K /BLOCK_SIZE=16384 /GROUP_SIZE=4 > ver.log 2>&1
+check '[ $? = 0 ]' "save /VERIFY /VOLUME_SIZE: completion code, $(cat ver.log)"
+check '[ -s v.bck.003 ]' "save /VOLUME_SIZE: fewer than 3 volumes"
+
+$VB v.bck vout > vrest.log 2>&1
+check '[ $? = 0 ] && same_tree src/tree vout/tree' "restore of volumes: differs, $(cat vrest.log)"
+
+#	Block 3 of volume 2 zeroed: one block of a group, rebuilt from the XOR block
+dd if=/dev/zero of=v.bck.002 bs=16384 seek=3 count=1 conv=notrunc 2>/dev/null
+wipe vout
+$VB v.bck vout > vfix.log 2>&1
+check '[ $? = 0 ] && grep -q BLKFIXED vfix.log && same_tree src/tree vout/tree' "repair of a block: $(cat vfix.log)"
+
+#	Blocks 1 and 2 of volume 3 zeroed: two of one group, lost
+dd if=/dev/zero of=v.bck.003 bs=16384 seek=1 count=2 conv=notrunc 2>/dev/null
+wipe vout
+$VB v.bck vout > vlost.log 2>&1
+check '[ $? = 2 ] && grep -q BLKLOST vlost.log && grep -q FILDAMAGED vlost.log' "lost blocks: not reported, $(cat vlost.log)"
+check '[ -s vout/tree/a.txt ]' "lost blocks: the files elsewhere were not restored"
+
+#
+#	4. Wildcards and "...", /EXCLUDE, /SELECT
+#
+$VB 'src/tree/.../*.txt' w.bck > w.log 2>&1
+$VB w.bck /LIST /FORMAT=LS > w.txt
+check 'grep -q " a.txt$" w.txt && ! grep -q "rand.bin" w.txt' "wildcards: wrong selection"
+$VB w.bck /LIST > w2.txt
+check 'grep -q "^Base: *$S/src/tree$" w2.txt' "wildcards: wrong base (an absolute one expected)"
+
+$VB src/tree e.bck '/EXCLUDE=(*.bin,*/deep)' > e.log 2>&1
+$VB e.bck /LIST /FORMAT=LS > e.txt
+check '! grep -q "\.bin$" e.txt && ! grep -q "deep" e.txt && grep -q "tree/a.txt$" e.txt' "/EXCLUDE: wrong selection"
+
+$VB x.bck sel '/SELECT=*.bin' > sel.log 2>&1
+check '[ -f sel/tree/big.bin ] && [ ! -f sel/tree/a.txt ]' "restore /SELECT: wrong selection"
+
+#
+#	5. /EXTRACT
+#
+$VB x.bck /EXTRACT=tree/sub/rand.bin > ext.bin 2> ext.log
+check 'cmp -s ext.bin src/tree/sub/rand.bin' "/EXTRACT to stdout: differs, $(cat ext.log)"
+$VB x.bck sp.out /EXTRACT=tree/sparse > ext2.log 2>&1
+check 'cmp -s sp.out src/tree/sparse' "/EXTRACT of a sparse file: differs"
+$VB x.bck /EXTRACT=tree/nothing > /dev/null 2> ext3.log
+check '[ $? = 2 ] && grep -q NOTFOUND ext3.log' "/EXTRACT of a missing name: no NOTFOUND"
+
+#
+#	6. The nodump flag, /IGNORE=NOBACKUP
+#
+$VB src/tree nd.bck /IGNORE=NOBACKUP > nd.log 2>&1
+check '$VB nd.bck /LIST | grep -q nodump.txt' "/IGNORE=NOBACKUP: the nodump file is missing"
+
+#
+#	7. A saveset cut short, the standard output, a file that is no saveset
+#
+cp x.bck cut.bck && truncate -s 262144 cut.bck
+$VB cut.bck cout > cut.log 2>&1
+check 'grep -q NOTRAILER cut.log && [ -f cout/tree/a.txt ]' "cut saveset: $(cat cut.log)"
+
+$VB src/tree - > stdout.bck 2> std.log
+check '[ $? = 0 ] && $VB stdout.bck /LIST | grep -q "tree/a.txt"' "save to the standard output: $(cat std.log)"
+
+$VB list.txt somewhere > nots.log 2>&1
+check '[ $? = 0 ] && cmp -s list.txt somewhere/list.txt' "a file to a directory is a copy: $(cat nots.log)"
+$VB list.txt /LIST > nots2.log 2>&1
+check '[ $? = 2 ]' "a text file listed as a saveset"
+
+#
+#	8. A forged saveset: names that climb out, a link to go through
+#
+python3 - evil.bck <<'PYEOF'
+import struct, sys, zlib
+B = 8192; P = B - 64; UU = b'\x11' * 16
+def tlv(t, v): return struct.pack('<HI', t, len(v)) + v
+def rec(t, body): return struct.pack('<HHI', t, 0, len(body)) + body
+def blk(typ, no, recoff, pay):
+	h = b'VBKB' + struct.pack('<HHIBBH', 64, 1, B, typ, 0, 0) + UU + struct.pack('<QIIIIII', no, 1, recoff, len(pay), 0xFFFFFFFF, 0, 0)
+	b = bytearray(h + pay + bytes(P - len(pay)))
+	struct.pack_into('<I', b, 60, zlib.crc32(bytes(b)))
+	return bytes(b)
+def file(no, path, ftype, link=b''):
+	t = tlv(1, struct.pack('<I', no)) + tlv(2, path) + tlv(3, bytes([ftype])) + tlv(4, struct.pack('<I', 0o644))
+	t += tlv(5, struct.pack('<I', 0)) + tlv(6, struct.pack('<I', 0)) + tlv(9, struct.pack('<Q', 4)) + tlv(10, struct.pack('<qI', 0, 0))
+	return rec(2, t + (tlv(15, link) if link else b''))
+def data(no): return rec(3, struct.pack('<IIQ', no, 0, 0) + b'pwnd') + rec(4, tlv(1, struct.pack('<I', no)) + tlv(9, struct.pack('<Q', 4)) + tlv(32, struct.pack('<I', zlib.crc32(b'pwnd'))))
+summ = rec(1, tlv(71, struct.pack('<I', 0)))
+stream = summ + file(1, b'../evil', 1) + data(1) + file(2, b'/tmp/vbackup-evil', 1) + data(2)
+stream += file(3, b'l', 3, sys.argv[1].encode() and b'../escape') + rec(4, tlv(1, struct.pack('<I', 3)))
+stream += file(4, b'l/inside', 1) + data(4) + rec(6, b'')
+open(sys.argv[1], 'wb').write(blk(3, 0, 0, summ) + blk(1, 1, 0, stream))
+PYEOF
+mkdir -p evil/out
+$VB evil.bck evil/out /REPLACE > evil.log 2>&1
+check '[ ! -e evil/evil ] && [ ! -e /tmp/vbackup-evil ] && [ ! -e evil/escape ]' "a forged saveset wrote outside the output directory"
+check '[ "$(grep -c OPENOUT evil.log)" = 3 ]' "a forged saveset: the refusals not reported, $(cat evil.log)"
+
+#
+#	9. The journal and the incremental saves: /RECORD, /SINCE=BACKUP
+#
+J=$S/test.jnl
+I=inc/tree
+mkdir -p inc
+mkdir -p $I/d1 $I/d2
+echo keep > $I/keep.txt; echo modify > $I/modify.txt; echo gone > $I/gone.txt; echo old > $I/old-name.txt
+echo chmod > $I/chmod.txt; echo inner > $I/d2/inner.txt; echo x > $I/d1/x.txt
+
+$VB inc/tree f.bck /RECORD /JOURNAL=$J > f.log 2>&1
+check '[ $? = 0 ] && grep -q RECORDED f.log && [ -s $J ]' "full /RECORD: $(cat f.log)"
+check '! $VB f.bck /LIST | grep -q "unchanged file" && $VB f.bck /LIST | grep -q "^Kind: *full"' "a full save lists present entries, or is not full"
+
+#	Nothing changed: an incremental saves no file, lists them all as present
+$VB inc/tree i0.bck /SINCE=BACKUP /JOURNAL=$J > i0.log 2>&1
+check '[ $? = 0 ] && [ -z "$($VB i0.bck /LIST /FORMAT=LS | grep -v "^d")" ]' "incremental of an unchanged tree saved files"
+check '$VB i0.bck /LIST | grep -q "^Kind: *incremental" && $VB i0.bck /LIST | grep -q "unchanged files present"' "incremental: kind or present count not listed"
+
+sleep 1
+echo modified > $I/modify.txt
+rm $I/gone.txt
+mv $I/old-name.txt $I/new-name.txt
+chmod 600 $I/chmod.txt
+echo added > $I/added.txt
+rm -rf $I/d2
+
+$VB inc/tree i1.bck /SINCE=BACKUP /RECORD /JOURNAL=$J > i1.log 2>&1
+check '[ $? = 0 ]' "incremental /RECORD: $(cat i1.log)"
+$VB i1.bck /LIST /FORMAT=LS | grep -v '^d' | sed 's/.* //' | sort > i1.names
+check '[ "$(tr "\n" " " < i1.names)" = "tree/added.txt tree/chmod.txt tree/modify.txt tree/new-name.txt " ]' \
+	"incremental saved the wrong files: $(tr '\n' ' ' < i1.names)"
+
+#	The chain restored: the full, then the incremental, /INCREMENTAL
+$VB f.bck,i1.bck chain /INCREMENTAL > chain.log 2>&1
+check '[ $? = 0 ] && same_tree inc/tree chain/tree' "chain /INCREMENTAL: the tree differs from the source, $(cat chain.log)"
+check '[ ! -e chain/tree/gone.txt ] && [ ! -e chain/tree/old-name.txt ] && [ ! -e chain/tree/d2 ]' "chain /INCREMENTAL: removed files are still there"
+
+#	The incremental alone over an empty directory: what it does not hold is MISSING
+$VB i1.bck alone /INCREMENTAL > alone.log 2>&1
+check 'grep -q "MISSING.*keep.txt" alone.log' "an incremental without its full: no MISSING, $(cat alone.log)"
+
+#	/INCREMENTAL refuses a saveset of X01-01 make (no KIND): the cut saveset of section 7 has no catalog either
+mkdir -p refuse/tree && echo mine > refuse/tree/mine.txt
+$VB cut.bck refuse /INCREMENTAL > refuse.log 2>&1
+check '[ $? = 2 ] && grep -q NOTINCR refuse.log && [ -f refuse/tree/mine.txt ]' "/INCREMENTAL without a catalog was not refused: $(cat refuse.log)"
+
+#	A selection beside /INCREMENTAL is refused: the cleaning would reach beyond it
+$VB f.bck,i1.bck sel2 /INCREMENTAL '/SELECT=*.txt' > sel2.log 2>&1
+check '[ $? = 2 ] && grep -q CONFQUAL sel2.log && [ ! -e sel2 ]' "/INCREMENTAL with /SELECT not refused: $(cat sel2.log)"
+
+#	The journal listed, and rebuilt from the catalogs
+$VB /JOURNAL=$J /LIST > jl.txt 2>&1
+check 'grep -q "Total of 2 savesets" jl.txt' "journal listing: $(cat jl.txt)"
+$VB /JOURNAL=$J /LIST /FULL '/SELECT=*added*' > jl2.txt 2>&1
+check 'grep -q "added.txt" jl2.txt && ! grep -q "keep.txt" jl2.txt' "journal /FULL /SELECT: $(cat jl2.txt)"
+
+rm -f $J
+$VB f.bck,i1.bck /RECORD /JOURNAL=$J > rb.log 2>&1
+check '[ $? = 0 ] && grep -q RECORDED rb.log' "journal rebuild: $(cat rb.log)"
+$VB inc/tree i2.bck /SINCE=BACKUP /JOURNAL=$J > i2.log 2>&1
+check '[ -z "$($VB i2.bck /LIST /FORMAT=LS | grep -v "^d")" ]' "after the rebuild /SINCE=BACKUP still saved files"
+
+#	A file touched after the last /RECORD is taken by the next /SINCE=BACKUP
+$VB inc/tree j.bck /SINCE=BACKUP /RECORD /JOURNAL=$J > /dev/null 2>&1
+touch inc/tree/keep.txt
+$VB inc/tree i3.bck /SINCE=BACKUP /JOURNAL=$J > /dev/null 2>&1
+check '$VB i3.bck /LIST /FORMAT=LS | grep -q "tree/keep.txt$"' "a touched file was not taken by /SINCE=BACKUP"
+
+#
+#	10. The copy, disk to disk
+#
+$VB src/tree cpy /VERIFY > cpy.log 2>&1
+check '[ $? = 0 ] && same_tree src/tree cpy/tree' "copy: the tree differs, $(cat cpy.log)"
+check '[ "$(stat -c %i cpy/tree/a.txt)" = "$(stat -c %i cpy/tree/sub/hard)" ]' "copy: hard link lost"
+check '[ "$(du -k cpy/tree/sparse | cut -f1)" -lt 1000 ]' "copy: the sparse file is not sparse"
+check '[ "$(python3 -c "import os; print(os.getxattr(\"cpy/tree/a.txt\", \"user.test\").decode())" 2>/dev/null)" = value1 ]' "copy: xattr lost"
+
+#	A copy into the tree it copies does not copy itself
+mkdir -p src/tree/into
+$VB src/tree src/tree/into > into.log 2>&1
+check '[ ! -e src/tree/into/tree/into ]' "copy into itself recursed"
+wipe src/tree/into
+
+#
+#	11. The writer thread
+#
+VBACKUP_PIPELINE=0 $VB src/tree nopipe.bck /VOLUME_SIZE=1000000 > /dev/null 2>&1
+check '[ $? = 0 ]' "a save without the writer thread failed"
+$VB src/tree pipe.bck /VOLUME_SIZE=1000000 > /dev/null 2>&1
+check '[ $? = 0 ] && [ -e pipe.bck.003 ]' "a save over volumes through the writer thread failed"
+check '[ "$($VB pipe.bck /LIST /FORMAT=LS | sort)" = "$($VB nopipe.bck /LIST /FORMAT=LS | sort)" ]' "with and without the thread the listings differ"
+$VB pipe.bck rpipe > /dev/null 2>&1
+check '[ $? = 0 ] && same_tree src/tree rpipe/tree' "the saveset of the writer thread does not restore the tree"
+#	The read-ahead of files: the same saveset with and without it; under a time filter too
+VBACKUP_PREFETCH=0 $VB src/tree nopre.bck > /dev/null 2>&1
+VBACKUP_PREFETCH=4 $VB src/tree pre.bck > /dev/null 2>&1
+check '[ "$($VB pre.bck /LIST /FORMAT=LS | sort)" = "$($VB nopre.bck /LIST /FORMAT=LS | sort)" ]' "with and without the read-ahead the listings differ"
+VBACKUP_PREFETCH=4 $VB src/tree pres.bck /SINCE=TODAY > /dev/null 2>&1
+check '[ $? = 0 ]' "the read-ahead under a time filter failed"
+VBACKUP_PREFETCH=4 $VB src/tree cpre > /dev/null 2>&1
+check '[ $? = 0 ] && same_tree src/tree cpre/tree' "a copy with the read-ahead differs"
+
+#	A cold file read ahead is still dropped behind the save; a warm one stays
+if command -v fincore > /dev/null 2>&1; then
+	mkdir -p cold && for i in 1 2 3 4 5 6 7 8; do head -c 200000 /dev/urandom > cold/f$i; done
+	sync
+	python3 -c 'import os,sys
+for f in sys.argv[1:]:
+    fd=os.open(f,os.O_RDONLY); os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED); os.close(fd)' cold/f*
+	VBACKUP_PREFETCH=4 $VB cold cold.bck > /dev/null 2>&1
+	check '[ "$(fincore -nb -o RES cold/f* | awk "{s+=\$1} END {print s+0}")" = 0 ]' "a cold file read ahead stayed in the page cache"
+	cat cold/f* > /dev/null
+	VBACKUP_PREFETCH=4 $VB cold cold.bck /REPLACE > /dev/null 2>&1
+	check '[ "$(fincore -nb -o RES cold/f* | awk "{s+=\$1} END {print s+0}")" -ge 1600000 ]' "a warm file was dropped from the page cache"
+fi
+
+#	EXTRACT seeks to the catalog, then to the file in the same group: read once, a repair reported once
+mkdir -p sk/t && echo one > sk/t/f1 && head -c 100000 /dev/urandom > sk/t/r.bin
+$VB sk/t sk.bck > /dev/null 2>&1
+python3 -c 'f=open("sk.bck","r+b"); f.seek(65536+200); f.write(b"\xff"*50)'
+$VB sk.bck /EXTRACT=t/r.bin 2> sk.log | cmp -s - sk/t/r.bin
+check '[ $? = 0 ] && [ "$(grep -c BLKFIXED sk.log)" = 1 ]' "EXTRACT through a repaired group: $(cat sk.log)"
+
+if [ -w /dev/full ]; then
+	$VB src/tree /dev/full /SAVE_SET /REPLACE > full.log 2>&1
+	check '[ $? = 2 ] && grep -q "WRITERR.*errno=28" full.log' "a write error of the thread was not reported: $(cat full.log)"
+	VBACKUP_PIPELINE=0 $VB src/tree /dev/full /SAVE_SET /REPLACE > full0.log 2>&1
+	check '[ $? = 2 ] && grep -q "WRITERR.*errno=28" full0.log' "a write error without the thread was not reported"
+fi
+
+#	Determinism: the same tree saved twice lists the same, attributes and all, but for the date;
+#	the same files recorded in another order make the same journal
+python3 -c 'import os; os.setxattr("src/tree/a.txt", "user.zz", b"2"); os.setxattr("src/tree/a.txt", "user.aa", b"1")' 2>/dev/null
+$VB src/tree det1.bck > /dev/null 2>&1
+$VB src/tree det2.bck > /dev/null 2>&1
+check '[ "$($VB det1.bck /LIST /FULL | grep -v "^Date:\|^Save set:\|^Command:")" = "$($VB det2.bck /LIST /FULL | grep -v "^Date:\|^Save set:\|^Command:")" ]' "two saves of one tree list differently"
+$VB det1.bck det1 > /dev/null 2>&1
+check '[ "$(python3 -c "import os; print(os.getxattr(\"det1/tree/a.txt\", \"user.aa\").decode() + os.getxattr(\"det1/tree/a.txt\", \"user.zz\").decode())" 2>/dev/null)" = 12 ] || [ -z "$(python3 -c "import os; print(os.listxattr(\"src/tree/a.txt\"))" 2>/dev/null | grep user.aa)" ]' "counted xattr names: not restored"
+mkdir -p jdet && echo a > jdet/a && echo b > jdet/b
+$VB jdet jd1.bck /RECORD /JOURNAL=jd1.jnl > /dev/null 2>&1
+$VB jd1.bck /RECORD /JOURNAL=jd2.jnl > /dev/null 2>&1
+#	(the bytes differ by the times of the commit; the files must not)
+check '[ "$($VB /JOURNAL=jd1.jnl /LIST /FULL | grep jdet | sed "s/ [0-9-]*-20[0-9][0-9] [0-9:.]*//g")" = "$($VB /JOURNAL=jd2.jnl /LIST /FULL | grep jdet | sed "s/ [0-9-]*-20[0-9][0-9] [0-9:.]*//g")" ]' "the journal depends on the order its files came in"
+
+#
+#	12. VBKX, the stand-alone extractor
+#
+VX=${VBKX:-}
+if [ -n "$VX" ]; then
+	$VX l x.bck > vx.lst 2>&1
+	check '[ $? = 0 ] && grep -q " tree/a.txt$" vx.lst && grep -q " tree/link -> a.txt$" vx.lst' "vbkx l: $(head -3 vx.lst)"
+	#	Against what VBACKUP restores from it: the tree has been changed since x.bck was made
+	$VB x.bck vref > /dev/null 2>&1
+	$VX x x.bck -C vx > vx.log 2>&1
+	check '[ $? = 0 ] && same_tree vref/tree vx/tree' "vbkx x: the tree differs, $(cat vx.log)"
+	check '[ "$(stat -c %i vx/tree/a.txt)" = "$(stat -c %i vx/tree/sub/hard)" ] && [ "$(du -k vx/tree/sparse | cut -f1)" -lt 1000 ]' "vbkx x: hard link or holes lost"
+	$VX x x.bck -C vx > vx2.log 2>&1
+	check '[ $? = 1 ] && grep -q "exists, not extracted" vx2.log' "vbkx x over files that are there: $(head -2 vx2.log)"
+	check '$VX p x.bck tree/sub/rand.bin | cmp -s - vref/tree/sub/rand.bin && $VX p x.bck tree/sparse | cmp -s - vref/tree/sparse' "vbkx p: the data differs"
+	check '$VX p x.bck tree/sub/hard | cmp -s - vref/tree/a.txt' "vbkx p of a further name of a file: not its data"
+	$VX x x.bck -C vn tree/sub/hard > vn.log 2>&1
+	check '[ $? = 0 ] && cmp -s vn/tree/sub/hard vref/tree/a.txt && [ ! -e vn/tree/a.txt ]' "vbkx x of a further name alone: $(cat vn.log)"
+	$VX t x.bck > vt.log 2>&1
+	check '[ $? = 0 ] && grep -q "all checksums match" vt.log' "vbkx t: $(cat vt.log)"
+	mkdir -p evil/vx
+	$VX x evil.bck -C evil/vx > vevil.log 2>&1
+	check '[ $? = 1 ] && [ ! -e evil/evil ] && [ ! -e /tmp/vbackup-evil ] && [ ! -e evil/escape ]' "vbkx: a forged saveset wrote outside, $(cat vevil.log)"
+	$VX p x.bck tree/none > /dev/null 2>&1
+	check '[ $? = 2 ]' "vbkx p of a name not there: completion code"
+
+	#	Every block lost in turn: by name, the file asked for, or nothing - never the next one
+	#	(the 13 bytes more put a FILE record first in a block: as plain "file N" the layout never does)
+	mkdir -p tiny/t && for i in $(seq 100 199); do echo "file $i xxxxxxxxxxxx" > tiny/t/f$i; done
+	$VB tiny/t tiny.bck /BLOCK_SIZE=8192 /GROUP_SIZE=0 > /dev/null 2>&1
+	N=$(( $(stat -c %s tiny.bck) / 8192 ))
+	B=1
+	WRONG=0
+	while [ $B -lt $((N - 1)) ]; do
+		cp tiny.bck tinyd.bck
+		dd if=/dev/zero of=tinyd.bck bs=8192 seek=$B count=1 conv=notrunc 2>/dev/null
+		for I in $(seq 100 199); do
+			$VX p tinyd.bck t/f$I > tp.out 2> tp.log
+			if [ -s tp.out ] && ! cmp -s tp.out tiny/t/f$I && ! grep -q "f$I is incomplete" tp.log; then
+				WRONG=$((WRONG + 1))
+			fi
+		done
+		B=$((B + 1))
+	done
+	check '[ $WRONG = 0 ]' "vbkx p after a lost block: the data of another file, $WRONG times"
+
+fi
+
+#
+#	13. The completion codes of the command line
+#
+$VB > /dev/null 2>&1
+check '[ $? = 0 ]' "no parameters: the summary, completion code 0"
+$VB src/tree x2.bck /BLOCK_SIZE=1000 > bs.log 2>&1
+check '[ $? = 2 ] && grep -q IVQUAL bs.log' "/BLOCK_SIZE=1000 accepted"
+
+echo "$CHECKS checks, $FAILS failures"
+
+exit $FAILS

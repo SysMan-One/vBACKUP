@@ -1,0 +1,178 @@
+.\"+++
+.\"
+.\"	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+.\"
+.\"	MODULE:		doc/vbackup.1
+.\"
+.\"	ABSTRACT:	The manual page of the VBACKUP utility.  The full
+.\"			description is the help library: vbackup /HELP.
+.\"
+.\"	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+.\"
+.\"	CREATION DATE:	 3-OCT-2026
+.\"
+.\"	MODIFICATION HISTORY:
+.\"
+.\"		 3-OCT-2026	RRL	X-03 : Stage 3: ENVIRONMENT (VBACKUP_PIPELINE,
+.\"					VBACKUP_PREFETCH), NOTES (the page cache).
+.\"
+.\"		 3-OCT-2026	RRL	X-02 : Stage 2: /RECORD, /JOURNAL, /SINCE=BACKUP,
+.\"					/INCREMENTAL, the copy.
+.\"
+.\"		 3-OCT-2026	RRL	X-01 : Initial version.
+.\"
+.\"---
+.TH VBACKUP 1 "3 October 2026" "VBACKUP @VBACKUP_IDENT@" "User Commands"
+.SH NAME
+vbackup \- save files into a saveset, restore, list and compare them
+.SH SYNOPSIS
+.B vbackup
+.I input-spec\fR[,...]
+.I output-spec
+.RI [ /qualifiers ]
+.SH DESCRIPTION
+.B vbackup
+keeps copies of files in a
+.IR saveset ,
+after the BACKUP command of OpenVMS.  A saveset is one file or several
+volumes; it holds the files with their owners, permissions, times,
+extended attributes and ACLs, a checksum of every block and of every
+file, XOR blocks that repair one bad block in a group, and a catalog
+that lists it at once.
+.PP
+What is done follows from the two sides:
+.PP
+.RS
+.nf
+files    -> saveset      save (output: /SAVE_SET, a .bck name, or \-)
+saveset  -> directory    restore
+saveset  /LIST           list
+saveset  [dir] /COMPARE  compare with the disk
+saveset  [file] /EXTRACT=name   one file out
+files    -> directory    copy, disk to disk
+saveset[,...] /RECORD    rebuild the journal from the catalogs
+/JOURNAL /LIST           list the journal
+.fi
+.RE
+.PP
+Wildcards are expanded by the utility: quote them.
+.B *
+matches any characters of a name,
+.B %
+and
+.B ?
+one,
+.B ...
+any number of directory levels.
+.SH QUALIFIERS
+.TP
+.BI /BLOCK_SIZE= n
+Block size, 8192 to 1048576, a multiple of 512; default 65536.
+.TP
+.BI /GROUP_SIZE= n
+One XOR block after every n data blocks, 0 to 100; default 10.
+.TP
+.BI /VOLUME_SIZE= size
+Cut the saveset into volumes of this size (K, M, G, T): x.bck, x.bck.002, ...
+.TP
+.BI /COMMENT= text
+A note kept in the saveset.
+.TP
+.BI /SELECT=( pattern ,...)
+.TQ
+.BI /EXCLUDE=( pattern ,...)
+Take, or leave out, the files whose stored name matches.
+.TP
+.BI /SINCE= time "\fR, \fP/BEFORE=" time
+Save the files not older, or older, than the time; /MODIFIED (default),
+/CREATED, /CHANGED say which time.
+.TP
+.BI /BY_OWNER= user
+Save the files of one user only.
+.TP
+.B /SINCE=BACKUP
+Save the files changed since their last save with /RECORD, as the journal
+knows; the saveset is incremental and lists the others as present.
+.TP
+.B /RECORD
+Record the saveset and the state of every file saved into the journal;
+with savesets and no output, rebuild the journal from their catalogs.
+.TP
+.BI /JOURNAL [=file]
+The journal: /var/lib/vbackup/vbackup.jnl for root, ~/.vbackup/vbackup.jnl
+otherwise; with /LIST and no parameter, list it.
+.TP
+.B /INCREMENTAL
+Restore a chain - full saveset first, incremental ones after it, oldest
+first - deleting from every directory of the saveset what it does not list.
+.TP
+.B /[NO]CROSS_DEVICE
+Go into other file systems; off by default.
+.TP
+.B /IGNORE=NOBACKUP
+Save the files flagged nodump (chattr +d) too.
+.TP
+.B /[NO]XATTRS
+Extended attributes, ACLs, capabilities, SELinux label; on by default.
+.TP
+.B /VERIFY
+Read the new saveset back and compare it with the disk.
+.TP
+.B /REPLACE
+Overwrite an existing saveset, file or output file.
+.TP
+.BI /OWNER= ORIGINAL\fR|\fPDEFAULT\fR|\fPuser
+Owner of the restored files; ORIGINAL for root, DEFAULT otherwise.
+.TP
+.BI /LIST [=file]
+List the saveset; /BRIEF (default), /FULL, /FORMAT=LS.
+.TP
+.BI /EXTRACT= stored-name
+Write one file to the output file or to the standard output.
+.TP
+.B /COMPARE
+Compare the saveset with the disk.
+.TP
+.B /LOG\fR, \fP/CONFIRM
+Report every file; ask before every file.
+.TP
+.BI /HELP " \fR[\fPtopic\fR]"
+The full description, out of the help library.
+.SH EXIT STATUS
+0 \- all done; 1 \- done, with warnings; 2 \- something was not done.
+.SH EXAMPLES
+.nf
+$ vbackup /home/rrl /backup/rrl.bck /VERIFY
+$ vbackup /backup/rrl.bck /LIST
+$ vbackup /backup/rrl.bck /tmp/restore
+$ vbackup /home /mnt/usb/home.bck /SINCE=TODAY /VOLUME_SIZE=4G
+$ vbackup /backup/rrl.bck /EXTRACT=rrl/notes.txt | less
+$ vbackup /home full.bck /RECORD
+$ vbackup /home mon.bck /SINCE=BACKUP /RECORD
+$ vbackup full.bck,mon.bck /restore /INCREMENTAL
+$ vbackup /home/rrl /mnt/disk2 /VERIFY
+.fi
+.SH ENVIRONMENT
+.TP
+.B VBACKUP_PIPELINE
+0 \- the saveset is written without the writer thread, for the
+trouble-shooting; the saveset is the same.
+.TP
+.B VBACKUP_PREFETCH
+The number of threads that read files ahead in a save or a copy;
+8 by default, 0 \- none.
+.SH NOTES
+The pages of a saveset are dropped from the page cache once written
+or read, and so are the pages of a file that was not in the cache
+before it was saved.  Files that were in the cache stay there.  See
+.BR "vbackup /HELP TROUBLESHOOTING" .
+.SH FILES
+.I /usr/local/share/help/vbackup.hlb
+\- the help library;
+.I /usr/local/share/doc/vbackup/format.md
+\- the saveset format.
+.SH SEE ALSO
+.BR tar (1),
+.BR dar (1)
+.SH AUTHOR
+StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).

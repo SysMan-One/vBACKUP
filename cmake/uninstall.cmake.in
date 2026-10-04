@@ -1,0 +1,53 @@
+#+++
+#
+#	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+#
+#	MODULE:		cmake/uninstall.cmake.in
+#
+#	ABSTRACT:	The script behind the 'uninstall' target: remove the
+#			files the install step has recorded in the manifest.
+#
+#	DESCRIPTION:	CMake writes install_manifest.txt into the build
+#			directory as it installs, one absolute path per
+#			line.  Only those paths are removed, and no
+#			directory is: a shared one - <prefix>/bin - is none
+#			of this product's business, and an empty one does
+#			no harm.
+#
+#			DESTDIR is honoured, so a staged installation is
+#			removed from the staging tree rather than from the
+#			live one.
+#
+#	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#	CREATION DATE:	 3-OCT-2026
+#
+#	MODIFICATION HISTORY:
+#
+#		  3-OCT-2026	RRL	X-01 : Initial version, taken over from SEARCH.
+#
+#---
+
+set(MANIFEST "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+
+if ( NOT EXISTS "${MANIFEST}" )
+	message(FATAL_ERROR "No ${MANIFEST} - nothing has been installed from this build directory")
+endif()
+
+file(STRINGS "${MANIFEST}" FILES)
+
+foreach ( F ${FILES} )
+	set(P "$ENV{DESTDIR}${F}")
+
+	if ( EXISTS "${P}" OR IS_SYMLINK "${P}" )
+		message(STATUS "Removing ${P}")
+
+		file(REMOVE "${P}")
+
+		if ( EXISTS "${P}" OR IS_SYMLINK "${P}" )
+			message(WARNING "Cannot remove ${P}")
+		endif()
+	else()
+		message(STATUS "Not there: ${P}")
+	endif()
+endforeach()
