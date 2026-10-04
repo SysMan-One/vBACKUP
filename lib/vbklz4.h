@@ -32,7 +32,7 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-04		 4-OCT-2026	RRL
-**		Initial version.
+**		Initial version.  VBK$LZ4_PACK: a probe of the head first.
 **
 **--
 */
@@ -59,6 +59,7 @@ enum	{					/* CODEC of a DATAZ record			*/
 
 int	vbk$lz4_compress	(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen);
 int	vbk$lz4_decompress	(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_rawlen);
+int	vbk$lz4_pack		(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen);
 int	vbk$data_get		(uint16_t a_type, const uint8_t *a_body, uint32_t a_len, uint8_t *a_scratch,
 				uint32_t *a_fileno, uint64_t *a_off, const uint8_t **a_data, uint32_t *a_n);
 

@@ -38,7 +38,9 @@
 **		elsewhere; the SUMMARY says COMPRESS.  /PHYSICAL: a device
 **		saved as one file, the runs of zeros left out (S_VBK$PHYSICAL).
 **		/IMAGE: the identity of the volume in the SUMMARY.  /DELETE:
-**		the files saved and verified, unchanged since, deleted.
+**		the files saved and verified, unchanged since, deleted.  The
+**		compression on several cores (VBKZPL.C): the records through
+**		its ring, a catalog entry waits there for its FILE record.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files are read SEQUENTIAL; a cold one is dropped from the
@@ -100,6 +102,9 @@ typedef struct vbk_save_t
 	uint8_t *	zbuf;			/* /DATA_FORMAT=COMPRESSED: a DATAZ record body	*/
 	uint64_t	nzin, nzout;		/* ... octets in, octets out			*/
 	uint64_t	physdata;		/* Octets of data written: /PHYSICAL, but zeros	*/
+	struct vbk_zp_t *zp;			/* Compression on several cores, NULL - none	*/
+	struct vbk_pcat_t *pend;		/* ... the catalog entry of the file in hand	*/
+	VBK$LOC		loc;			/* Where the FILE record in hand went		*/
 	VBK$HLINK *	hlink [VBK$K_HLHASH];
 	uint32_t	fileno;
 	uint64_t	nfiles, nbytes, nentries;
@@ -175,6 +180,90 @@ size_t		l_len = strlen(a_name);
 
 
 /*
+**  A catalog entry that waits in the ring of the compression for its FILE
+**  record to be written - the place of it goes into the entry then
+*/
+typedef struct vbk_pcat_t
+{
+	VBK$SAVE *	sav;
+	VBK$LOC		loc;			/* Filled when the FILE record is written	*/
+	int		hasloc;
+	uint32_t	locat;			/* Offset of the LOCVOL item in BUF		*/
+	uint32_t	len;
+	uint8_t *	buf;			/* The entry - apart: the ring holds &LOC	*/
+} VBK$PCAT;
+
+
+/*
+**  Where the FILE record about to be written is to say it went: without
+**  the ring at once, with it once the ring writes it
+*/
+static	VBK$LOC *	s_vbk$fileloc	(
+		VBK$SAVE *	a_sav
+			)
+{
+	if ( !a_sav->zp )
+		return	&a_sav->loc;
+
+	/* An entry never made (the file failed after its FILE record) is simply left to its own */
+	if ( !(a_sav->pend = calloc(1, sizeof(VBK$PCAT))) )
+		return	&a_sav->loc;
+
+	return	&a_sav->pend->loc;
+}
+
+
+/*
+**  A record other than DATA: through the ring when there is one, so that
+**  the order of the stream is kept
+*/
+static	int	s_vbk$rec	(
+		VBK$SAVE *	a_sav,
+		uint16_t	a_type,
+	const	void *		a_body,
+		uint32_t	a_len,
+		VBK$LOC *	a_loc
+			)
+{
+	if ( a_sav->zp )
+		return	vbk$zp_record(a_sav->zp, a_type, a_body, a_len, a_loc);
+
+	return	vbk$wrt_record(&a_sav->wctx, a_type, a_body, a_len, a_loc);
+}
+
+
+/*
+**  The ring has written the FILE record: the place into the entry, the
+**  entry into the spool
+*/
+static	void	s_vbk$catcb	(
+		void *		a_arg
+			)
+{
+VBK$PCAT *	l_pc = (VBK$PCAT *) a_arg;
+uint8_t		l_len [4];
+
+	if ( l_pc->hasloc )
+		{
+		vbk$put32(l_pc->buf + l_pc->locat + 6, l_pc->loc.vol);
+		vbk$put64(l_pc->buf + l_pc->locat + 6 + 4 + 6, l_pc->loc.blk);
+		vbk$put32(l_pc->buf + l_pc->locat + 6 + 4 + 6 + 8 + 6, l_pc->loc.off);
+		}
+
+	vbk$put32(l_len, l_pc->len);
+
+	if ( (1 != fwrite(l_len, sizeof(l_len), 1, l_pc->sav->spool)) || (1 != fwrite(l_pc->buf, l_pc->len, 1, l_pc->sav->spool)) )
+		{
+		$VBKMSG(VBACKUP$_WRITERR, "the catalog spool", errno, strerror(errno));
+		l_pc->sav->failed = 1;
+		}
+
+	free(l_pc->buf);
+	free(l_pc);
+}
+
+
+/*
 **  Spool the catalog entry of a file that has been saved: u32 length,
 **  then the TLV items
 */
@@ -188,6 +277,7 @@ static	int	s_vbk$catent	(
 {
 VBK$TLVB *	l_c = &a_sav->cat;
 uint8_t		l_len [4];
+uint32_t	l_locat = 0;
 int		l_ok = 1;
 
 	vbk$tlv_reset(l_c);
@@ -225,6 +315,7 @@ int		l_ok = 1;
 	if ( a_status != VBK$K_FS_PRESENT )
 		{
 		l_ok &= vbk$tlv_u32(l_c, VBK$K_TAG_CRC, a_crc);
+		l_locat	= l_c->len;
 		l_ok &= vbk$tlv_u32(l_c, VBK$K_TAG_LOCVOL, a_loc->vol);
 		l_ok &= vbk$tlv_u64(l_c, VBK$K_TAG_LOCBLK, a_loc->blk);
 		l_ok &= vbk$tlv_u32(l_c, VBK$K_TAG_LOCOFF, a_loc->off);
@@ -232,6 +323,37 @@ int		l_ok = 1;
 
 	if ( !l_ok )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+
+	/* The ring: the entry waits for its FILE record, the place is put in when that is written */
+	if ( a_sav->zp )
+		{
+		VBK$PCAT *	l_pc = a_sav->pend;
+
+		/* The entry of the FILE record just handed over - or one of its own (PRESENT: no record) */
+		if ( l_pc && (a_loc == &l_pc->loc) )
+			a_sav->pend = NULL;
+		else if ( !(l_pc = calloc(1, sizeof(VBK$PCAT))) )
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+		else if ( a_status != VBK$K_FS_PRESENT )
+			l_pc->loc = *a_loc;
+
+		if ( !(l_pc->buf = malloc(l_c->len ? l_c->len : 1)) )
+			{
+			free(l_pc);
+
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+			}
+
+		l_pc->sav	= a_sav;
+		l_pc->hasloc	= (a_status != VBK$K_FS_PRESENT);
+		l_pc->locat	= l_locat;
+		l_pc->len	= l_c->len;
+		memcpy(l_pc->buf, l_c->buf, l_c->len);
+
+		a_sav->nentries++;
+
+		return	(1 & vbk$zp_call(a_sav->zp, s_vbk$catcb, l_pc)) ? STS$K_SUCCESS : STS$K_ERROR;
+		}
 
 	vbk$put32(l_len, l_c->len);
 
@@ -262,8 +384,11 @@ uint32_t	l_zlen = 0;
 
 	a_sav->nzin += a_n;
 
-	if ( a_sav->zbuf && (a_n > 4) && (1 & vbk$lz4_compress(a_data, a_n, a_sav->zbuf + VBK$K_DATAZHDR, a_n - 4, &l_zlen))
-		&& ((l_zlen + 4) < a_n) )
+	/* Several cores: the compression goes to the workers, the records come out in order all the same */
+	if ( a_sav->zp )
+		return	vbk$zp_data(a_sav->zp, a_fileno, a_off, a_data, a_n);
+
+	if ( a_sav->zbuf && (1 & vbk$lz4_pack(a_data, a_n, a_sav->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(a_n), &l_zlen)) )
 		{
 		vbk$put32(a_sav->zbuf, a_fileno);
 		vbk$put32(a_sav->zbuf + 4, VBK$K_CODEC_LZ4);
@@ -560,7 +685,7 @@ static	int	s_vbk$physical	(
 {
 VBK$OPTS *	l_o = a_sav->opts;
 VBK$ATTR	l_attr;
-VBK$LOC		l_loc;
+VBK$LOC *	l_ploc;
 struct stat	l_st;
 const char *	l_name = strrchr(a_spec, '/') ? (strrchr(a_spec, '/') + 1) : a_spec;
 uint64_t	l_saved = 0, l_now = l_o->physsize;
@@ -592,7 +717,9 @@ int		l_fd = l_o->physfd, l_status;
 	if ( !(1 & vbk$atr_tlv(&l_attr, &a_sav->rec)) || !(1 & vbk$tlv_u8(&a_sav->rec, VBK$K_TAG_PHYSICAL, 1)) )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
 
-	if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_FILE, a_sav->rec.buf, a_sav->rec.len, &l_loc)) )
+	l_ploc	= s_vbk$fileloc(a_sav);
+
+	if ( !(1 & s_vbk$rec(a_sav, VBK$K_RT_FILE, a_sav->rec.buf, a_sav->rec.len, l_ploc)) )
 		return	s_vbk$wrterr(a_sav);
 
 	l_status = s_vbk$data(a_sav, l_fd, l_attr.fileno, a_spec, l_o->physsize, &l_crc, &l_saved);
@@ -627,7 +754,7 @@ int		l_fd = l_o->physfd, l_status;
 	vbk$tlv_u32(&a_sav->rec, VBK$K_TAG_CRC, l_crc);
 	vbk$tlv_u8(&a_sav->rec, VBK$K_TAG_STATUS, l_fstat);
 
-	if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_FEND, a_sav->rec.buf, a_sav->rec.len, NULL)) )
+	if ( !(1 & s_vbk$rec(a_sav, VBK$K_RT_FEND, a_sav->rec.buf, a_sav->rec.len, NULL)) )
 		return	s_vbk$wrterr(a_sav);
 
 	if ( l_fstat != VBK$K_FS_OK )
@@ -636,7 +763,7 @@ int		l_fd = l_o->physfd, l_status;
 	a_sav->nfiles++;
 	l_attr.size	= l_saved;
 
-	if ( !(1 & s_vbk$catent(a_sav, &l_attr, &l_loc, l_crc, l_fstat)) )
+	if ( !(1 & s_vbk$catent(a_sav, &l_attr, l_ploc, l_crc, l_fstat)) )
 		return	STS$K_FATAL;
 
 	$VBKMSG(VBACKUP$_PHYSSUMM, a_spec, l_o->physsize, a_sav->physdata);
@@ -671,7 +798,7 @@ VBK$SAVE *	l_sav = (VBK$SAVE *) a_arg;
 VBK$OPTS *	l_o = l_sav->opts;
 VBK$ATTR	l_attr, l_after;
 VBK$TLVB	l_xafter = {0};
-VBK$LOC		l_loc;
+VBK$LOC		l_loc = {0}, *l_ploc = &l_loc;
 const char *	l_first = NULL;
 uint64_t	l_saved = 0;
 uint32_t	l_crc = 0;
@@ -728,7 +855,9 @@ int		l_fd = -1, l_status;
 	if ( !(1 & vbk$atr_tlv(&l_attr, &l_sav->rec)) )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
 
-	if ( !(1 & vbk$wrt_record(&l_sav->wctx, VBK$K_RT_FILE, l_sav->rec.buf, l_sav->rec.len, &l_loc)) )
+	l_ploc	= s_vbk$fileloc(l_sav);
+
+	if ( !(1 & s_vbk$rec(l_sav, VBK$K_RT_FILE, l_sav->rec.buf, l_sav->rec.len, l_ploc)) )
 		{
 		if ( l_fd >= 0 )
 			close(l_fd);
@@ -770,7 +899,7 @@ int		l_fd = -1, l_status;
 	vbk$tlv_u32(&l_sav->rec, VBK$K_TAG_CRC, l_crc);
 	vbk$tlv_u8(&l_sav->rec, VBK$K_TAG_STATUS, l_fstat);
 
-	if ( !(1 & vbk$wrt_record(&l_sav->wctx, VBK$K_RT_FEND, l_sav->rec.buf, l_sav->rec.len, NULL)) )
+	if ( !(1 & s_vbk$rec(l_sav, VBK$K_RT_FEND, l_sav->rec.buf, l_sav->rec.len, NULL)) )
 		return	s_vbk$wrterr(l_sav);
 
 	if ( l_fstat != VBK$K_FS_OK )
@@ -781,7 +910,7 @@ int		l_fd = -1, l_status;
 	if ( l_attr.ftype == VBK$K_FT_REG )
 		l_attr.size	= l_saved;
 
-	if ( !(1 & s_vbk$catent(l_sav, &l_attr, &l_loc, l_crc, l_fstat)) )
+	if ( !(1 & s_vbk$catent(l_sav, &l_attr, l_ploc, l_crc, l_fstat)) )
 		return	STS$K_FATAL;
 
 	/* /RECORD: what the journal is to know of it, once the saveset is complete (format.md, 9, rule 3) */
@@ -1132,6 +1261,10 @@ int		l_status = STS$K_SUCCESS;
 	if ( !(1 & vbk$wrt_record(&l_sav->wctx, VBK$K_RT_SUMMARY, l_sum.buf, l_sum.len, NULL)) )
 		s_vbk$wrterr(l_sav);
 
+	/* Compression on several cores: the ring between the reading of the files and the writer */
+	if ( a_opts->compress )
+		l_sav->zp = vbk$zp_start(&l_sav->wctx);
+
 	/* A device is not a tree: no walk, no read-ahead - one file, block by block */
 	if ( a_opts->physical )
 		{
@@ -1152,6 +1285,16 @@ int		l_status = STS$K_SUCCESS;
 		}
 
 	vbk$pre_stop(a_opts);
+
+	/* The ring empty - everything written, every catalog entry spooled - before the catalog */
+	if ( l_sav->zp )
+		{
+		if ( !l_sav->failed && !(1 & vbk$zp_flush(l_sav->zp)) )
+			s_vbk$wrterr(l_sav);
+
+		vbk$zp_stop(l_sav->zp, &l_sav->nzin, &l_sav->nzout);
+		l_sav->zp = NULL;
+		}
 
 	/* QUIT to /CONFIRM still closes the saveset properly; a failed one is left as it is */
 	if ( l_sav->failed )

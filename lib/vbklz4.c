@@ -201,6 +201,54 @@ uint32_t	l_ip = 0, l_anchor = 0, l_op = 0, l_seq, l_h, l_ref, l_mlen;
 
 
 /*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Compress a record's worth of data, unless it will not shrink: the
+**	first 64 KB are tried first, and when they gain less than 3% the
+**	whole is given up - photos, video, archives, what is compressed
+**	already, cost no time.  A function of the data alone: the same
+**	data is packed, or not, the same way everywhere.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_src, a_len	The octets in
+**	a_dst, a_cap	Where they go (also the scratch of the probe)
+**	a_outlen	Receives the octets written
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- compressed, and smaller by more than 4 octets
+**			  (what a DATAZ costs over a DATA);
+**	STS$K_WARN	- to be stored as it is.
+**--
+*/
+#define	VBK$K_LZ4PROBE	65536
+
+int	vbk$lz4_pack	(
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_cap,
+		uint32_t *	a_outlen
+			)
+{
+uint32_t	l_plen;
+
+	if ( a_len <= 4 )
+		return	STS$K_WARN;
+
+	if ( (a_len >= (2 * VBK$K_LZ4PROBE)) && (a_cap >= VBK$LZ4_BOUND(VBK$K_LZ4PROBE))
+		&& (1 & vbk$lz4_compress(a_src, VBK$K_LZ4PROBE, a_dst, a_cap, &l_plen)) && ((l_plen * 100ULL) > (VBK$K_LZ4PROBE * 97ULL)) )
+		return	STS$K_WARN;
+
+	if ( !(1 & vbk$lz4_compress(a_src, a_len, a_dst, (a_cap < (a_len - 4)) ? a_cap : (a_len - 4), a_outlen)) || ((*a_outlen + 4) >= a_len) )
+		return	STS$K_WARN;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
 **  A length beyond the nibble, read: none of it may pass <a_max>
 */
 static	int	s_vbk$getlen	(

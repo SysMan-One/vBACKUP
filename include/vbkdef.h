@@ -33,7 +33,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		COMPRESS: /DATA_FORMAT=COMPRESSED.  PHYSICAL and its messages.
-**		IMAGE and its messages.  ORIGINAL, DELETE and theirs.
+**		IMAGE and its messages.  ORIGINAL, DELETE and theirs.  VBK$ZP_*.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		NOPIPE: VBACKUP_PIPELINE=0; PRE and VBK$PRE_*: the read-ahead.
@@ -553,6 +553,16 @@ int	vbk$phy_devsize	(int a_fd, const struct stat *a_st, uint64_t *a_size);
 */
 int	vbk$img_prepare	(VBK$OPTS *a_opts);
 int	vbk$img_restore	(VBK$OPTS *a_opts);
+
+/*
+**  VBKZPL.C - the compression of a save on several cores, the records in order
+*/
+struct vbk_zp_t *	vbk$zp_start	(VBK$WCTX *a_wctx);
+int	vbk$zp_data	(struct vbk_zp_t *a_zp, uint32_t a_fileno, uint64_t a_off, const uint8_t *a_data, uint32_t a_n);
+int	vbk$zp_record	(struct vbk_zp_t *a_zp, uint16_t a_type, const void *a_body, uint32_t a_len, VBK$LOC *a_loc);
+int	vbk$zp_call	(struct vbk_zp_t *a_zp, void (*a_fn) (void *), void *a_arg);
+int	vbk$zp_flush	(struct vbk_zp_t *a_zp);
+void	vbk$zp_stop	(struct vbk_zp_t *a_zp, uint64_t *a_nin, uint64_t *a_nout);
 
 /*
 **  VBKRST.C - the creation of files, for the restore and for the copy
