@@ -172,6 +172,41 @@ What can go wrong, and what VBACKUP does about it:
 /BEFORE, /BY_OWNER, /RECORD and /INCREMENTAL: a device is not a tree of
 files.
 
+## /IMAGE -- a whole file system, made again on restore
+
+```
+vbackup /mnt/data /mnt/usb/data.bck /IMAGE             save the volume
+vbackup /dev/sdb1 /mnt/usb/data.bck /IMAGE             the same, by its device
+vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE    make it again on a device
+vbackup /mnt/usb/data.bck /tmp/dir                     just the files, into a directory
+```
+
+Saves every file of one file system - all of it, nothing of other file
+systems mounted below it - and what makes it that volume: its type,
+label, UUID and the owner and mode of its root. The input is the mount
+point, or the device when it is mounted (read-only is enough). Run it
+as root.
+
+A restore with /IMAGE makes a new file system of the same type, label
+and UUID on the output device (it runs mkfs.ext4, mkfs.xfs, mkfs.btrfs
+or mkfs.vfat - that program must be installed), restores the files
+into it and unmounts it. The device may be smaller or larger than the
+one saved, as long as the files fit.
+
+The guards are those of /PHYSICAL: /REPLACE, never onto a mounted or
+busy device, YES at a terminal; the copy has the UUID of the original -
+never mount both at once.
+
+What /IMAGE is not: a copy of the boot sectors or the partition table
+(save the whole disk with /PHYSICAL for that), nor of the inode
+numbers. A volume written to while it is saved is consistent file by
+file, not across files: save a snapshot when that matters. Other file
+system types (minix, ntfs, ...): use /PHYSICAL.
+
+/IMAGE works with /RECORD, /SINCE, /VERIFY and /DATA_FORMAT; it refuses
+/SELECT, /EXCLUDE, /BY_OWNER, /INCREMENTAL, /PHYSICAL and, on restore,
+/CONFIRM.
+
 ## /DATA_FORMAT -- compress the data
 
 ```
@@ -699,6 +734,16 @@ that were in the cache stay there.
 %VBACKUP-I-PHYSUUID     the copy has the UUIDs of the original
 %VBACKUP-E-PHYSSIZE     the device changed its size while it was read
 %VBACKUP-I-PHYSSUMM     /PHYSICAL: the totals
+%VBACKUP-E-IMGNOTVOL    /IMAGE: neither a mount point nor a device
+%VBACKUP-E-IMGNOTMNT    /IMAGE: the device is not mounted
+%VBACKUP-E-IMGNOTIMG    the saveset was not made with /IMAGE
+%VBACKUP-E-IMGUNSUPP    no mkfs for this file system type: /PHYSICAL
+%VBACKUP-E-IMGMKFS      mkfs failed, or is not installed
+%VBACKUP-E-IMGMOUNT     the new file system cannot be mounted
+%VBACKUP-E-IMGSMALL     the device cannot hold the files
+%VBACKUP-W-IMGNOID      the label or UUID is not known
+%VBACKUP-I-IMGCMD       /LOG: the mkfs command
+%VBACKUP-I-IMGSUMM      /IMAGE: the totals
 %VBACKUP-E-CRCERR       the data restored differ from the data saved
 %VBACKUP-E-COMPARERR    a difference between the saveset and the disk
 %VBACKUP-W-ATTRERR      an attribute could not be restored

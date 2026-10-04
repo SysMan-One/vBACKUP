@@ -13,7 +13,7 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
-.\"		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED, /PHYSICAL.
+.\"		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED, /PHYSICAL, /IMAGE.
 .\"
 .\"		 3-OCT-2026	RRL	X-03 : Stage 3: ENVIRONMENT (VBACKUP_PIPELINE,
 .\"					VBACKUP_PREFETCH), NOTES (the page cache).
@@ -79,6 +79,12 @@ Cut the saveset into volumes of this size (K, M, G, T): x.bck, x.bck.002, ...
 .TP
 .BI /COMMENT= text
 A note kept in the saveset.
+.TP
+.B /IMAGE
+A whole file system: every file of it, its type, label and UUID.  The
+input is a mount point or a mounted device; a restore onto a device runs
+mkfs.<type> and restores the files into the new file system (/REPLACE,
+the guards of /PHYSICAL).  See vbackup /HELP /IMAGE.
 .TP
 .B /PHYSICAL
 A device (or an image file) block by block; zeros take no room.  Save:
@@ -164,6 +170,8 @@ $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 $ vbackup full.bck,mon.bck /restore /INCREMENTAL
 $ vbackup /home/rrl /mnt/disk2 /VERIFY
 $ vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+$ vbackup /mnt/data /mnt/usb/data.bck /IMAGE
+$ vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE
 $ vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL
 $ vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
 .fi

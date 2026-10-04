@@ -15,6 +15,9 @@ skips them by the rules of sections 5 and 6:
 - the SUMMARY BASE items are absolute (realpath) names; X01-01 wrote
   them as they were given;
 - the journal file (section 9) - a file of its own, not part of a saveset;
+- /IMAGE (6.9): the files of a whole file system and its identity;
+  the tags IMAGE, FSTYPE, FSLABEL, FSUUID, FSUSED, ROOTATTR, MOUNTOPTS,
+  since X01-04;
 - /PHYSICAL (6.8): one device as one sparse regular file; the tags
   PHYSICAL, DEVSIZE, SECTORSIZE, since X01-04;
 - the DATAZ record (type 7) and the SUMMARY tag COMPRESS (6.7): data
@@ -256,6 +259,13 @@ SUMMARY tags:
 | 78 | PHYSICAL | u8 | 1: the saveset holds one device, block by block (6.8); also in its FILE record and catalog entry |
 | 79 | DEVSIZE | u64 | the size of that device in bytes |
 | 80 | SECTORSIZE | u32 | its logical sector size in bytes |
+| 81 | IMAGE | u8 | 1: the saveset holds the files of one whole file system (6.9) |
+| 82 | FSTYPE | STR | its type, as the kernel names it (`ext4`, `xfs`, `vfat`, ...) |
+| 83 | FSLABEL | STR | its label, when it has one |
+| 84 | FSUUID | STR | its UUID as text (`xxxxxxxx-xxxx-...`; for FAT the serial `XXXX-XXXX`) |
+| 85 | FSUSED | u64 | bytes in use when it was saved |
+| 86 | ROOTATTR | STR | the per-file tags (6.1) of its root directory: PATH `.`, owner, mode, times, XATTR items |
+| 87 | MOUNTOPTS | STR | the options it was mounted with (for the operator only) |
 
 END and TRAILER tags:
 
@@ -352,6 +362,22 @@ So a reader that knows nothing of PHYSICAL restores such a saveset as a
 sparse image file - which is what it is.  A restore onto a device must
 write zeros into the gaps (a device, unlike a new file, keeps its old
 bytes where nothing is written) up to DEVSIZE, and nothing beyond.
+
+### 6.9 A whole file system (/IMAGE)
+
+A saveset made with `/IMAGE` holds every file of one mounted file system,
+saved from its mount point with names relative to its root (`etc/hosts`,
+not `root/etc/hosts`), nothing of other file systems mounted below it,
+nodump flags ignored.  It is an ordinary saveset of files: any reader
+restores it as a tree.  The SUMMARY adds what makes the volume that
+volume: IMAGE, FSTYPE, FSLABEL, FSUUID, FSUSED, ROOTATTR, MOUNTOPTS, and
+BASE is the mount point.
+
+A restore of the volume makes a new file system of FSTYPE with that
+label and UUID (the format does not say how; VBACKUP runs mkfs), restores
+the files into it, then applies ROOTATTR to its root directory.  Inode
+numbers, the layout on the disk and anything outside the file system
+(boot sectors, the partition table) are not part of it - that is 6.8.
 
 ## 7. Writer rules
 

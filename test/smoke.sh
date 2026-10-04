@@ -31,6 +31,8 @@
 #
 #		 4-OCT-2026	RRL	X-04 : /PHYSICAL: an image file, and loop devices as root
 #					(the guards, the gaps zeroed, nothing beyond).
+#					/IMAGE: an ext4 volume made again on a loop
+#					device - the tree, the root, label and UUID.
 #
 #		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
 #
@@ -470,7 +472,7 @@ check 'cmp -s phys.img physz.out' "/PHYSICAL compressed: not the same image"
 
 if [ $ROOT = 1 ] && command -v losetup > /dev/null 2>&1 && PATH=$PATH:/sbin:/usr/sbin command -v mkfs.ext4 > /dev/null 2>&1; then
 	L1= L2= L3=
-	freeloops () { umount physmnt 2>/dev/null; for L in $L1 $L2 $L3; do losetup -d $L 2>/dev/null; done; }
+	freeloops () { umount physmnt imgsrc imgdst 2>/dev/null; for L in $L1 $L2 $L3; do losetup -d $L 2>/dev/null; done; }
 	truncate -s 48M ploop.img && PATH=$PATH:/sbin:/usr/sbin mkfs.ext4 -q -F ploop.img
 	head -c 64M /dev/urandom > pbig.img && cp pbig.img pbig.orig
 	truncate -s 16M psmall.img
@@ -489,6 +491,28 @@ if [ $ROOT = 1 ] && command -v losetup > /dev/null 2>&1 && PATH=$PATH:/sbin:/usr
 		check '[ $? = 0 ] && grep -q PHYSLARGER pw.log && cmp -s -n 50331648 pl.ref $L2' "/PHYSICAL restore onto a device over garbage: the gaps are not zeros, $(cat pw.log)"
 		check 'cmp -s -i 50331648:50331648 -n 16777216 pbig.orig $L2' "/PHYSICAL restore wrote beyond the size of the device saved"
 		mount -o ro $L2 physmnt && { $VB pl.bck $L2 /PHYSICAL /REPLACE > pt.log 2>&1; check '[ $? = 2 ] && grep -q PHYSMOUNTED pt.log' "a mounted device was overwritten"; umount physmnt; }
+
+		#	/IMAGE: the ext4 volume of L1 saved from its mount point, made again on L2, the same tree, label and UUID
+		mkdir -p imgsrc imgdst
+		if mount $L1 imgsrc; then
+			mkdir -p imgsrc/d/e && echo one > imgsrc/d/a && ln imgsrc/d/a imgsrc/d/b && head -c 200000 /dev/urandom > imgsrc/d/e/r
+			truncate -s 5M imgsrc/sparse && ln -s d/a imgsrc/l && chmod 0750 imgsrc && chown 1:1 imgsrc
+			$VB imgsrc img.bck /IMAGE > img.log 2>&1
+			check '[ $? = 0 ] && $VB img.bck /LIST /FULL | grep -q "^Kind"' "/IMAGE save of a mount point: $(cat img.log)"
+			umount imgsrc
+			$VB img.bck $L2 /IMAGE /REPLACE < /dev/null > imgr.log 2>&1
+			check '[ $? = 0 ] && grep -q IMGSUMM imgr.log' "/IMAGE restore onto a device: $(cat imgr.log)"
+			mount -o ro $L1 imgsrc && mount -o ro $L2 imgdst && {
+				check 'diff -r --no-dereference imgsrc imgdst > /dev/null && [ "$(stat -c %A%U imgsrc)" = "$(stat -c %A%U imgdst)" ]' "/IMAGE: the volume made again differs"
+				check '[ "$(stat -c %i imgdst/d/a)" = "$(stat -c %i imgdst/d/b)" ]' "/IMAGE: a hard link lost"
+				umount imgdst; }
+			umount imgsrc 2>/dev/null
+			check '[ "$(python3 -c "import sys; f=open(sys.argv[1],\"rb\"); f.seek(1024); s=f.read(256); print(s[0x68:0x88].hex())" $L1)" = "$(python3 -c "import sys; f=open(sys.argv[1],\"rb\"); f.seek(1024); s=f.read(256); print(s[0x68:0x88].hex())" $L2)" ]' "/IMAGE: the UUID and label are not those of the volume saved"
+			$VB src imgn.bck /IMAGE > imgn.log 2>&1
+			check '[ $? = 2 ] && grep -q IMGNOTVOL imgn.log' "/IMAGE of a directory that is not a mount point: $(cat imgn.log)"
+			$VB pl.bck nothing.img /IMAGE > imgp.log 2>&1
+			check '[ $? = 2 ] && grep -q IMGNOTIMG imgp.log' "/IMAGE restore of a saveset not made so: $(cat imgp.log)"
+		fi
 	else
 		echo "%VBACKUP-W-SMOKE, no loop devices to be had: /PHYSICAL on devices not checked"
 	fi

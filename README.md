@@ -66,6 +66,10 @@ second) and sure.  Copy it next to the saveset:
     $ perl vbkx.pl l /mnt/usb/home.bck
     $ perl vbkx.pl x /mnt/usb/home.bck -C /tmp/restore
 
+A saveset made with `/PHYSICAL` comes out of every extractor as the image
+file of the device; one made with `/IMAGE` as the plain tree of files of
+the volume.
+
 ## vbkx on Windows
 
 `vbkx.exe` reads savesets on Windows, with the same commands as `vbkx`.

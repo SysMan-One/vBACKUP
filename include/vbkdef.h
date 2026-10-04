@@ -33,6 +33,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		COMPRESS: /DATA_FORMAT=COMPRESSED.  PHYSICAL and its messages.
+**		IMAGE and its messages.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		NOPIPE: VBACKUP_PIPELINE=0; PRE and VBK$PRE_*: the read-ahead.
@@ -149,6 +150,16 @@ enum	{
 	VBACKUP$K_MSG_PHYSUUID,			/* ... the copy has the UUIDs of the original	*/
 	VBACKUP$K_MSG_PHYSSIZE,			/* ... the device changed its size meanwhile	*/
 	VBACKUP$K_MSG_PHYSSUMM,			/* ... the totals				*/
+	VBACKUP$K_MSG_IMGNOTVOL,		/* /IMAGE: not a mount point, not a device	*/
+	VBACKUP$K_MSG_IMGNOTMNT,		/* ... the device is not mounted		*/
+	VBACKUP$K_MSG_IMGNOTIMG,		/* ... the saveset is not an /IMAGE one		*/
+	VBACKUP$K_MSG_IMGUNSUPP,		/* ... no mkfs for this file system type	*/
+	VBACKUP$K_MSG_IMGMKFS,			/* ... mkfs failed				*/
+	VBACKUP$K_MSG_IMGMOUNT,			/* ... the new file system cannot be mounted	*/
+	VBACKUP$K_MSG_IMGSMALL,			/* ... the device cannot hold the files		*/
+	VBACKUP$K_MSG_IMGNOID,			/* ... label or UUID not known			*/
+	VBACKUP$K_MSG_IMGCMD,			/* ... the mkfs command, /LOG			*/
+	VBACKUP$K_MSG_IMGSUMM,			/* ... the totals				*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -218,6 +229,16 @@ enum	{
 #define	VBACKUP$_PHYSUUID	$VBKSTS(VBACKUP$K_MSG_PHYSUUID,		STS$K_INFO)
 #define	VBACKUP$_PHYSSIZE	$VBKSTS(VBACKUP$K_MSG_PHYSSIZE,		STS$K_ERROR)
 #define	VBACKUP$_PHYSSUMM	$VBKSTS(VBACKUP$K_MSG_PHYSSUMM,		STS$K_INFO)
+#define	VBACKUP$_IMGNOTVOL	$VBKSTS(VBACKUP$K_MSG_IMGNOTVOL,	STS$K_ERROR)
+#define	VBACKUP$_IMGNOTMNT	$VBKSTS(VBACKUP$K_MSG_IMGNOTMNT,	STS$K_ERROR)
+#define	VBACKUP$_IMGNOTIMG	$VBKSTS(VBACKUP$K_MSG_IMGNOTIMG,	STS$K_ERROR)
+#define	VBACKUP$_IMGUNSUPP	$VBKSTS(VBACKUP$K_MSG_IMGUNSUPP,	STS$K_ERROR)
+#define	VBACKUP$_IMGMKFS	$VBKSTS(VBACKUP$K_MSG_IMGMKFS,		STS$K_ERROR)
+#define	VBACKUP$_IMGMOUNT	$VBKSTS(VBACKUP$K_MSG_IMGMOUNT,		STS$K_ERROR)
+#define	VBACKUP$_IMGSMALL	$VBKSTS(VBACKUP$K_MSG_IMGSMALL,		STS$K_ERROR)
+#define	VBACKUP$_IMGNOID	$VBKSTS(VBACKUP$K_MSG_IMGNOID,		STS$K_WARN)
+#define	VBACKUP$_IMGCMD		$VBKSTS(VBACKUP$K_MSG_IMGCMD,		STS$K_INFO)
+#define	VBACKUP$_IMGSUMM	$VBKSTS(VBACKUP$K_MSG_IMGSUMM,		STS$K_INFO)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -327,6 +348,16 @@ typedef struct vbk_opts_t
 	uint64_t	physsize;		/* ... its size, its sector			*/
 	uint32_t	physsector;
 	int		physfd;			/* ... open for the save			*/
+	int		image;			/* /IMAGE: a whole file system			*/
+	char		imgmnt [VBACKUP$K_SZ_PATH];	/* ... its mount point			*/
+	char		imgdev [VBACKUP$K_SZ_PATH];	/* ... its device			*/
+	char		imgfstype [64];		/* ... its type, label, UUID, options		*/
+	char		imglabel [256];
+	char		imguuid [64];
+	char		imgopts [1024];
+	uint64_t	imgused;		/* ... bytes in use (statvfs)			*/
+	VBK$TLVB	imgroot;		/* ... the attributes of its root directory	*/
+	uint64_t	rstfiles, rstbytes;	/* The totals of the last restore		*/
 	struct vbk_pre_t *pre;			/* The read-ahead of files, NULL - none		*/
 	char		jnlspec [VBACKUP$K_SZ_PATH];	/* /JOURNAL=file, "" - the default	*/
 	struct vbk_jnl_t *jnl;			/* The journal, when one is open		*/
@@ -500,6 +531,14 @@ int	vbk$copy	(VBK$OPTS *a_opts);
 int	vbk$phy_open	(VBK$OPTS *a_opts, const char *a_spec);
 int	vbk$phy_check	(const char *a_spec, const struct stat *a_st, int a_write);
 int	vbk$phy_restore	(VBK$OPTS *a_opts);
+int	vbk$phy_yes	(const char *a_dev, uint64_t a_size, const char *a_spec);
+int	vbk$phy_devsize	(int a_fd, const struct stat *a_st, uint64_t *a_size);
+
+/*
+**  VBKIMG.C - /IMAGE: a whole file system, its files and its identity
+*/
+int	vbk$img_prepare	(VBK$OPTS *a_opts);
+int	vbk$img_restore	(VBK$OPTS *a_opts);
 
 /*
 **  VBKRST.C - the creation of files, for the restore and for the copy

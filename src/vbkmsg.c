@@ -22,7 +22,7 @@
 **
 **	X01-03		 3-OCT-2026	RRL
 **		FILLOST and UNNAMED: the files a damaged restore lost.  The
-**		messages of /PHYSICAL.
+**		messages of /PHYSICAL and /IMAGE.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		The messages of stage 2: the journal, /INCREMENTAL, the copy.
@@ -120,7 +120,17 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_PHYSABORT,	"PHYSABORT, !AZ not overwritten: the answer was not YES"),
 	$VBKREC(VBACKUP$_PHYSUUID,	"PHYSUUID, !AZ now carries the labels and UUIDs of the device saved: never mount it beside the original"),
 	$VBKREC(VBACKUP$_PHYSSIZE,	"PHYSSIZE, !AZ changed its size while it was read (!UQ, then !UQ bytes): the copy is not to be trusted"),
-	$VBKREC(VBACKUP$_PHYSSUMM,	"PHYSSUMM, !AZ: !UQ bytes, !UQ of them data, the rest zeros")
+	$VBKREC(VBACKUP$_PHYSSUMM,	"PHYSSUMM, !AZ: !UQ bytes, !UQ of them data, the rest zeros"),
+	$VBKREC(VBACKUP$_IMGNOTVOL,	"IMGNOTVOL, !AZ is neither the mount point of a file system nor a device: /IMAGE saves a whole volume"),
+	$VBKREC(VBACKUP$_IMGNOTMNT,	"IMGNOTMNT, !AZ is not mounted: mount it (read-only is enough) and give the mount point or the device"),
+	$VBKREC(VBACKUP$_IMGNOTIMG,	"IMGNOTIMG, !AZ was not made with /IMAGE: restore it without /IMAGE"),
+	$VBKREC(VBACKUP$_IMGUNSUPP,	"IMGUNSUPP, !AZ: VBACKUP does not make a file system of type !AZ - use /PHYSICAL for it"),
+	$VBKREC(VBACKUP$_IMGMKFS,	"IMGMKFS, !AZ failed: !AZ"),
+	$VBKREC(VBACKUP$_IMGMOUNT,	"IMGMOUNT, the new !AZ file system on !AZ cannot be mounted, errno=!UL (!AZ)"),
+	$VBKREC(VBACKUP$_IMGSMALL,	"IMGSMALL, !AZ holds !UQ bytes, the files need about !UQ: nothing written"),
+	$VBKREC(VBACKUP$_IMGNOID,	"IMGNOID, !AZ: the !AZ of the file system is not known - the new one gets a new one"),
+	$VBKREC(VBACKUP$_IMGCMD,	"IMGCMD, !AZ"),
+	$VBKREC(VBACKUP$_IMGSUMM,	"IMGSUMM, !AZ: a !AZ file system made, !UQ file!%S, !UQ byte!%S restored")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

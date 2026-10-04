@@ -362,6 +362,21 @@ int		l_fd, l_status;
 
 
 /*
+**  The size of an open device, or file - for /IMAGE too
+*/
+int	vbk$phy_devsize	(
+		int		a_fd,
+	const	struct stat *	a_st,
+		uint64_t *	a_size
+			)
+{
+uint32_t	l_sector;
+
+	return	s_vbk$size(a_fd, a_st, a_size, &l_sector);
+}
+
+
+/*
 **  Zeros from <a_from> up to <a_to> on the output: a device keeps its old
 **  bytes where nothing is written.  BLKZEROOUT when the device takes it,
 **  a buffer of zeros else.
@@ -412,7 +427,7 @@ ssize_t			l_rc;
 /*
 **  From a terminal, the word YES - y is too easy to give for a disk
 */
-static	int	s_vbk$yes	(
+int	vbk$phy_yes	(
 	const	char *		a_dev,
 		uint64_t	a_size,
 	const	char *		a_spec
@@ -513,7 +528,7 @@ int		l_phys = 0, l_isdev = 0, l_fd = -1, l_damaged = 0, l_status, l_fend = 0, l_
 			l_status = $VBKMSG(VBACKUP$_OPENOUT, l_out, errno, strerror(errno));
 		else if ( l_outsize < l_devsize )
 			l_status = $VBKMSG(VBACKUP$_PHYSSMALL, l_out, l_outsize, l_devsize);
-		else if ( !s_vbk$yes(l_out, l_outsize, l_spec) )
+		else if ( !vbk$phy_yes(l_out, l_outsize, l_spec) )
 			l_status = $VBKMSG(VBACKUP$_PHYSABORT, l_out);
 		else if ( l_outsize > l_devsize )
 			$VBKMSG(VBACKUP$_PHYSLARGER, l_out, l_outsize, l_devsize);

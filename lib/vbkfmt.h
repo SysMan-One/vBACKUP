@@ -37,7 +37,8 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ, the compressed DATA record; the SUMMARY tag COMPRESS;
-**		PHYSICAL, DEVSIZE, SECTORSIZE.
+**		PHYSICAL, DEVSIZE, SECTORSIZE; IMAGE, FSTYPE, FSLABEL, FSUUID,
+**		FSUSED, ROOTATTR, MOUNTOPTS.
 **		VBK$K_SZ_SPEC and VBK$VOLSPEC, from VBKWRT.H.
 **
 **	X01-02		 3-OCT-2026	RRL
@@ -153,6 +154,13 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_PHYSICAL,			/* SUMMARY, FILE, CATALOG: a device, /PHYSICAL	*/
 	VBK$K_TAG_DEVSIZE,			/* SUMMARY: its size in bytes			*/
 	VBK$K_TAG_SECTORSIZE,			/* SUMMARY: its logical sector			*/
+	VBK$K_TAG_IMAGE,			/* SUMMARY: a whole file system, /IMAGE		*/
+	VBK$K_TAG_FSTYPE,			/* ... its type, as mount knows it		*/
+	VBK$K_TAG_FSLABEL,			/* ... its label				*/
+	VBK$K_TAG_FSUUID,			/* ... its UUID, as text			*/
+	VBK$K_TAG_FSUSED,			/* ... bytes in use				*/
+	VBK$K_TAG_ROOTATTR,			/* ... the per-file tags of its root directory	*/
+	VBK$K_TAG_MOUNTOPTS,			/* ... the options it was mounted with		*/
 
 	VBK$K_TAG_NFILES = 96,
 	VBK$K_TAG_NBYTES,

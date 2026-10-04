@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWLK"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -36,6 +36,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		"dir/." is the contents of dir under their own names (/IMAGE).
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files of a directory are handed to the read-ahead before
@@ -172,7 +175,9 @@ char *	l_slash;
 	for ( l_len = strlen(l_tmp); (l_len > 1) && (l_tmp [l_len - 1] == '/'); l_len-- )
 		l_tmp [l_len - 1] = '\0';
 
-	if ( !strcmp(l_tmp, "/") || !strcmp(l_tmp, ".") || !strcmp(l_tmp, "..") || ((l_len >= 3) && !strcmp(l_tmp + l_len - 3, "/..")) )
+	/* "dir/." too: what the directory holds, under names of their own - /IMAGE gives the mount point so */
+	if ( !strcmp(l_tmp, "/") || !strcmp(l_tmp, ".") || !strcmp(l_tmp, "..") || ((l_len >= 3) && !strcmp(l_tmp + l_len - 3, "/.."))
+		|| ((l_len >= 2) && !strcmp(l_tmp + l_len - 2, "/.")) )
 		{
 		vbk$strcpy(a_basesz, a_base, l_tmp);
 

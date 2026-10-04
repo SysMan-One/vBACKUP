@@ -37,6 +37,7 @@
 **		/DATA_FORMAT=COMPRESSED: a DATAZ record where LZ4 pays, DATA
 **		elsewhere; the SUMMARY says COMPRESS.  /PHYSICAL: a device
 **		saved as one file, the runs of zeros left out (S_VBK$PHYSICAL).
+**		/IMAGE: the identity of the volume in the SUMMARY.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files are read SEQUENTIAL; a cold one is dropped from the
@@ -859,6 +860,25 @@ int		l_ok = 1;
 	/* Information only: a reader goes by the record types, not by this */
 	if ( l_o->compress )
 		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_COMPRESS, VBK$K_CODEC_LZ4);
+
+	/* /IMAGE: what makes the volume that volume - a restore makes it again */
+	if ( l_o->image )
+		{
+		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_IMAGE, 1);
+		l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_FSTYPE, l_o->imgfstype);
+
+		if ( l_o->imglabel [0] )
+			l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_FSLABEL, l_o->imglabel);
+
+		if ( l_o->imguuid [0] )
+			l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_FSUUID, l_o->imguuid);
+
+		l_ok &= vbk$tlv_u64(a_tlvb, VBK$K_TAG_FSUSED, l_o->imgused);
+		l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_MOUNTOPTS, l_o->imgopts);
+
+		if ( l_o->imgroot.len )
+			l_ok &= vbk$tlv_put(a_tlvb, VBK$K_TAG_ROOTATTR, l_o->imgroot.len, l_o->imgroot.buf);
+		}
 
 	/* /PHYSICAL: what a restore onto a device must know, and a file cannot say */
 	if ( l_o->physical )

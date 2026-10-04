@@ -172,6 +172,41 @@ vbackup /mnt/usb/sdb1.bck /tmp/dir                     то же: dir/sdb1 -- о
 /BEFORE, /BY_OWNER, /RECORD и /INCREMENTAL: устройство -- не дерево
 файлов.
 
+## /IMAGE -- файловая система целиком, пересоздаётся при восстановлении
+
+```
+vbackup /mnt/data /mnt/usb/data.bck /IMAGE             сохранить том
+vbackup /dev/sdb1 /mnt/usb/data.bck /IMAGE             то же, по устройству
+vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE    создать его заново на устройстве
+vbackup /mnt/usb/data.bck /tmp/dir                     только файлы, в каталог
+```
+
+Сохраняет все файлы одной файловой системы -- целиком, без других
+файловых систем, смонтированных внутри неё, -- и то, что делает её этим
+томом: тип, метку, UUID, владельца и права корня. На входе -- точка
+монтирования или устройство, если оно смонтировано (хватит и только на
+чтение). Запускать от root.
+
+Восстановление с /IMAGE создаёт на выходном устройстве новую файловую
+систему того же типа, с той же меткой и UUID (запускается mkfs.ext4,
+mkfs.xfs, mkfs.btrfs или mkfs.vfat -- программа должна быть
+установлена), восстанавливает в неё файлы и размонтирует. Устройство
+может быть меньше или больше сохранённого -- лишь бы файлы поместились.
+
+Защита та же, что у /PHYSICAL: /REPLACE, никогда на смонтированное или
+занятое устройство, YES за терминалом; у копии UUID оригинала -- никогда
+не монтируйте их одновременно.
+
+Чем /IMAGE не является: копией загрузочных секторов и таблицы разделов
+(для этого сохраните весь диск с /PHYSICAL) и номеров inode. Том, на
+который пишут во время сохранения, согласован пофайлово, но не между
+файлами: если это важно, сохраняйте снимок. Другие типы файловых систем
+(minix, ntfs ...): /PHYSICAL.
+
+/IMAGE сочетается с /RECORD, /SINCE, /VERIFY и /DATA_FORMAT; не
+сочетается с /SELECT, /EXCLUDE, /BY_OWNER, /INCREMENTAL, /PHYSICAL, а при
+восстановлении -- с /CONFIRM.
+
 ## /DATA_FORMAT -- сжимать данные
 
 ```
@@ -700,6 +735,16 @@ VBACKUP_PREFETCH=n задаёт число потоков, 0 выключает 
 %VBACKUP-I-PHYSUUID     у копии те же UUID, что у оригинала
 %VBACKUP-E-PHYSSIZE     устройство изменило размер во время чтения
 %VBACKUP-I-PHYSSUMM     /PHYSICAL: итоги
+%VBACKUP-E-IMGNOTVOL    /IMAGE: не точка монтирования и не устройство
+%VBACKUP-E-IMGNOTMNT    /IMAGE: устройство не смонтировано
+%VBACKUP-E-IMGNOTIMG    saveset сделан не с /IMAGE
+%VBACKUP-E-IMGUNSUPP    нет mkfs для этого типа ФС: /PHYSICAL
+%VBACKUP-E-IMGMKFS      mkfs не сработал или не установлен
+%VBACKUP-E-IMGMOUNT     новую файловую систему не смонтировать
+%VBACKUP-E-IMGSMALL     файлы на устройство не поместятся
+%VBACKUP-W-IMGNOID      метка или UUID неизвестны
+%VBACKUP-I-IMGCMD       /LOG: команда mkfs
+%VBACKUP-I-IMGSUMM      /IMAGE: итоги
 %VBACKUP-E-CRCERR       восстановленные данные не совпали с сохранёнными
 %VBACKUP-E-COMPARERR    saveset и диск различаются
 %VBACKUP-W-ATTRERR      атрибут не восстановлен

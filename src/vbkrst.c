@@ -1319,6 +1319,9 @@ int		l_status = STS$K_SUCCESS;
 			break;
 		}
 
+	a_opts->rstfiles = l_nfiles;
+	a_opts->rstbytes = l_nbytes;
+
 	if ( a_opts->log )
 		$VBKMSG(VBACKUP$_RESTSUMM, l_nfiles, l_nbytes);
 
