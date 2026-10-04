@@ -600,6 +600,11 @@ if [ -n "$VX" ]; then
 	done
 	check '[ $WRONG = 0 ]' "vbkx p after a lost block: the data of another file, $WRONG times"
 
+	#	A saveset cut down to its VHDR: nothing to read is not "all files read"
+	head -c 65536 x.bck > vhdronly.bck
+	$VX t vhdronly.bck > vh.log 2>&1
+	check '[ $? = 1 ] && grep -q "ends before its catalog" vh.log' "vbkx t of a saveset cut down to its VHDR: $(tail -1 vh.log)"
+
 fi
 
 #

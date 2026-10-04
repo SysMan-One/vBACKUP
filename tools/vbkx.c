@@ -87,7 +87,9 @@
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets (format.md 6.10): -k keyfile, VBACKUP_KEY_FILE,
 **		or the passphrase asked on the terminal (the console on Windows,
-**		taken as UTF-8); a block whose authentication fails is said.
+**		taken as UTF-8), -n never; a block whose authentication fails
+**		is said.  A stream that ends before its catalog (a saveset cut
+**		down to its VHDR) is no longer "all files read": said, code 1.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the data compressed with /DATA_FORMAT=COMPRESSED.  l -m:
@@ -1549,7 +1551,7 @@ static	void	s_vbkx$stream	(
 const uint8_t *	l_body;
 uint32_t	l_len;
 uint16_t	l_type;
-int		l_files = 0;
+int		l_files = 0, l_ended = 0;
 
 	while ( 1 & vbk$rd_next(a_rctx, &l_type, &l_body, &l_len, NULL) )
 		{
@@ -1576,11 +1578,21 @@ int		l_files = 0;
 				return;
 			}
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
+			{
+			l_ended	= 1;
 			break;
+			}
 		}
 
 	if ( a_out->active )
 		s_vbkx$end(a_out, NULL, 0);
+
+	/* The whole stream read, and no CATALOG or END at its end: what follows is not there - never "all done" */
+	if ( !a_one && !l_ended )
+		{
+		s_vbkx$msg("%s ends before its catalog: the save did not complete, or its last volumes are missing", s_spec);
+		s_bad	= 1;
+		}
 }
 
 
