@@ -52,8 +52,9 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-04		 4-OCT-2026	RRL
-**		The read of a head bounded by the buffer for the eyes of a
-**		fortified glibc (Ubuntu, -Wstringop-overflow).
+**		The read of a head bounded by the buffer, and kept out of line,
+**		for the eyes of a fortified glibc (Ubuntu gcc 13, a false
+**		-Wstringop-overflow).
 **
 **	X01-03		 3-OCT-2026	RRL
 **		Initial version.
@@ -123,6 +124,22 @@ static	VBK$PGRP	s_vbk$empty;		/* Pushed when there is no memory for a group	*/
 
 
 /*
+**  pread, kept out of line: gcc 13 with a fortified glibc (Ubuntu) inlines
+**  the loop of S_VBK$PREFILE into the worker and then sees sizes there
+**  that the loop never gives (a false -Wstringop-overflow)
+*/
+static	__attribute__((noinline)) ssize_t	s_vbk$readat	(
+		int		a_fd,
+		uint8_t *	a_buf,
+		size_t		a_len,
+		off_t		a_off
+			)
+{
+	return	pread(a_fd, a_buf, a_len, a_off);
+}
+
+
+/*
 **  Read the head of one file.  Runs in a worker: system calls only.
 **
 **  RETURN VALUE:
@@ -186,10 +203,15 @@ int		l_fd, l_cold = -1, l_oflags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXE
 		l_cold	= 1;
 	else	l_cold	= vbk$os_cold(l_fd, (uint64_t) l_st.st_size);
 
-	/* The buffer is VBK$K_PRECAP octets: said so, a fortified pread cannot prove it from the loop */
-	while ( (l_got < l_len) && (l_len <= VBK$K_PRECAP) )
+	/* The buffer is VBK$K_PRECAP octets: said so in so many words, a fortified pread cannot prove it from the loop */
+	while ( l_got < l_len )
 		{
-		if ( 0 >= (l_n = pread(l_fd, a_buf + l_got, l_len - l_got, (off_t) l_got)) )
+		size_t	l_want = l_len - l_got;
+
+		if ( (l_got >= VBK$K_PRECAP) || (l_want > (VBK$K_PRECAP - l_got)) )
+			break;
+
+		if ( 0 >= (l_n = s_vbk$readat(l_fd, a_buf + l_got, l_want, (off_t) l_got)) )
 			{
 			if ( (l_n < 0) && (errno == EINTR) )
 				continue;

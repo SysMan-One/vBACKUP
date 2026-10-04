@@ -254,9 +254,14 @@ system types (minix, ntfs, ...): use /PHYSICAL.
 
 COMPRESSED makes the saveset smaller: text, programs and documents
 often shrink to half, or less. Files that are compressed already
-(photos, video, .gz, .zip) stay as they are - VBACKUP sees that they
-do not shrink and stores them plain. The checksums and the repair of
-bad blocks work as always.
+(photos, video, .gz, .zip) stay as they are - VBACKUP tries the first
+64 KB of each piece and stores it plain when it does not shrink, which
+costs almost no time. The checksums and the repair of bad blocks work
+as always.
+
+The compression runs on all the cores of the machine (at most 8); the
+saveset is the same as with one. VBACKUP_ZTHREADS=n in the environment
+sets the number of threads, 1 - none.
 
 A restore, /LIST, /COMPARE, /EXTRACT and vbkx need nothing: they see
 compressed data by themselves.

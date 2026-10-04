@@ -192,6 +192,10 @@ $ vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
 0 \- the saveset is written without the writer thread, for the
 trouble-shooting; the saveset is the same.
 .TP
+.B VBACKUP_ZTHREADS
+The number of threads that compress a save /DATA_FORMAT=COMPRESSED;
+the cores by default (at most 8), 1 \- none.
+.TP
 .B VBACKUP_PREFETCH
 The number of threads that read files ahead in a save or a copy;
 8 by default, 0 \- none.
