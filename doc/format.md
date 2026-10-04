@@ -15,6 +15,8 @@ skips them by the rules of sections 5 and 6:
 - the SUMMARY BASE items are absolute (realpath) names; X01-01 wrote
   them as they were given;
 - the journal file (section 9) - a file of its own, not part of a saveset;
+- /PHYSICAL (6.8): one device as one sparse regular file; the tags
+  PHYSICAL, DEVSIZE, SECTORSIZE, since X01-04;
 - the DATAZ record (type 7) and the SUMMARY tag COMPRESS (6.7): data
   compressed in the LZ4 block format, since X01-04; a reader of an
   earlier version skips it and reports the files damaged;
@@ -251,6 +253,9 @@ SUMMARY tags:
 | 75 | KIND | u8 | 0 FULL: every covered file is saved; 1 INCREMENTAL: a time filter chose what is saved, the catalog lists the rest as PRESENT |
 | 76 | FILTER | STR | the time filter of an INCREMENTAL saveset as it was given, e.g. `/SINCE=BACKUP` |
 | 77 | COMPRESS | u8 | the codec of the DATAZ records, 1 = LZ4 block; information only - a reader goes by the record types |
+| 78 | PHYSICAL | u8 | 1: the saveset holds one device, block by block (6.8); also in its FILE record and catalog entry |
+| 79 | DEVSIZE | u64 | the size of that device in bytes |
+| 80 | SECTORSIZE | u32 | its logical sector size in bytes |
 
 END and TRAILER tags:
 
@@ -328,6 +333,25 @@ compresses to the same bytes.
 
 A record is written as DATAZ only when it is smaller than the DATA
 record would be; incompressible data stays DATA.
+
+### 6.8 A device, block by block (/PHYSICAL)
+
+A saveset made with `/PHYSICAL` holds exactly one regular file: the
+device (or the image file) given as input.  Its FILE record has FTYPE 1
+(REG), SIZE = DEVSIZE, the name of the device node as PATH (`sdb1`), the
+owner, mode and times of the node, and the tag PHYSICAL; so has its
+catalog entry.  The SUMMARY carries PHYSICAL, DEVSIZE and SECTORSIZE,
+and BASE is the directory of the node (`/dev`).
+
+The data is cut in pieces of 65536 bytes (the last one shorter); a
+piece that is all zeros is not written - the convention of sparse files
+(6.2): a gap between DATA/DATAZ records reads as zeros.  The CRC of the
+FEND is that of the bytes written, in offset order, as for any file.
+
+So a reader that knows nothing of PHYSICAL restores such a saveset as a
+sparse image file - which is what it is.  A restore onto a device must
+write zeros into the gaps (a device, unlike a new file, keeps its old
+bytes where nothing is written) up to DEVSIZE, and nothing beyond.
 
 ## 7. Writer rules
 

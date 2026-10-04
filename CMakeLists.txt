@@ -203,6 +203,7 @@ add_executable(vbackup
 	src/vbkhsh.c
 	src/vbkjnl.c
 	src/vbkcpy.c
+	src/vbkphy.c
 	src/vbkpre.c)
 
 #

@@ -32,7 +32,7 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-04		 4-OCT-2026	RRL
-**		COMPRESS: /DATA_FORMAT=COMPRESSED.
+**		COMPRESS: /DATA_FORMAT=COMPRESSED.  PHYSICAL and its messages.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		NOPIPE: VBACKUP_PIPELINE=0; PRE and VBK$PRE_*: the read-ahead.
@@ -138,6 +138,17 @@ enum	{
 	VBACKUP$K_MSG_NOINODE,			/* /RECORD of a saveset older than X01-02	*/
 	VBACKUP$K_MSG_FILLOST,			/* A file of the catalog lost with its records	*/
 	VBACKUP$K_MSG_UNNAMED,			/* Files lost, and no catalog to name them	*/
+	VBACKUP$K_MSG_PHYSMOUNTED,		/* /PHYSICAL: the device is mounted		*/
+	VBACKUP$K_MSG_PHYSHELD,			/* ... in use: LVM, RAID, dm-crypt, swap	*/
+	VBACKUP$K_MSG_PHYSNOTDEV,		/* ... neither a block device nor a file	*/
+	VBACKUP$K_MSG_PHYSNOTPHYS,		/* ... the saveset is not a /PHYSICAL one	*/
+	VBACKUP$K_MSG_PHYSSMALL,		/* ... the output is smaller than the device	*/
+	VBACKUP$K_MSG_PHYSLARGER,		/* ... the output is larger: the rest is kept	*/
+	VBACKUP$K_MSG_PHYSREPLACE,		/* ... a device is overwritten with /REPLACE only */
+	VBACKUP$K_MSG_PHYSABORT,		/* ... the answer was not YES			*/
+	VBACKUP$K_MSG_PHYSUUID,			/* ... the copy has the UUIDs of the original	*/
+	VBACKUP$K_MSG_PHYSSIZE,			/* ... the device changed its size meanwhile	*/
+	VBACKUP$K_MSG_PHYSSUMM,			/* ... the totals				*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -196,6 +207,17 @@ enum	{
 #define	VBACKUP$_NOINODE	$VBKSTS(VBACKUP$K_MSG_NOINODE,		STS$K_WARN)
 #define	VBACKUP$_FILLOST	$VBKSTS(VBACKUP$K_MSG_FILLOST,		STS$K_ERROR)
 #define	VBACKUP$_UNNAMED	$VBKSTS(VBACKUP$K_MSG_UNNAMED,		STS$K_WARN)
+#define	VBACKUP$_PHYSMOUNTED	$VBKSTS(VBACKUP$K_MSG_PHYSMOUNTED,	STS$K_ERROR)
+#define	VBACKUP$_PHYSHELD	$VBKSTS(VBACKUP$K_MSG_PHYSHELD,		STS$K_ERROR)
+#define	VBACKUP$_PHYSNOTDEV	$VBKSTS(VBACKUP$K_MSG_PHYSNOTDEV,	STS$K_ERROR)
+#define	VBACKUP$_PHYSNOTPHYS	$VBKSTS(VBACKUP$K_MSG_PHYSNOTPHYS,	STS$K_ERROR)
+#define	VBACKUP$_PHYSSMALL	$VBKSTS(VBACKUP$K_MSG_PHYSSMALL,	STS$K_ERROR)
+#define	VBACKUP$_PHYSLARGER	$VBKSTS(VBACKUP$K_MSG_PHYSLARGER,	STS$K_INFO)
+#define	VBACKUP$_PHYSREPLACE	$VBKSTS(VBACKUP$K_MSG_PHYSREPLACE,	STS$K_ERROR)
+#define	VBACKUP$_PHYSABORT	$VBKSTS(VBACKUP$K_MSG_PHYSABORT,	STS$K_ERROR)
+#define	VBACKUP$_PHYSUUID	$VBKSTS(VBACKUP$K_MSG_PHYSUUID,		STS$K_INFO)
+#define	VBACKUP$_PHYSSIZE	$VBKSTS(VBACKUP$K_MSG_PHYSSIZE,		STS$K_ERROR)
+#define	VBACKUP$_PHYSSUMM	$VBKSTS(VBACKUP$K_MSG_PHYSSUMM,		STS$K_INFO)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -301,6 +323,10 @@ typedef struct vbk_opts_t
 	int		incremental;		/* /INCREMENTAL (restore)			*/
 	int		nopipe;			/* VBACKUP_PIPELINE=0: no writer thread		*/
 	int		compress;		/* /DATA_FORMAT=COMPRESSED			*/
+	int		physical;		/* /PHYSICAL: a device, block by block		*/
+	uint64_t	physsize;		/* ... its size, its sector			*/
+	uint32_t	physsector;
+	int		physfd;			/* ... open for the save			*/
 	struct vbk_pre_t *pre;			/* The read-ahead of files, NULL - none		*/
 	char		jnlspec [VBACKUP$K_SZ_PATH];	/* /JOURNAL=file, "" - the default	*/
 	struct vbk_jnl_t *jnl;			/* The journal, when one is open		*/
@@ -467,6 +493,13 @@ int	vbk$extract	(VBK$OPTS *a_opts);
 int	vbk$list	(VBK$OPTS *a_opts);
 int	vbk$compare	(VBK$OPTS *a_opts, const char *a_saveset);
 int	vbk$copy	(VBK$OPTS *a_opts);
+
+/*
+**  VBKPHY.C - /PHYSICAL: a block device (or an image file), block by block
+*/
+int	vbk$phy_open	(VBK$OPTS *a_opts, const char *a_spec);
+int	vbk$phy_check	(const char *a_spec, const struct stat *a_st, int a_write);
+int	vbk$phy_restore	(VBK$OPTS *a_opts);
 
 /*
 **  VBKRST.C - the creation of files, for the restore and for the copy

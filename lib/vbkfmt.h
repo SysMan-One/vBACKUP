@@ -36,7 +36,8 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-04		 4-OCT-2026	RRL
-**		DATAZ, the compressed DATA record; the SUMMARY tag COMPRESS.
+**		DATAZ, the compressed DATA record; the SUMMARY tag COMPRESS;
+**		PHYSICAL, DEVSIZE, SECTORSIZE.
 **		VBK$K_SZ_SPEC and VBK$VOLSPEC, from VBKWRT.H.
 **
 **	X01-02		 3-OCT-2026	RRL
@@ -149,6 +150,9 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_KIND,
 	VBK$K_TAG_FILTER,
 	VBK$K_TAG_COMPRESS,			/* SUMMARY: the codec of the DATAZ records	*/
+	VBK$K_TAG_PHYSICAL,			/* SUMMARY, FILE, CATALOG: a device, /PHYSICAL	*/
+	VBK$K_TAG_DEVSIZE,			/* SUMMARY: its size in bytes			*/
+	VBK$K_TAG_SECTORSIZE,			/* SUMMARY: its logical sector			*/
 
 	VBK$K_TAG_NFILES = 96,
 	VBK$K_TAG_NBYTES,

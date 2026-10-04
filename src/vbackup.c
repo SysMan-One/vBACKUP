@@ -43,7 +43,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		Stage 4: /DATA_FORMAT=COMPRESSED - the data of the files in DATAZ
-**		records, LZ4 block format.
+**		records, LZ4 block format.  /PHYSICAL: a device block by block.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		Stage 3: the saveset is written by a thread of its own; hints
@@ -109,6 +109,7 @@ enum	{
 	VBACKUP$K_QUAL_INCREMENTAL,
 	VBACKUP$K_QUAL_HELP,
 	VBACKUP$K_QUAL_DATA_FORMAT,
+	VBACKUP$K_QUAL_PHYSICAL,
 
 	VBACKUP$K_QUAL_MAX
 	};
@@ -167,6 +168,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("INCREMENTAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("DATA_FORMAT")},	.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_dfmkwd },
+	{ .name = {$ASCINI("PHYSICAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
 
@@ -198,6 +200,7 @@ static	const char	s_usage [] = {
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
 	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
 	"  Restore:  /REPLACE /OWNER=ORIGINAL|DEFAULT|user /INCREMENTAL\n"
+	"  Device:   /dev/sdb1 disk.bck /PHYSICAL      disk.bck /dev/sdc1 /PHYSICAL /REPLACE\n"
 	"  Common:   /SELECT=(pat,...) /EXCLUDE=(pat,...) /[NO]XATTRS /LOG /CONFIRM\n"
 	"\n"
 	"Wildcards are expanded by the utility itself - quote them: '/home/.../*.c'\n"
@@ -605,6 +608,19 @@ ASC		l_val;
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_FULL, NULL) )
 		a_opts->lstfmt	= VBACKUP$K_LST_FULL;
 
+	/*
+	**  /PHYSICAL: a device block by block - a tree, a time, a journal mean
+	**  nothing for it, and those qualifiers are refused rather than ignored
+	*/
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_PHYSICAL, NULL) )
+		{
+		a_opts->physical = 1;
+
+		if ( a_opts->timefilter || a_opts->record || a_opts->incremental || a_opts->nselect || a_opts->nexclude || a_opts->hasowner )
+			return	$VBKMSG(VBACKUP$_CONFQUAL, "PHYSICAL", a_opts->timefilter ? "SINCE, /BEFORE" : a_opts->record ? "RECORD"
+				: a_opts->incremental ? "INCREMENTAL" : a_opts->hasowner ? "BY_OWNER" : "SELECT, /EXCLUDE");
+		}
+
 	/* /DATA_FORMAT=COMPRESSED: the data in DATAZ records, LZ4 (format.md, 6.7) */
 	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_DATA_FORMAT, l_str, sizeof(l_str)) )
 		{
@@ -812,6 +828,12 @@ size_t		l_cmdlen = 0;
 	switch ( l_opts.op )
 		{
 		case	VBACKUP$K_OP_SAVE:
+			if ( l_opts.physical && (l_opts.ninput != 1) )
+				{
+				$VBKMSG(VBACKUP$_CONFQUAL, "PHYSICAL", "several inputs: one device a saveset");
+				break;
+				}
+
 			/* The journal: written under /RECORD, read under /SINCE=BACKUP */
 			if ( l_opts.record || l_opts.sincebackup )
 				{
@@ -840,7 +862,9 @@ size_t		l_cmdlen = 0;
 
 		case	VBACKUP$K_OP_RESTORE:
 			if ( !l_opts.output [0] )
-				$VBKMSG(VBACKUP$_NOPARAM, "output directory");
+				$VBKMSG(VBACKUP$_NOPARAM, l_opts.physical ? "output device" : "output directory");
+			else if ( l_opts.physical )
+				l_status = (l_opts.ninput == 1) ? vbk$phy_restore(&l_opts) : $VBKMSG(VBACKUP$_CONFQUAL, "PHYSICAL", "several savesets");
 			else	l_status = vbk$restore(&l_opts);
 			break;
 

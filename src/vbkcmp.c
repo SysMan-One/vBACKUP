@@ -29,7 +29,8 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-04		 4-OCT-2026	RRL
-**		DATAZ records are compared as DATA ones.
+**		DATAZ records are compared as DATA ones; a /PHYSICAL file
+**		with its device.
 **
 **	X01-01		 3-OCT-2026	RRL
 **		Initial version.
@@ -44,6 +45,8 @@
 #include	<fcntl.h>
 #include	<unistd.h>
 #include	<sys/stat.h>
+#include	<sys/ioctl.h>
+#include	<linux/fs.h>
 
 #include	"vbkdef.h"
 
@@ -104,6 +107,26 @@ static	void	s_vbk$done	(
 
 
 /*
+**  A FILE record of /PHYSICAL: the device, not a file named so
+*/
+static	int	s_vbk$isphys	(
+	const	uint8_t *	a_body,
+		uint32_t	a_len
+			)
+{
+uint32_t	l_pos = 0, l_vlen;
+uint16_t	l_tag;
+const uint8_t *	l_val;
+
+	while ( 1 & vbk$tlv_next(a_body, a_len, &l_pos, &l_tag, &l_vlen, &l_val) )
+		if ( l_tag == VBK$K_TAG_PHYSICAL )
+			return	1;
+
+	return	0;
+}
+
+
+/*
 **  A FILE record: find the file on the disk and compare what can be told
 **  at once - the type, the target of a link
 */
@@ -150,7 +173,8 @@ ssize_t		l_n;
 		{
 		case	VBK$K_FT_REG:
 		case	VBK$K_FT_HARDLINK:
-			if ( !S_ISREG(l_st.st_mode) )
+			/* /PHYSICAL: the "file" is the device itself */
+			if ( !S_ISREG(l_st.st_mode) && !(S_ISBLK(l_st.st_mode) && s_vbk$isphys(a_body, a_len)) )
 				s_vbk$differs(a_cmp, "not a regular file on the disk");
 			else if ( (l_attr.ftype == VBK$K_FT_REG) && (0 > (a_cmp->fd = open(a_cmp->path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC))) )
 				$VBKMSG(VBACKUP$_OPENIN, a_cmp->path, errno, strerror(errno)), a_cmp->differs = 1, a_cmp->ndiff++;
@@ -264,8 +288,17 @@ struct stat	l_st;
 		if ( l_tag == VBK$K_TAG_SIZE )
 			l_size	= vbk$tlv_getu(l_vlen, l_val);
 
-	if ( (a_cmp->fd >= 0) && !fstat(a_cmp->fd, &l_st) && ((uint64_t) l_st.st_size != l_size) )
-		s_vbk$differs(a_cmp, "the size differs");
+	if ( (a_cmp->fd >= 0) && !fstat(a_cmp->fd, &l_st) )
+		{
+		uint64_t	l_now = (uint64_t) l_st.st_size;
+
+		/* A device is as large as the kernel says, not as its inode */
+		if ( S_ISBLK(l_st.st_mode) && ioctl(a_cmp->fd, BLKGETSIZE64, &l_now) )
+			l_now	= l_size;
+
+		if ( l_now != l_size )
+			s_vbk$differs(a_cmp, "the size differs");
+		}
 
 	s_vbk$done(a_cmp);
 }

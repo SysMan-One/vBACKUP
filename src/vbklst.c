@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-02"
-#define	__REV__		"1.2.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -23,6 +23,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-04		 4-OCT-2026	RRL
+**		The heading says PHYSICAL, the device size and sector, and
+**		whether the data is compressed.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		The PRESENT entries of an incremental catalog are counted, not
@@ -214,6 +218,10 @@ VBK$TIME	l_t;
 			case	VBK$K_TAG_COMMENT:	fprintf(a_lst->out, "Comment:           %.*s\n", (int) l_vlen, l_val);	break;
 			case	VBK$K_TAG_FILTER:	fprintf(a_lst->out, "Filter:            %.*s\n", (int) l_vlen, l_val);	break;
 			case	VBK$K_TAG_KIND:		fprintf(a_lst->out, "Kind:              %s\n", vbk$tlv_getu(l_vlen, l_val) ? "incremental" : "full"); break;
+			case	VBK$K_TAG_PHYSICAL:	fprintf(a_lst->out, "Physical:          a device, block by block (/PHYSICAL)\n");	break;
+			case	VBK$K_TAG_DEVSIZE:	fprintf(a_lst->out, "Device size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
+			case	VBK$K_TAG_SECTORSIZE:	fprintf(a_lst->out, "Sector size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
+			case	VBK$K_TAG_COMPRESS:	fprintf(a_lst->out, "Data format:       compressed (LZ4)\n");				break;
 			case	VBK$K_TAG_BLOCKSIZE:	fprintf(a_lst->out, "Block size:        %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));	break;
 			case	VBK$K_TAG_GROUPSIZE:	fprintf(a_lst->out, "Group size:        %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));	break;
 

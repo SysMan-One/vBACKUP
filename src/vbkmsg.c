@@ -21,7 +21,8 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-03		 3-OCT-2026	RRL
-**		FILLOST and UNNAMED: the files a damaged restore lost.
+**		FILLOST and UNNAMED: the files a damaged restore lost.  The
+**		messages of /PHYSICAL.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		The messages of stage 2: the journal, /INCREMENTAL, the copy.
@@ -108,7 +109,18 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_INCRSUMM,	"INCRSUMM, !UQ unchanged file!%S listed as present, not saved"),
 	$VBKREC(VBACKUP$_NOINODE,	"NOINODE, !AZ: !UL file!%S not recorded - the catalog has no inode data (written before X01-02)"),
 	$VBKREC(VBACKUP$_FILLOST,	"FILLOST, !AZ was not restored: its records were lost in bad blocks"),
-	$VBKREC(VBACKUP$_UNNAMED,	"UNNAMED, !AZ: blocks were lost and !AZ - files missing from the restore cannot all be named")
+	$VBKREC(VBACKUP$_UNNAMED,	"UNNAMED, !AZ: blocks were lost and !AZ - files missing from the restore cannot all be named"),
+	$VBKREC(VBACKUP$_PHYSMOUNTED,	"PHYSMOUNTED, !AZ is mounted!AZ on !AZ: !AZ"),
+	$VBKREC(VBACKUP$_PHYSHELD,	"PHYSHELD, !AZ is in use (!AZ): free it first, or save what uses it"),
+	$VBKREC(VBACKUP$_PHYSNOTDEV,	"PHYSNOTDEV, !AZ is neither a block device nor a file"),
+	$VBKREC(VBACKUP$_PHYSNOTPHYS,	"PHYSNOTPHYS, !AZ was not made with /PHYSICAL: restore it without /PHYSICAL"),
+	$VBKREC(VBACKUP$_PHYSSMALL,	"PHYSSMALL, !AZ holds !UQ bytes, the device saved held !UQ: nothing written"),
+	$VBKREC(VBACKUP$_PHYSLARGER,	"PHYSLARGER, !AZ holds !UQ bytes, the device saved held !UQ: the rest stays as it is, the file system keeps its old size"),
+	$VBKREC(VBACKUP$_PHYSREPLACE,	"PHYSREPLACE, !AZ is a device: everything on it is overwritten - give /REPLACE to do so"),
+	$VBKREC(VBACKUP$_PHYSABORT,	"PHYSABORT, !AZ not overwritten: the answer was not YES"),
+	$VBKREC(VBACKUP$_PHYSUUID,	"PHYSUUID, !AZ now carries the labels and UUIDs of the device saved: never mount it beside the original"),
+	$VBKREC(VBACKUP$_PHYSSIZE,	"PHYSSIZE, !AZ changed its size while it was read (!UQ, then !UQ bytes): the copy is not to be trusted"),
+	$VBKREC(VBACKUP$_PHYSSUMM,	"PHYSSUMM, !AZ: !UQ bytes, !UQ of them data, the rest zeros")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

@@ -29,6 +29,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : /PHYSICAL: an image file, and loop devices as root
+#					(the guards, the gaps zeroed, nothing beyond).
+#
 #		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
 #
 #		 4-OCT-2026	RRL	X-04 : /DATA_FORMAT=COMPRESSED: smaller, the same tree,
@@ -438,6 +441,59 @@ check '[ "$($VB z1.bck /LIST /FORMAT=LS)" = "$($VB zp.bck /LIST /FORMAT=LS)" ]' 
 check '$VB z1.bck /EXTRACT=ztree/t7.txt | cmp -s - ztree/t7.txt && $VB z1.bck . /COMPARE > /dev/null 2>&1' "compressed: /EXTRACT or /COMPARE"
 $VB ztree zbad.bck /DATA_FORMAT=SQUEEZED > zbad.log 2>&1
 check '[ $? = 2 ] && [ ! -e zbad.bck ]' "/DATA_FORMAT=SQUEEZED accepted: $(cat zbad.log)"
+
+#
+#	11a. /PHYSICAL: an image file (anybody), loop devices (root, losetup, mkfs.ext4)
+#
+truncate -s 32M phys.img
+head -c 3000000 /dev/urandom | dd of=phys.img bs=1M seek=7 conv=notrunc 2>/dev/null
+printf 'a header at the start' | dd of=phys.img conv=notrunc 2>/dev/null
+$VB phys.img phys.bck /PHYSICAL /VERIFY > phys.log 2>&1
+check '[ $? = 0 ] && grep -q PHYSSUMM phys.log' "/PHYSICAL save of an image: $(cat phys.log)"
+check '[ $(stat -c %s phys.bck) -lt 8000000 ]' "/PHYSICAL: the zeros took room ($(stat -c %s phys.bck) bytes)"
+check '$VB phys.bck /LIST /FULL | grep -q "^Physical:"' "/PHYSICAL: the listing does not say so"
+$VB phys.bck phys.out /PHYSICAL > physr.log 2>&1
+check '[ $? = 0 ] && cmp -s phys.img phys.out' "/PHYSICAL restore into an image file: $(cat physr.log)"
+$VB phys.bck physdir > /dev/null 2>&1
+check 'cmp -s phys.img physdir/phys.img && [ $(du -k physdir/phys.img | cut -f1) -lt 8000 ]' "a /PHYSICAL saveset restored plainly is not the sparse image"
+$VB phys.bck phys.out /PHYSICAL > physx.log 2>&1
+check '[ $? = 2 ] && grep -q "OPENOUT.*errno=17" physx.log' "/PHYSICAL restore over a file without /REPLACE: $(cat physx.log)"
+$VB x.bck phys2.out /PHYSICAL > physn.log 2>&1
+check '[ $? = 2 ] && grep -q PHYSNOTPHYS physn.log' "/PHYSICAL restore of a plain saveset: $(cat physn.log)"
+$VB src phys3.bck /PHYSICAL > physd.log 2>&1
+check '[ $? = 2 ] && grep -q PHYSNOTDEV physd.log' "/PHYSICAL of a directory: $(cat physd.log)"
+$VB phys.img phys4.bck /PHYSICAL /SELECT=x > physq.log 2>&1
+check '[ $? = 2 ] && grep -q CONFQUAL physq.log' "/PHYSICAL /SELECT accepted"
+$VB phys.img physz.bck /PHYSICAL /DATA_FORMAT=COMPRESSED > /dev/null 2>&1 && $VB physz.bck physz.out /PHYSICAL > /dev/null 2>&1
+check 'cmp -s phys.img physz.out' "/PHYSICAL compressed: not the same image"
+[ -n "${VBKX:-}" ] && { $VBKX x phys.bck -C physvx > /dev/null 2>&1; check 'cmp -s phys.img physvx/phys.img' "vbkx: a /PHYSICAL saveset is not the image"; }
+
+if [ $ROOT = 1 ] && command -v losetup > /dev/null 2>&1 && PATH=$PATH:/sbin:/usr/sbin command -v mkfs.ext4 > /dev/null 2>&1; then
+	L1= L2= L3=
+	freeloops () { umount physmnt 2>/dev/null; for L in $L1 $L2 $L3; do losetup -d $L 2>/dev/null; done; }
+	truncate -s 48M ploop.img && PATH=$PATH:/sbin:/usr/sbin mkfs.ext4 -q -F ploop.img
+	head -c 64M /dev/urandom > pbig.img && cp pbig.img pbig.orig
+	truncate -s 16M psmall.img
+	L1=$(losetup -f --show ploop.img) && L2=$(losetup -f --show pbig.img) && L3=$(losetup -f --show psmall.img)
+	if [ -n "$L3" ]; then
+		mkdir -p physmnt
+		mount $L1 physmnt && { $VB $L1 pl0.bck /PHYSICAL > pm.log 2>&1; check '[ $? = 2 ] && grep -q PHYSMOUNTED pm.log' "a device mounted read-write was saved: $(cat pm.log)"; umount physmnt; }
+		$VB $L1 pl.bck /PHYSICAL /VERIFY > pl.log 2>&1
+		check '[ $? = 0 ]' "/PHYSICAL save of a loop device: $(cat pl.log)"
+		$VB pl.bck pl.ref /PHYSICAL > /dev/null 2>&1
+		$VB pl.bck $L2 /PHYSICAL > pr.log 2>&1
+		check '[ $? = 2 ] && grep -q PHYSREPLACE pr.log' "a device overwritten without /REPLACE: $(cat pr.log)"
+		$VB pl.bck $L3 /PHYSICAL /REPLACE > ps.log 2>&1
+		check '[ $? = 2 ] && grep -q PHYSSMALL ps.log' "a smaller device written: $(cat ps.log)"
+		$VB pl.bck $L2 /PHYSICAL /REPLACE < /dev/null > pw.log 2>&1
+		check '[ $? = 0 ] && grep -q PHYSLARGER pw.log && cmp -s -n 50331648 pl.ref $L2' "/PHYSICAL restore onto a device over garbage: the gaps are not zeros, $(cat pw.log)"
+		check 'cmp -s -i 50331648:50331648 -n 16777216 pbig.orig $L2' "/PHYSICAL restore wrote beyond the size of the device saved"
+		mount -o ro $L2 physmnt && { $VB pl.bck $L2 /PHYSICAL /REPLACE > pt.log 2>&1; check '[ $? = 2 ] && grep -q PHYSMOUNTED pt.log' "a mounted device was overwritten"; umount physmnt; }
+	else
+		echo "%VBACKUP-W-SMOKE, no loop devices to be had: /PHYSICAL on devices not checked"
+	fi
+	freeloops
+fi
 
 #
 #	12. VBKX, the stand-alone extractor

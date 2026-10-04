@@ -135,6 +135,43 @@ in the other volumes can still be restored.
 
 Keeps the text in the saveset. /LIST shows it.
 
+## /PHYSICAL -- a whole device, block by block
+
+```
+vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL          save the device
+vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE restore onto a device
+vbackup /mnt/usb/sdb1.bck /tmp/sdb1.img /PHYSICAL      restore into an image file
+vbackup /mnt/usb/sdb1.bck /tmp/dir                     the same: dir/sdb1 is the image
+```
+
+Copies every block of a device - a partition or a whole disk - or of an
+image file: any file system, encrypted volumes, boot areas. Blocks of
+zeros take no room in the saveset. /DATA_FORMAT=COMPRESSED works with
+it. Run it as root.
+
+What can go wrong, and what VBACKUP does about it:
+
+- A device that is written to while it is copied gives a broken copy,
+  which looks fine until you need it. VBACKUP refuses a device that is
+  mounted read-write, or whose partition is. Unmount it, mount it
+  read-only, or copy a snapshot (LVM, btrfs).
+- A device in use - a physical volume of LVM, a RAID member, a dm-crypt
+  container, swap - is refused too.
+- A restore overwrites the whole output device. VBACKUP does it only
+  with /REPLACE, never onto a mounted or busy device, never onto one
+  smaller than the device saved. At a terminal you must type YES. A
+  script gives /REPLACE and is not asked.
+- Onto a larger device the copy takes the first part; the file system
+  keeps its old size (grow it with resize2fs, xfs_growfs, ...).
+- The copy has the same labels and UUIDs as the original. Never mount
+  both at the same time: xfs refuses it, btrfs can damage both.
+- A lost block of the saveset is a lost part of the device: the restore
+  says FILDAMAGED. Keep /GROUP_SIZE small and two copies of what counts.
+
+/PHYSICAL takes one input and refuses /SELECT, /EXCLUDE, /SINCE,
+/BEFORE, /BY_OWNER, /RECORD and /INCREMENTAL: a device is not a tree of
+files.
+
 ## /DATA_FORMAT -- compress the data
 
 ```
@@ -651,6 +688,17 @@ that were in the cache stay there.
 %VBACKUP-E-FILDAMAGED   a file is incomplete: data was lost
 %VBACKUP-E-FILLOST      a file was not restored: its records were lost
 %VBACKUP-W-UNNAMED      files were lost and cannot all be named
+%VBACKUP-E-PHYSMOUNTED  /PHYSICAL: the device is mounted
+%VBACKUP-E-PHYSHELD     /PHYSICAL: the device is in use (LVM, RAID, swap)
+%VBACKUP-E-PHYSNOTDEV   /PHYSICAL: neither a block device nor a file
+%VBACKUP-E-PHYSNOTPHYS  the saveset was not made with /PHYSICAL
+%VBACKUP-E-PHYSSMALL    the output device is smaller than the one saved
+%VBACKUP-I-PHYSLARGER   the output device is larger: the rest stays
+%VBACKUP-E-PHYSREPLACE  a device is overwritten with /REPLACE only
+%VBACKUP-E-PHYSABORT    the answer was not YES: nothing written
+%VBACKUP-I-PHYSUUID     the copy has the UUIDs of the original
+%VBACKUP-E-PHYSSIZE     the device changed its size while it was read
+%VBACKUP-I-PHYSSUMM     /PHYSICAL: the totals
 %VBACKUP-E-CRCERR       the data restored differ from the data saved
 %VBACKUP-E-COMPARERR    a difference between the saveset and the disk
 %VBACKUP-W-ATTRERR      an attribute could not be restored

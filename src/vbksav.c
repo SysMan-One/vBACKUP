@@ -35,7 +35,8 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		/DATA_FORMAT=COMPRESSED: a DATAZ record where LZ4 pays, DATA
-**		elsewhere; the SUMMARY says COMPRESS.
+**		elsewhere; the SUMMARY says COMPRESS.  /PHYSICAL: a device
+**		saved as one file, the runs of zeros left out (S_VBK$PHYSICAL).
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files are read SEQUENTIAL; a cold one is dropped from the
@@ -96,6 +97,7 @@ typedef struct vbk_save_t
 	uint8_t *	iobuf;			/* VBK$K_DATAHDR + VBACKUP$K_IOBUF		*/
 	uint8_t *	zbuf;			/* /DATA_FORMAT=COMPRESSED: a DATAZ record body	*/
 	uint64_t	nzin, nzout;		/* ... octets in, octets out			*/
+	uint64_t	physdata;		/* Octets of data written: /PHYSICAL, but zeros	*/
 	VBK$HLINK *	hlink [VBK$K_HLHASH];
 	uint32_t	fileno;
 	uint64_t	nfiles, nbytes, nentries;
@@ -213,6 +215,10 @@ int		l_ok = 1;
 	l_ok &= vbk$tlv_u16(l_c, VBK$K_TAG_BASEIDX, a_attr->baseidx);
 	l_ok &= vbk$tlv_u8(l_c, VBK$K_TAG_STATUS, a_status);
 
+	/* A device, not a file called so */
+	if ( a_sav->opts->physical )
+		l_ok &= vbk$tlv_u8(l_c, VBK$K_TAG_PHYSICAL, 1);
+
 	/* A PRESENT entry has no records in the stream: nothing to point at, nothing summed */
 	if ( a_status != VBK$K_FS_PRESENT )
 		{
@@ -233,6 +239,74 @@ int		l_ok = 1;
 	a_sav->nentries++;
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  One DATA or DATAZ record: compressed when it pays - by more than the
+**  4 octets the DATAZ header costs over DATA - else stored as it is.  A
+**  saveset so mixes both kinds, and a reader takes either.
+*/
+static	int	s_vbk$put	(
+		VBK$SAVE *	a_sav,
+		uint32_t	a_fileno,
+		uint64_t	a_off,
+	const	uint8_t *	a_data,
+		uint32_t	a_n
+			)
+{
+uint8_t		l_hdr [VBK$K_DATAHDR];
+uint32_t	l_zlen = 0;
+
+	a_sav->nzin += a_n;
+
+	if ( a_sav->zbuf && (a_n > 4) && (1 & vbk$lz4_compress(a_data, a_n, a_sav->zbuf + VBK$K_DATAZHDR, a_n - 4, &l_zlen))
+		&& ((l_zlen + 4) < a_n) )
+		{
+		vbk$put32(a_sav->zbuf, a_fileno);
+		vbk$put32(a_sav->zbuf + 4, VBK$K_CODEC_LZ4);
+		vbk$put64(a_sav->zbuf + 8, a_off);
+		vbk$put32(a_sav->zbuf + 16, a_n);
+
+		a_sav->nzout += VBK$K_DATAZHDR + l_zlen;
+
+		return	vbk$wrt_record(&a_sav->wctx, VBK$K_RT_DATAZ, a_sav->zbuf, VBK$K_DATAZHDR + l_zlen, NULL);
+		}
+
+	vbk$put32(l_hdr, a_fileno);
+	vbk$put32(l_hdr + 4, 0);
+	vbk$put64(l_hdr + 8, a_off);
+
+	a_sav->nzout += VBK$K_DATAHDR + (uint64_t) a_n;
+
+	if ( !(1 & vbk$wrt_rechdr(&a_sav->wctx, VBK$K_RT_DATA, VBK$K_DATAHDR + a_n, NULL)) || !(1 & vbk$wrt_bytes(&a_sav->wctx, l_hdr, sizeof(l_hdr))) )
+		return	STS$K_ERROR;
+
+	return	vbk$wrt_bytes(&a_sav->wctx, a_data, a_n);
+}
+
+
+/*
+**  /PHYSICAL looks for zeros a piece at a time: 64 KB, the last one shorter
+*/
+#define	VBK$K_PHYPIECE	65536
+
+static	size_t	s_vbk$piece	(
+		size_t		a_at,
+		size_t		a_len
+			)
+{
+	return	((a_len - a_at) < VBK$K_PHYPIECE) ? (a_len - a_at) : VBK$K_PHYPIECE;
+}
+
+static	int	s_vbk$zeros	(
+	const	uint8_t *	a_p,
+		size_t		a_len
+			)
+{
+static	const uint8_t	l_zero [VBK$K_PHYPIECE];
+
+	return	!memcmp(a_p, l_zero, a_len);
 }
 
 
@@ -270,12 +344,11 @@ static	int	s_vbk$data	(
 		uint64_t *	a_saved
 			)
 {
-uint8_t *	l_hdr = a_sav->iobuf, *l_data = a_sav->iobuf + VBK$K_DATAHDR;
+uint8_t *	l_data = a_sav->iobuf + VBK$K_DATAHDR;
 off_t		l_beg, l_end, l_off;
 ssize_t		l_n;
 uint32_t	l_crc = 0;
 size_t		l_want;
-uint32_t	l_zlen = 0;
 int		l_cold;
 
 	*a_saved	= a_size;
@@ -333,37 +406,32 @@ int		l_cold;
 				}
 
 			/*
-			**  Compressed when it pays - by more than the 4 octets the
-			**  DATAZ header costs over DATA; else stored as it is.  A
-			**  saveset so mixes both kinds, and a reader takes either.
+			**  /PHYSICAL: the runs of zeros - 64 KB at a time - are left
+			**  out, holes as in a sparse file; the checksum covers what
+			**  is written, as it does for a sparse file
 			*/
-			if ( a_sav->zbuf && (1 & vbk$lz4_compress(l_data, (uint32_t) l_n, a_sav->zbuf + VBK$K_DATAZHDR,
-						(uint32_t) l_n - 4, &l_zlen)) && ((l_zlen + 4) < (uint32_t) l_n) )
+			for ( size_t l_s = 0, l_e; l_s < (size_t) l_n; l_s = l_e )
 				{
-				vbk$put32(a_sav->zbuf, a_fileno);
-				vbk$put32(a_sav->zbuf + 4, VBK$K_CODEC_LZ4);
-				vbk$put64(a_sav->zbuf + 8, (uint64_t) l_off);
-				vbk$put32(a_sav->zbuf + 16, (uint32_t) l_n);
+				l_e	= (size_t) l_n;
 
-				if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_DATAZ, a_sav->zbuf, VBK$K_DATAZHDR + l_zlen, NULL)) )
+				if ( a_sav->opts->physical )
+					{
+					while ( (l_s < (size_t) l_n) && s_vbk$zeros(l_data + l_s, s_vbk$piece(l_s, (size_t) l_n)) )
+						l_s += s_vbk$piece(l_s, (size_t) l_n);
+
+					for ( l_e = l_s; (l_e < (size_t) l_n) && !s_vbk$zeros(l_data + l_e, s_vbk$piece(l_e, (size_t) l_n)); )
+						l_e += s_vbk$piece(l_e, (size_t) l_n);
+
+					if ( l_s >= l_e )
+						break;
+					}
+
+				if ( !(1 & s_vbk$put(a_sav, a_fileno, (uint64_t) l_off + l_s, l_data + l_s, (uint32_t) (l_e - l_s))) )
 					return	s_vbk$wrterr(a_sav);
 
-				a_sav->nzout += VBK$K_DATAZHDR + l_zlen;
+				l_crc	= $VBK_CRC(l_crc, l_data + l_s, l_e - l_s);
+				a_sav->physdata += (uint64_t) (l_e - l_s);
 				}
-			else	{
-				vbk$put32(l_hdr, a_fileno);
-				vbk$put32(l_hdr + 4, 0);
-				vbk$put64(l_hdr + 8, (uint64_t) l_off);
-
-				if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_DATA, l_hdr, VBK$K_DATAHDR + (uint32_t) l_n, NULL)) )
-					return	s_vbk$wrterr(a_sav);
-
-				a_sav->nzout += VBK$K_DATAHDR + (uint64_t) l_n;
-				}
-
-			a_sav->nzin += (uint64_t) l_n;
-
-			l_crc	= $VBK_CRC(l_crc, l_data, l_n);
 
 			if ( l_cold )
 				vbk$os_drop(a_fd, (uint64_t) l_off, (uint64_t) l_n);
@@ -461,6 +529,115 @@ int		l_fd = -1, l_flags = 0, l_status;
 		}
 
 	*a_fd	= l_fd;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	/PHYSICAL: the device opened by VBK$PHY_OPEN saved as one regular
+**	file (format.md, 6.8) - its size the size of the device, its data
+**	at their offsets, the runs of zeros left out.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_sav		The save; OPTS->PHYSFD is the device
+**	a_spec		Its specification
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS, or STS$K_FATAL - the saveset could not be written.
+**--
+*/
+static	int	s_vbk$physical	(
+		VBK$SAVE *	a_sav,
+	const	char *		a_spec
+			)
+{
+VBK$OPTS *	l_o = a_sav->opts;
+VBK$ATTR	l_attr;
+VBK$LOC		l_loc;
+struct stat	l_st;
+const char *	l_name = strrchr(a_spec, '/') ? (strrchr(a_spec, '/') + 1) : a_spec;
+uint64_t	l_saved = 0, l_now = l_o->physsize;
+uint32_t	l_crc = 0;
+uint8_t		l_fstat = VBK$K_FS_OK;
+int		l_fd = l_o->physfd, l_status;
+
+	if ( !(1 & vbk$atr_get(a_spec, l_fd, 0, &l_attr, &a_sav->xbuf)) )
+		memset(&l_attr, 0, sizeof(l_attr));
+
+	/* The node of the device gives the owner, the mode, the times; the rest is that of a file */
+	l_attr.ftype	= VBK$K_FT_REG;
+	l_attr.size	= l_o->physsize;
+	l_attr.rdev	= 0;
+	l_attr.nlink	= 1;
+	l_attr.hasflags	= 0;
+	l_attr.fsflags	= 0;
+	l_attr.link	= NULL;
+	l_attr.linklen	= 0;
+	l_attr.xattr	= NULL;
+	l_attr.xattrlen	= 0;
+	l_attr.fileno	= ++a_sav->fileno;
+	l_attr.path	= l_name;
+	l_attr.pathlen	= (uint32_t) strlen(l_name);
+	l_attr.baseidx	= 0;
+
+	vbk$tlv_reset(&a_sav->rec);
+
+	if ( !(1 & vbk$atr_tlv(&l_attr, &a_sav->rec)) || !(1 & vbk$tlv_u8(&a_sav->rec, VBK$K_TAG_PHYSICAL, 1)) )
+		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
+
+	if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_FILE, a_sav->rec.buf, a_sav->rec.len, &l_loc)) )
+		return	s_vbk$wrterr(a_sav);
+
+	l_status = s_vbk$data(a_sav, l_fd, l_attr.fileno, a_spec, l_o->physsize, &l_crc, &l_saved);
+
+	if ( l_status == STS$K_FATAL )
+		return	STS$K_FATAL;
+
+	if ( l_status == STS$K_ERROR )
+		l_fstat	= VBK$K_FS_READERR;
+
+	/* Removable media: the size must be what it was - else the copy is a mix */
+	if ( !fstat(l_fd, &l_st) )
+		{
+		if ( !S_ISBLK(l_st.st_mode) )
+			l_now	= (uint64_t) l_st.st_size;
+		else if ( ioctl(l_fd, BLKGETSIZE64, &l_now) )
+			l_now	= l_o->physsize;
+
+		if ( l_now != l_o->physsize )
+			{
+			$VBKMSG(VBACKUP$_PHYSSIZE, a_spec, l_o->physsize, l_now);
+			l_fstat	= VBK$K_FS_CHANGED;
+			}
+		}
+
+	close(l_fd);
+	l_o->physfd	= -1;
+
+	vbk$tlv_reset(&a_sav->rec);
+	vbk$tlv_u32(&a_sav->rec, VBK$K_TAG_FILENO, l_attr.fileno);
+	vbk$tlv_u64(&a_sav->rec, VBK$K_TAG_SIZE, l_saved);
+	vbk$tlv_u32(&a_sav->rec, VBK$K_TAG_CRC, l_crc);
+	vbk$tlv_u8(&a_sav->rec, VBK$K_TAG_STATUS, l_fstat);
+
+	if ( !(1 & vbk$wrt_record(&a_sav->wctx, VBK$K_RT_FEND, a_sav->rec.buf, a_sav->rec.len, NULL)) )
+		return	s_vbk$wrterr(a_sav);
+
+	if ( l_fstat != VBK$K_FS_OK )
+		a_sav->nerrors++;
+
+	a_sav->nfiles++;
+	l_attr.size	= l_saved;
+
+	if ( !(1 & s_vbk$catent(a_sav, &l_attr, &l_loc, l_crc, l_fstat)) )
+		return	STS$K_FATAL;
+
+	$VBKMSG(VBACKUP$_PHYSSUMM, a_spec, l_o->physsize, a_sav->physdata);
 
 	return	STS$K_SUCCESS;
 }
@@ -682,6 +859,14 @@ int		l_ok = 1;
 	/* Information only: a reader goes by the record types, not by this */
 	if ( l_o->compress )
 		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_COMPRESS, VBK$K_CODEC_LZ4);
+
+	/* /PHYSICAL: what a restore onto a device must know, and a file cannot say */
+	if ( l_o->physical )
+		{
+		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_PHYSICAL, 1);
+		l_ok &= vbk$tlv_u64(a_tlvb, VBK$K_TAG_DEVSIZE, l_o->physsize);
+		l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_SECTORSIZE, l_o->physsector);
+		}
 	l_ok &= vbk$tlv_u64(a_tlvb, VBK$K_TAG_VOLSIZE, l_o->volsize);
 
 	if ( l_o->comment [0] )
@@ -800,6 +985,10 @@ int		l_status = STS$K_SUCCESS;
 	for ( unsigned i = 0; i < a_opts->ninput; i++ )
 		vbk$base(a_opts->input [i], l_base [i], VBACKUP$K_SZ_PATH);
 
+	/* /PHYSICAL: the device is checked and opened first - its size goes into the SUMMARY too */
+	if ( a_opts->physical && !(1 & vbk$phy_open(a_opts, a_opts->input [0])) )
+		return	STS$K_FATAL;
+
 	if ( !(1 & s_vbk$summary(l_sav, &l_sum, l_base, a_opts->ninput)) )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
 
@@ -814,9 +1003,15 @@ int		l_status = STS$K_SUCCESS;
 	if ( !(1 & vbk$wrt_record(&l_sav->wctx, VBK$K_RT_SUMMARY, l_sum.buf, l_sum.len, NULL)) )
 		s_vbk$wrterr(l_sav);
 
-	vbk$pre_start(a_opts);
+	/* A device is not a tree: no walk, no read-ahead - one file, block by block */
+	if ( a_opts->physical )
+		{
+		if ( !l_sav->failed )
+			s_vbk$physical(l_sav, a_opts->input [0]);
+		}
+	else	vbk$pre_start(a_opts);
 
-	for ( unsigned i = 0; !l_sav->failed && (i < a_opts->ninput); i++ )
+	for ( unsigned i = 0; !a_opts->physical && !l_sav->failed && (i < a_opts->ninput); i++ )
 		{
 		l_status = vbk$walk(a_opts, a_opts->input [i], (uint16_t) i, l_base [i], VBACKUP$K_SZ_PATH, s_vbk$entry, l_sav);
 
