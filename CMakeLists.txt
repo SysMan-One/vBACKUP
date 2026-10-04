@@ -14,6 +14,12 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 4-OCT-2026	RRL	X-04 : VBKLZ4; Windows: with cmake/mingw-w64.cmake (or a
+#					MinGW of Windows) VBKX alone is built - the reading
+#					core and the extractor, no StarLet, no tests; on
+#					Linux, with MinGW-w64 and wine at hand, vbkx.exe is
+#					built too and test/win.sh runs it under wine.
+#
 #		 3-OCT-2026	RRL	X-03 : Stage 3: Threads for the writer thread of VBKCORE;
 #					VBKPRE, the read-ahead of files; VBKX, the
 #					stand-alone extractor; vbkx-go, vbkx-rs, vbkx-pl.
@@ -126,6 +132,25 @@ target_compile_definitions(vbackup_options INTERFACE _GNU_SOURCE)
 
 if ( VBACKUP$M_STRICT )
 	target_compile_options(vbackup_options INTERFACE -Werror)
+endif()
+
+#
+#	Windows (cmake -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake, or the
+#	MinGW of Windows itself): VBKX alone - the reading core and the
+#	extractor, statically.  No StarLet there (lib/vbkos.h has its own
+#	CRC), no writer, no utility, no tests.
+#
+if ( WIN32 )
+	add_executable(vbkx tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c)
+	target_include_directories(vbkx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+	target_link_libraries(vbkx PRIVATE vbackup_options shell32)
+	target_link_options(vbkx PRIVATE -static)
+
+	install(TARGETS vbkx RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+	message(STATUS "VBACKUP: Windows - vbkx.exe alone")
+
+	return()
 endif()
 
 #
@@ -244,6 +269,37 @@ if ( VBACKUP$M_GEEKS )
 	endif()
 
 	message(STATUS "VBACKUP: extractors for the geeks: ${VBACKUP_GEEKS}")
+endif()
+
+#
+#	vbkx.exe from here, when MinGW-w64 is at hand - the same command line
+#	as tools/Makefile.win - and test/win.sh runs it under wine, when there
+#	is a wine
+#
+option(VBACKUP$M_WINVBKX "Build vbkx.exe with MinGW-w64 and test it under wine, when they are found" ON)
+
+set(VBACKUP_WINVBKX "")
+
+if ( VBACKUP$M_WINVBKX )
+	find_program(VBACKUP_MINGW x86_64-w64-mingw32-gcc)
+	find_program(VBACKUP_WINE wine)
+
+	if ( VBACKUP_MINGW )
+		set(L_SRC tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c)
+
+		#	In a directory of its own: as a file next to them, CMake took vbkx.exe for the target vbkx
+		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe
+			COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/win
+			COMMAND ${VBACKUP_MINGW} -O2 -Wall -Wextra -Wno-unused-parameter -Ilib -o ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe
+				${L_SRC} -static -lshell32
+			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+			DEPENDS ${L_SRC} lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h
+			COMMENT "Building vbkx.exe (MinGW-w64)")
+		add_custom_target(vbkx-exe ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe)
+
+		set(VBACKUP_WINVBKX ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe)
+		message(STATUS "VBACKUP: vbkx.exe by ${VBACKUP_MINGW}")
+	endif()
 endif()
 
 target_include_directories(vbackup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

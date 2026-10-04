@@ -37,6 +37,7 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ, the compressed DATA record; the SUMMARY tag COMPRESS.
+**		VBK$K_SZ_SPEC and VBK$VOLSPEC, from VBKWRT.H.
 **
 **	X01-02		 3-OCT-2026	RRL
 **		Stage 2: SUMMARY tags KIND, FILTER; the catalog STATUS PRESENT;
@@ -61,6 +62,7 @@ extern "C" {
 */
 #define	VBK$K_VERSION	1			/* Format version				*/
 #define	VBK$K_HDRSZ	64			/* Block header					*/
+#define	VBK$K_SZ_SPEC	4096			/* Longest volume specification			*/
 #define	VBK$K_MINBSZ	8192			/* Smallest block				*/
 #define	VBK$K_MAXBSZ	1048576			/* Largest block				*/
 #define	VBK$K_DEFBSZ	65536			/* Default block				*/
@@ -286,6 +288,8 @@ void	vbk$tlv_free	(VBK$TLVB *a_tlvb);
 int	vbk$tlv_next	(const uint8_t *a_body, uint32_t a_len, uint32_t *a_pos, uint16_t *a_tag, uint32_t *a_vlen, const uint8_t **a_val);
 uint64_t vbk$tlv_getu	(uint32_t a_vlen, const uint8_t *a_val);
 void	vbk$tlv_gettime	(uint32_t a_vlen, const uint8_t *a_val, VBK$TIME *a_tim);
+
+int	vbk$volspec	(const char *a_spec, uint32_t a_volno, char *a_out, size_t a_outsz);
 
 #ifdef	__cplusplus
 }

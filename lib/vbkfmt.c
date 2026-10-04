@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKFMT"
-#define	__IDENT__	"X01-01"
-#define	__REV__		"1.1.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -19,6 +19,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-04		 4-OCT-2026	RRL
+**		VBK$VOLSPEC, from VBKWRT.C: the names of the volumes are part
+**		of the format (section 2), not of the writer.
+**
 **	X01-01		 3-OCT-2026	RRL
 **		Initial version.
 **
@@ -26,6 +30,7 @@
 */
 
 #include	<stdlib.h>
+#include	<stdio.h>
 #include	<string.h>
 
 #include	"vbkfmt.h"
@@ -411,4 +416,40 @@ void	vbk$tlv_gettime	(
 
 	a_tim->sec	= (int64_t) vbk$get64(a_val);
 	a_tim->nsec	= vbk$get32(a_val + 8);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Build the name of volume <a_volno>: volume 1 is the name as given,
+**	volume k is the name followed by ".kkk".
+**
+**  FORMAL PARAMETERS:
+**
+**	a_spec		Name of volume 1
+**	a_volno		Volume number, from 1
+**	a_out		Receives the name
+**	a_outsz		Size of <a_out>
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- built;
+**	STS$K_ERROR	- it does not fit into <a_out>.
+**--
+*/
+int	vbk$volspec	(
+	const	char *		a_spec,
+		uint32_t	a_volno,
+		char *		a_out,
+		size_t		a_outsz
+			)
+{
+int	l_n;
+
+	if ( a_volno <= 1 )
+		l_n	= snprintf(a_out, a_outsz, "%s", a_spec);
+	else	l_n	= snprintf(a_out, a_outsz, "%s.%03u", a_spec, a_volno);
+
+	return	((l_n < 0) || ((size_t) l_n >= a_outsz)) ? STS$K_ERROR : STS$K_SUCCESS;
 }

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWRT"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -48,6 +48,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-04		 4-OCT-2026	RRL
+**		VBK$VOLSPEC moved to VBKFMT.C: the reader needs it without the
+**		writer and its thread (VBKX on Windows).
+**
 **	X01-03		 3-OCT-2026	RRL
 **		The writer thread and its queue; writeback in windows; every
 **		volume is fsync'ed when closed.
@@ -68,42 +72,6 @@
 
 #include	"vbkwrt.h"
 #include	"vbkos.h"
-
-
-/*
-**++
-**  FUNCTIONAL DESCRIPTION:
-**
-**	Build the name of volume <a_volno>: volume 1 is the name as given,
-**	volume k is the name followed by ".kkk".
-**
-**  FORMAL PARAMETERS:
-**
-**	a_spec		Name of volume 1
-**	a_volno		Volume number, from 1
-**	a_out		Receives the name
-**	a_outsz		Size of <a_out>
-**
-**  RETURN VALUE:
-**	STS$K_SUCCESS	- built;
-**	STS$K_ERROR	- it does not fit into <a_out>.
-**--
-*/
-int	vbk$volspec	(
-	const	char *		a_spec,
-		uint32_t	a_volno,
-		char *		a_out,
-		size_t		a_outsz
-			)
-{
-int	l_n;
-
-	if ( a_volno <= 1 )
-		l_n	= snprintf(a_out, a_outsz, "%s", a_spec);
-	else	l_n	= snprintf(a_out, a_outsz, "%s.%03u", a_spec, a_volno);
-
-	return	((l_n < 0) || ((size_t) l_n >= a_outsz)) ? STS$K_ERROR : STS$K_SUCCESS;
-}
 
 
 /*

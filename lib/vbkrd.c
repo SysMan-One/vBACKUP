@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-04"
+#define	__REV__		"1.4.0"
 
 /*
 **++
@@ -32,6 +32,11 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-04		 4-OCT-2026	RRL
+**		The volumes are opened, read and measured through VBKOS.H
+**		(VBK$OS_OPEN, _PREAD, _FSIZE, _CLOSE): the reader builds on
+**		Windows too.
+**
 **	X01-03		 3-OCT-2026	RRL
 **		The volumes are read SEQUENTIAL and the pages of a group are
 **		dropped once it is read; VBK$RD_SEEK takes the group in hand
@@ -46,9 +51,7 @@
 #include	<stdlib.h>
 #include	<string.h>
 #include	<errno.h>
-#include	<fcntl.h>
-#include	<unistd.h>
-#include	<sys/stat.h>
+#include	<stdio.h>
 
 #include	"vbkrd.h"
 #include	"vbkos.h"
@@ -76,15 +79,15 @@ static	int	s_vbk$pread	(
 		int		a_fd,
 		uint8_t *	a_buf,
 		size_t		a_len,
-		off_t		a_off
+		uint64_t	a_off
 			)
 {
 size_t	l_got = 0;
-ssize_t	l_rc;
+int64_t	l_rc;
 
 	while ( l_got < a_len )
 		{
-		if ( 0 > (l_rc = pread(a_fd, a_buf + l_got, a_len - l_got, a_off + (off_t) l_got)) )
+		if ( 0 > (l_rc = vbk$os_pread(a_fd, a_buf + l_got, a_len - l_got, a_off + l_got)) )
 			{
 			if ( errno == EINTR )
 				continue;
@@ -152,16 +155,16 @@ int	vbk$rd_probe	(
 {
 uint8_t		l_hdr [VBK$K_HDRSZ];
 VBK$BHDR	l_bhdr;
-struct stat	l_st;
-int		l_fd, l_status = STS$K_WARN;
+uint64_t	l_size;
+int		l_fd, l_isreg, l_status = STS$K_WARN;
 
-	if ( 0 > (l_fd = open(a_spec, O_RDONLY | O_CLOEXEC)) )
+	if ( 0 > (l_fd = vbk$os_open(a_spec)) )
 		return	STS$K_ERROR;
 
-	if ( !fstat(l_fd, &l_st) && S_ISREG(l_st.st_mode) )
+	if ( !vbk$os_fsize(l_fd, &l_size, &l_isreg) && l_isreg )
 		{
 		/* The look at the head must not make a cold file look warm to the save (VBK$OS_COLD) */
-		int	l_cold = vbk$os_cold(l_fd, (uint64_t) l_st.st_size);
+		int	l_cold = vbk$os_cold(l_fd, l_size);
 
 		if ( (1 & s_vbk$pread(l_fd, l_hdr, sizeof(l_hdr), 0)) && (1 & vbk$bhdr_peek(l_hdr, &l_bhdr))
 			&& (l_bhdr.type == VBK$K_BT_VHDR) && (l_bhdr.volno == 1) )
@@ -171,7 +174,7 @@ int		l_fd, l_status = STS$K_WARN;
 			vbk$os_drop(l_fd, 0, 0);
 		}
 
-	close(l_fd);
+	vbk$os_close(l_fd);
 
 	return	l_status;
 }
@@ -229,18 +232,18 @@ int	vbk$rd_open	(
 uint8_t		l_hdr [VBK$K_HDRSZ], *l_blk = NULL;
 char		l_volspec [VBK$K_SZ_SPEC];
 VBK$BHDR	l_bhdr;
-struct stat	l_st;
+uint64_t	l_size = 0;
 uint32_t	l_pos = 0, l_vlen, l_reclen, l_miss = 0;
 uint16_t	l_tag;
 const uint8_t *	l_val;
-int		l_fd;
+int		l_fd, l_isreg = 0;
 
 	snprintf(a_ctx->spec, sizeof(a_ctx->spec), "%s", a_spec);
 
 	a_ctx->evcb	= a_evcb;
 	a_ctx->evarg	= a_evarg;
 
-	if ( 0 > (l_fd = open(a_spec, O_RDONLY | O_CLOEXEC)) )
+	if ( 0 > (l_fd = vbk$os_open(a_spec)) )
 		{
 		a_ctx->err	= errno;
 
@@ -251,7 +254,7 @@ int		l_fd;
 	if ( !(1 & s_vbk$pread(l_fd, l_hdr, sizeof(l_hdr), 0)) || !(1 & vbk$bhdr_peek(l_hdr, &l_bhdr))
 		|| (l_bhdr.bsize < VBK$K_MINBSZ) || (l_bhdr.bsize > VBK$K_MAXBSZ) || (l_bhdr.bsize % VBK$K_BSZALIGN) )
 		{
-		close(l_fd);
+		vbk$os_close(l_fd);
 
 		return	STS$K_WARN;
 		}
@@ -261,7 +264,7 @@ int		l_fd;
 
 	if ( !(a_ctx->vols = calloc(VBK$K_MAXVOL, sizeof(VBK$RVOL))) || !(l_blk = malloc(a_ctx->bsize)) )
 		{
-		close(l_fd);
+		vbk$os_close(l_fd);
 		free(l_blk);
 		a_ctx->err	= ENOMEM;
 
@@ -273,7 +276,7 @@ int		l_fd;
 
 	if ( !(1 & s_vbk$vhdr(a_ctx, l_fd, 1, l_blk, &l_bhdr)) )
 		{
-		close(l_fd);
+		vbk$os_close(l_fd);
 		free(l_blk);
 
 		return	STS$K_WARN;
@@ -287,7 +290,7 @@ int		l_fd;
 	if ( (vbk$get16(l_blk + VBK$K_HDRSZ) != VBK$K_RT_SUMMARY) || ((VBK$K_RECHDR + l_reclen) > l_bhdr.paylen)
 		|| !(a_ctx->summary = malloc(l_reclen + 1)) )
 		{
-		close(l_fd);
+		vbk$os_close(l_fd);
 		free(l_blk);
 
 		return	STS$K_WARN;
@@ -302,19 +305,18 @@ int		l_fd;
 
 	if ( a_ctx->grpsz > VBK$K_MAXGRP )
 		{
-		close(l_fd);
+		vbk$os_close(l_fd);
 		free(l_blk);
 
 		return	STS$K_WARN;
 		}
 
-	fstat(l_fd, &l_st);
-
+	vbk$os_fsize(l_fd, &l_size, &l_isreg);
 	vbk$os_seq(l_fd);
 
 	a_ctx->vols [0].fd	 = l_fd;
 	a_ctx->vols [0].firstblk = l_bhdr.blkno;
-	a_ctx->vols [0].nblk	 = (uint64_t) l_st.st_size / a_ctx->bsize;
+	a_ctx->vols [0].nblk	 = l_size / a_ctx->bsize;
 	a_ctx->nvols		 = 1;
 
 	/*
@@ -323,7 +325,7 @@ int		l_fd;
 	*/
 	for ( uint32_t l_volno = 2; (l_volno <= VBK$K_MAXVOL) && (l_miss < VBK$K_VOLGAP); l_volno++ )
 		{
-		if ( !(1 & vbk$volspec(a_spec, l_volno, l_volspec, sizeof(l_volspec))) || (0 > (l_fd = open(l_volspec, O_RDONLY | O_CLOEXEC))) )
+		if ( !(1 & vbk$volspec(a_spec, l_volno, l_volspec, sizeof(l_volspec))) || (0 > (l_fd = vbk$os_open(l_volspec))) )
 			{
 			l_miss++;
 			continue;
@@ -332,17 +334,18 @@ int		l_fd;
 		if ( !(1 & s_vbk$vhdr(a_ctx, l_fd, l_volno, l_blk, &l_bhdr)) )
 			{
 			s_vbk$event(a_ctx, VBK$K_EV_WRONGVOL, l_volno, 0);
-			close(l_fd);
+			vbk$os_close(l_fd);
 			l_miss++;
 			continue;
 			}
 
-		fstat(l_fd, &l_st);
+		l_size	= 0;
+		vbk$os_fsize(l_fd, &l_size, &l_isreg);
 		vbk$os_seq(l_fd);
 
 		a_ctx->vols [l_volno - 1].fd	   = l_fd;
 		a_ctx->vols [l_volno - 1].firstblk = l_bhdr.blkno;
-		a_ctx->vols [l_volno - 1].nblk	   = (uint64_t) l_st.st_size / a_ctx->bsize;
+		a_ctx->vols [l_volno - 1].nblk	   = l_size / a_ctx->bsize;
 		a_ctx->nvols			   = l_volno;
 		l_miss				   = 0;
 		}
@@ -353,7 +356,7 @@ int		l_fd;
 
 	if ( l_vol->nblk > 1 )
 		{
-		s_vbk$pread(l_vol->fd, l_blk, a_ctx->bsize, (off_t) ((l_vol->nblk - 1) * a_ctx->bsize));
+		s_vbk$pread(l_vol->fd, l_blk, a_ctx->bsize, (l_vol->nblk - 1) * a_ctx->bsize);
 
 		if ( (1 & vbk$blk_check(l_blk, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr)) && (l_bhdr.type == VBK$K_BT_TRAILER)
 			&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
@@ -369,7 +372,7 @@ int		l_fd;
 
 	a_ctx->recsz	= VBK$K_RECINI;
 
-	if ( !(a_ctx->gbuf = aligned_alloc(64, (size_t) (a_ctx->grpsz + 1) * a_ctx->bsize)) || !(a_ctx->rec = malloc(a_ctx->recsz)) )
+	if ( !(a_ctx->gbuf = vbk$os_balloc((size_t) (a_ctx->grpsz + 1) * a_ctx->bsize)) || !(a_ctx->rec = malloc(a_ctx->recsz)) )
 		{
 		a_ctx->err	= ENOMEM;
 
@@ -387,7 +390,7 @@ void	vbk$rd_close	(
 	if ( a_ctx->vols )
 		for ( uint32_t i = 0; i < a_ctx->nvols; i++ )
 			if ( a_ctx->vols [i].fd >= 0 )
-				close(a_ctx->vols [i].fd);
+				vbk$os_close(a_ctx->vols [i].fd);
 
 	free(a_ctx->vols);
 	free(a_ctx->summary);
@@ -479,7 +482,7 @@ uint8_t *	l_blk;
 	l_n	= a_ctx->grpsz ? (a_ctx->grpsz + 1) : 1;
 	l_n	= ((l_end - a_ctx->curpos) < l_n) ? (l_end - a_ctx->curpos) : l_n;
 
-	s_vbk$pread(l_vol->fd, a_ctx->gbuf, (size_t) (l_n * a_ctx->bsize), (off_t) (a_ctx->curpos * a_ctx->bsize));
+	s_vbk$pread(l_vol->fd, a_ctx->gbuf, (size_t) (l_n * a_ctx->bsize), a_ctx->curpos * a_ctx->bsize);
 
 	/* A saveset is read once: its pages would only push working data out of the cache */
 	vbk$os_drop(l_vol->fd, a_ctx->curpos * a_ctx->bsize, l_n * a_ctx->bsize);

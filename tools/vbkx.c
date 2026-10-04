@@ -48,6 +48,33 @@
 **		Completion: 0 - all done, 1 - something damaged or not done,
 **		2 - the command or the saveset is not usable.
 **
+**		On Windows (vbkx.exe) the names are UTF-8 in the saveset and
+**		UTF-16 in the system, put under \\?\ - long paths are fine.
+**		Put back: data, sizes, times, the read-only attribute (no write
+**		bit for the owner), directories, hard links; symbolic links
+**		where the system allows them (developer mode, or the right to
+**		make them), else said.  Not made: FIFOs, device files, owners,
+**		modes beyond read-only.  A name Windows cannot hold - a
+**		component with <>:"\|?* or a control, a device name (CON,
+**		PRN, AUX, NUL, COM1-9, LPT1-9, with an extension too), one
+**		ending in a dot or a space - is not extracted, and said.  A
+**		reparse point (a link, a junction) on the way is refused.
+**
+**		Build on Linux: with the product (CMake), or by hand -
+**
+**		    gcc -O2 -D_GNU_SOURCE -Ilib -I/usr/local/include \
+**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c \
+**			/usr/local/lib/libstarlet.a -static -o vbkx
+**
+**		Build on Windows / cross, from the top of the source tree -
+**		no StarLet, no CMake, one command:
+**
+**		    x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
+**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c -static -lshell32
+**
+**		(make -f tools/Makefile.win does the same; on Windows itself
+**		gcc of MinGW-w64 or MSYS2 takes the same line.)
+**
 **  AUTHOR:	StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
 **
 **  CREATION DATE:  3-OCT-2026
@@ -56,6 +83,10 @@
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the data compressed with /DATA_FORMAT=COMPRESSED.
+**		Windows: the calls that make files gathered into one layer
+**		(s_vbkx$os_*), a second one for Windows (UTF-16 names under
+**		\\?\, reparse points refused, names Windows cannot hold
+**		refused); the command line taken as UTF-16 and made UTF-8.
 **
 **	X01-03		 4-OCT-2026	RRL
 **		The owner, mode and times that cannot be set are said, not
@@ -73,16 +104,24 @@
 #include	<string.h>
 #include	<errno.h>
 #include	<fcntl.h>
-#include	<unistd.h>
 #include	<time.h>
 #include	<sys/stat.h>
+
+#ifdef	_WIN32
+#include	<windows.h>
+#include	<shellapi.h>
+#include	<io.h>
+#else
+#include	<unistd.h>
 #include	<sys/sysmacros.h>
+#endif
 
 #include	"vbkrd.h"
 #include	"vbkos.h"
 #include	"vbklz4.h"
 
 #define	VBKX$K_SZ_PATH	4096
+#define	VBKX$K_WPATH	32768			/* A path of Windows, in UTF-16 units		*/
 
 /*
 **  One file as a FILE record or a catalog entry describes it
@@ -114,7 +153,6 @@ typedef struct vbkx_dir_t			/* A directory whose mode and times wait	*/
 static	const char *	s_spec;			/* The saveset				*/
 static	const char *	s_outdir = ".";
 static	int		s_force, s_root, s_bad;
-static	int		s_outfd = -1;
 
 static	VBKX$DIR *	s_dirs;
 static	size_t		s_ndirs, s_szdirs;
@@ -263,18 +301,552 @@ static	int	s_vbkx$nameok	(
 
 
 /*
+**  The calls that make files, one set for each system.  Everything that
+**  lies below the output directory is reached from it, one component at
+**  a time, and refused when a component is a link: a parent is an open
+**  directory on Linux, a checked path on Windows.
+*/
+#ifdef	_WIN32
+
+typedef	wchar_t *	VBKX$PAR;		/* The directory: a path of its own, NULL - none	*/
+#define	VBKX$K_NOPAR	NULL
+
+static	wchar_t	s_outw [VBKX$K_WPATH];		/* \\?\ and the full path of the output directory	*/
+
+/*
+**  An errno for the last error of Windows: what strerror() can say
+*/
+static	void	s_vbkx$os_errno	(void)
+{
+	switch ( GetLastError() )
+		{
+		case	ERROR_FILE_EXISTS:
+		case	ERROR_ALREADY_EXISTS:		errno = EEXIST;		break;
+		case	ERROR_FILE_NOT_FOUND:
+		case	ERROR_PATH_NOT_FOUND:		errno = ENOENT;		break;
+		case	ERROR_ACCESS_DENIED:
+		case	ERROR_PRIVILEGE_NOT_HELD:	errno = EACCES;		break;
+		case	ERROR_INVALID_NAME:		errno = EINVAL;		break;
+		case	ERROR_DISK_FULL:		errno = ENOSPC;		break;
+		case	ERROR_FILENAME_EXCED_RANGE:	errno = ENAMETOOLONG;	break;
+		default:				errno = EIO;
+		}
+}
+
+/*
+**  A time of the saveset as a FILETIME: 100-ns steps since 1601
+*/
+static	FILETIME	s_vbkx$os_ft	(
+	const	VBK$TIME *	a_t
+			)
+{
+FILETIME	l_ft;
+int64_t		l_v = (a_t->sec * 10000000LL) + (a_t->nsec / 100) + 116444736000000000LL;
+
+	if ( l_v < 0 )
+		l_v	= 0;
+
+	l_ft.dwLowDateTime  = (DWORD) (l_v & 0xFFFFFFFF);
+	l_ft.dwHighDateTime = (DWORD) ((uint64_t) l_v >> 32);
+
+	return	l_ft;
+}
+
+/*
+**  <a_dir> "\" <a_comp>, the component turned into UTF-16; 0 - it is not
+**  valid UTF-8, or the path is too long
+*/
+static	int	s_vbkx$os_join	(
+	const	wchar_t *	a_dir,
+	const	char *		a_comp,
+		wchar_t *	a_out
+			)
+{
+size_t	l_len = wcslen(a_dir);
+
+	if ( (l_len + 2) >= VBKX$K_WPATH )
+		return	0;
+
+	memcpy(a_out, a_dir, l_len * sizeof(wchar_t));
+	a_out [l_len++] = L'\\';
+
+	return	vbk$os_wide(a_comp, a_out + l_len, (int) (VBKX$K_WPATH - l_len));
+}
+
+/*
+**  A name the file system of Windows can hold: no component with a
+**  character it reserves (<>:"/\|?* and the controls), none that is a
+**  device (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with an extension too),
+**  none ending in a dot or a space, and valid UTF-8 all through
+*/
+static	int	s_vbkx$winname	(
+	const	char *		a_name
+			)
+{
+static	const char *	l_dev [] = { "CON", "PRN", "AUX", "NUL", NULL };
+wchar_t			l_w [VBKX$K_WPATH];
+
+	if ( !vbk$os_wide(a_name, l_w, VBKX$K_WPATH) )
+		return	0;
+
+	for ( const char *l_c = a_name; *l_c; )
+		{
+		const char *	l_e = strchr(l_c, '/');
+		size_t		l_n = l_e ? (size_t) (l_e - l_c) : strlen(l_c), l_base;
+
+		for ( size_t i = 0; i < l_n; i++ )
+			if ( ((unsigned char) l_c [i] < 32) || strchr("<>:\"\\|?*", l_c [i]) )
+				return	0;
+
+		if ( l_n && ((l_c [l_n - 1] == '.') || (l_c [l_n - 1] == ' ')) )
+			return	0;
+
+		/* The part before the first dot is what Windows takes for a device */
+		for ( l_base = 0; (l_base < l_n) && (l_c [l_base] != '.'); l_base++ )
+			;
+
+		for ( int i = 0; l_dev [i]; i++ )
+			if ( (l_base == 3) && !_strnicmp(l_c, l_dev [i], 3) )
+				return	0;
+
+		if ( (l_base == 4) && (!_strnicmp(l_c, "COM", 3) || !_strnicmp(l_c, "LPT", 3)) && (l_c [3] >= '1') && (l_c [3] <= '9') )
+			return	0;
+
+		l_c	+= l_n;
+
+		if ( *l_c == '/' )
+			l_c++;
+		}
+
+	return	1;
+}
+
+static	int	s_vbkx$os_outdir	(
+	const	char *		a_dir
+			)
+{
+wchar_t	l_w [VBKX$K_WPATH], l_full [VBKX$K_WPATH];
+DWORD	l_n;
+
+	if ( !vbk$os_wide(a_dir, l_w, VBKX$K_WPATH) )
+		{
+		errno	= EINVAL;
+
+		return	-1;
+		}
+
+	if ( !CreateDirectoryW(l_w, NULL) && (GetLastError() != ERROR_ALREADY_EXISTS) )
+		return	s_vbkx$os_errno(), -1;
+
+	if ( !(l_n = GetFullPathNameW(l_w, VBKX$K_WPATH, l_full, NULL)) || (l_n >= (VBKX$K_WPATH - 8)) )
+		return	s_vbkx$os_errno(), -1;
+
+	while ( (l_n > 3) && (l_full [l_n - 1] == L'\\') )
+		l_full [--l_n] = L'\0';
+
+	/* \\?\: long paths, and no second guessing of the names by the system */
+	if ( !wcsncmp(l_full, L"\\\\", 2) )
+		_snwprintf(s_outw, VBKX$K_WPATH, L"\\\\?\\UNC\\%ls", l_full + 2);
+	else	_snwprintf(s_outw, VBKX$K_WPATH, L"\\\\?\\%ls", l_full);
+
+	return	0;
+}
+
+static	void	s_vbkx$os_outclose	(void)
+{
+}
+
+static	int	s_vbkx$os_parent	(
+		char *		a_name,
+		int		a_create,
+		char **		a_last,
+		VBKX$PAR *	a_par
+			)
+{
+wchar_t	l_cur [VBKX$K_WPATH], l_next [VBKX$K_WPATH];
+char *	l_c = a_name, *l_s;
+DWORD	l_attr;
+
+	*a_par	= VBKX$K_NOPAR;
+	wcscpy(l_cur, s_outw);
+
+	while ( (l_s = strchr(l_c, '/')) )
+		{
+		int	l_ok;
+
+		*l_s	= '\0';
+		l_ok	= s_vbkx$os_join(l_cur, l_c, l_next);
+		*l_s	= '/';
+
+		if ( !l_ok )
+			{
+			errno	= EINVAL;
+
+			return	-1;
+			}
+
+		if ( INVALID_FILE_ATTRIBUTES == (l_attr = GetFileAttributesW(l_next)) )
+			{
+			if ( !a_create || !CreateDirectoryW(l_next, NULL) )
+				return	s_vbkx$os_errno(), -1;
+			}
+		else if ( l_attr & FILE_ATTRIBUTE_REPARSE_POINT )
+			{
+			errno	= ELOOP;
+
+			return	-1;
+			}
+		else if ( !(l_attr & FILE_ATTRIBUTE_DIRECTORY) )
+			{
+			errno	= ENOTDIR;
+
+			return	-1;
+			}
+
+		wcscpy(l_cur, l_next);
+		l_c	= l_s + 1;
+		}
+
+	*a_last	= l_c;
+
+	if ( !(*a_par = _wcsdup(l_cur)) )
+		{
+		errno	= ENOMEM;
+
+		return	-1;
+		}
+
+	return	0;
+}
+
+static	void	s_vbkx$os_pclose	(
+		VBKX$PAR	a_par
+			)
+{
+	free(a_par);
+}
+
+static	int	s_vbkx$os_mkdir	(
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+wchar_t	l_p [VBKX$K_WPATH];
+DWORD	l_attr;
+
+	if ( !s_vbkx$os_join(a_par, a_last, l_p) )
+		{
+		errno	= EINVAL;
+
+		return	-1;
+		}
+
+	if ( CreateDirectoryW(l_p, NULL) )
+		return	0;
+
+	/* There already: a directory will do, a link or a file will not */
+	if ( (GetLastError() == ERROR_ALREADY_EXISTS) && (INVALID_FILE_ATTRIBUTES != (l_attr = GetFileAttributesW(l_p)))
+		&& (l_attr & FILE_ATTRIBUTE_DIRECTORY) && !(l_attr & FILE_ATTRIBUTE_REPARSE_POINT) )
+		return	0;
+
+	errno	= EEXIST;
+
+	return	-1;
+}
+
+static	int	s_vbkx$os_exists	(
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+wchar_t	l_p [VBKX$K_WPATH];
+
+	return	s_vbkx$os_join(a_par, a_last, l_p) && (INVALID_FILE_ATTRIBUTES != GetFileAttributesW(l_p));
+}
+
+static	void	s_vbkx$os_remove	(
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+wchar_t	l_p [VBKX$K_WPATH];
+DWORD	l_attr;
+
+	if ( !s_vbkx$os_join(a_par, a_last, l_p) || (INVALID_FILE_ATTRIBUTES == (l_attr = GetFileAttributesW(l_p))) )
+		return;
+
+	/* A link to a directory is removed as a directory - the link, not what it points to */
+	if ( l_attr & FILE_ATTRIBUTE_DIRECTORY )
+		{
+		if ( l_attr & FILE_ATTRIBUTE_REPARSE_POINT )
+			RemoveDirectoryW(l_p);
+
+		return;
+		}
+
+	SetFileAttributesW(l_p, FILE_ATTRIBUTE_NORMAL);
+	DeleteFileW(l_p);
+}
+
+static	int	s_vbkx$os_creat	(
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+		wchar_t *	a_path
+			)
+{
+	if ( !s_vbkx$os_join(a_par, a_last, a_path) )
+		{
+		errno	= EINVAL;
+
+		return	-1;
+		}
+
+	return	_wopen(a_path, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY | _O_NOINHERIT, _S_IREAD | _S_IWRITE);
+}
+
+/*
+**  A symbolic link: made when the system lets an ordinary user (developer
+**  mode) or the user has the right; else said, and the extraction goes on
+*/
+static	int	s_vbkx$os_symlink	(
+	const	char *		a_tgt,
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+	const	char *		a_name
+			)
+{
+wchar_t	l_p [VBKX$K_WPATH], l_t [VBKX$K_WPATH], l_abs [VBKX$K_WPATH];
+DWORD	l_flags = 0x2, l_attr;		/* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE */
+
+	if ( !s_vbkx$os_join(a_par, a_last, l_p) || !vbk$os_wide(a_tgt, l_t, VBKX$K_WPATH) )
+		{
+		errno	= EINVAL;
+
+		return	-1;
+		}
+
+	for ( wchar_t *l_c = l_t; *l_c; l_c++ )
+		if ( *l_c == L'/' )
+			*l_c = L'\\';
+
+	/* A link to a directory must say so on Windows: looked at, when the target is relative and there */
+	if ( (l_t [0] != L'\\') && !wcschr(l_t, L':') && ((wcslen(a_par) + wcslen(l_t) + 2) < VBKX$K_WPATH) )
+		{
+		_snwprintf(l_abs, VBKX$K_WPATH, L"%ls\\%ls", a_par, l_t);
+
+		if ( (INVALID_FILE_ATTRIBUTES != (l_attr = GetFileAttributesW(l_abs))) && (l_attr & FILE_ATTRIBUTE_DIRECTORY) )
+			l_flags |= 0x1;	/* SYMBOLIC_LINK_FLAG_DIRECTORY */
+		}
+
+	/* Made, and there as a link: a system that says yes and makes nothing (wine) is caught here */
+	if ( CreateSymbolicLinkW(l_p, l_t, l_flags) && (INVALID_FILE_ATTRIBUTES != (l_attr = GetFileAttributesW(l_p)))
+		&& (l_attr & FILE_ATTRIBUTE_REPARSE_POINT) )
+		return	0;
+
+	s_vbkx$msg("%s: symbolic link not made on this system", a_name);
+	s_bad	= 1;
+
+	return	1;
+}
+
+static	int	s_vbkx$os_link	(
+		VBKX$PAR	a_tpar,
+	const	char *		a_tlast,
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+wchar_t	l_p [VBKX$K_WPATH], l_t [VBKX$K_WPATH];
+
+	if ( !s_vbkx$os_join(a_par, a_last, l_p) || !s_vbkx$os_join(a_tpar, a_tlast, l_t) )
+		{
+		errno	= EINVAL;
+
+		return	-1;
+		}
+
+	return	CreateHardLinkW(l_p, l_t, NULL) ? 0 : (s_vbkx$os_errno(), -1);
+}
+
+static	int	s_vbkx$os_special	(
+	const	VBKX$ENT *	a_e,
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+	const	char *		a_name
+			)
+{
+	s_vbkx$msg("%s: %s, not made on Windows", a_name, (a_e->ftype == VBK$K_FT_FIFO) ? "a FIFO" : "a device file");
+	s_bad	= 1;
+
+	return	1;
+}
+
+/*
+**  The times of what has no data - a symbolic link - on the link itself
+*/
+static	void	s_vbkx$os_attrs	(
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+	const	VBKX$ENT *	a_e,
+	const	char *		a_name
+			)
+{
+wchar_t		l_p [VBKX$K_WPATH];
+FILETIME	l_at = s_vbkx$os_ft(&a_e->atime), l_mt = s_vbkx$os_ft(&a_e->mtime);
+HANDLE		l_h;
+
+	if ( !s_vbkx$os_join(a_par, a_last, l_p) )
+		return;
+
+	if ( INVALID_HANDLE_VALUE == (l_h = CreateFileW(l_p, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+				OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL)) )
+		{
+		s_vbkx$os_errno();
+		s_vbkx$attrerr(a_name, "times");
+
+		return;
+		}
+
+	if ( !SetFileTime(l_h, NULL, &l_at, &l_mt) )
+		s_vbkx$os_errno(), s_vbkx$attrerr(a_name, "times");
+
+	CloseHandle(l_h);
+}
+
+static	int	s_vbkx$os_pwrite	(
+		int		a_fd,
+	const	uint8_t *	a_data,
+		uint32_t	a_n,
+		uint64_t	a_off
+			)
+{
+	if ( _lseeki64(a_fd, (__int64) a_off, SEEK_SET) < 0 )
+		return	-1;
+
+	while ( a_n )
+		{
+		int	l_rc = _write(a_fd, a_data, a_n);
+
+		if ( l_rc <= 0 )
+			return	-1;
+
+		a_data	+= l_rc;
+		a_n	-= (uint32_t) l_rc;
+		}
+
+	return	0;
+}
+
+/*
+**  A regular file complete: its size, its times, read-only when its
+**  owner may not write it - the one bit of the mode Windows has
+*/
+static	int	s_vbkx$os_fdend	(
+		int		a_fd,
+	const	wchar_t *	a_path,
+	const	VBKX$ENT *	a_e,
+		uint64_t	a_size,
+	const	char *		a_name
+			)
+{
+FILETIME	l_at = s_vbkx$os_ft(&a_e->atime), l_mt = s_vbkx$os_ft(&a_e->mtime);
+int		l_rc;
+
+	if ( _chsize_s(a_fd, (__int64) a_size) )
+		s_vbkx$msg("%s: %s", a_name, strerror(errno));
+
+	if ( !SetFileTime((HANDLE) _get_osfhandle(a_fd), NULL, &l_at, &l_mt) )
+		s_vbkx$os_errno(), s_vbkx$attrerr(a_name, "times");
+
+	l_rc	= _close(a_fd);
+
+	if ( !(a_e->mode & 0200) && !SetFileAttributesW(a_path, FILE_ATTRIBUTE_READONLY) )
+		s_vbkx$os_errno(), s_vbkx$attrerr(a_name, "mode");
+
+	return	l_rc;
+}
+
+/*
+**  The times of a directory, at the end (its mode has no meaning there)
+*/
+static	void	s_vbkx$os_dirattr	(
+		VBKX$DIR *	a_d
+			)
+{
+wchar_t		l_p [VBKX$K_WPATH];
+FILETIME	l_at = s_vbkx$os_ft(&a_d->atime), l_mt = s_vbkx$os_ft(&a_d->mtime);
+VBKX$PAR	l_par;
+char *		l_last;
+HANDLE		l_h;
+DWORD		l_attr;
+
+	if ( s_vbkx$os_parent(a_d->path, 0, &l_last, &l_par) )
+		return;
+
+	if ( s_vbkx$os_join(l_par, l_last, l_p) && (INVALID_FILE_ATTRIBUTES != (l_attr = GetFileAttributesW(l_p)))
+		&& !(l_attr & FILE_ATTRIBUTE_REPARSE_POINT)
+		&& (INVALID_HANDLE_VALUE != (l_h = CreateFileW(l_p, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL))) )
+		{
+		if ( !SetFileTime(l_h, NULL, &l_at, &l_mt) )
+			s_vbkx$os_errno(), s_vbkx$attrerr(a_d->path, "times");
+
+		CloseHandle(l_h);
+		}
+
+	s_vbkx$os_pclose(l_par);
+}
+
+static	void	s_vbkx$os_localtime	(
+		time_t		a_t,
+		struct tm *	a_tm
+			)
+{
+	if ( localtime_s(a_tm, &a_t) )
+		memset(a_tm, 0, sizeof(*a_tm));
+}
+
+#else	/* Linux */
+
+typedef	int		VBKX$PAR;		/* The directory, open; -1 - none		*/
+#define	VBKX$K_NOPAR	(-1)
+
+static	int	s_outfd = -1;			/* The output directory				*/
+
+static	int	s_vbkx$os_outdir	(
+	const	char *		a_dir
+			)
+{
+	if ( mkdir(a_dir, 0755) && (errno != EEXIST) )
+		return	-1;
+
+	if ( 0 > (s_outfd = open(a_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC)) )
+		return	-1;
+
+	umask(0);
+
+	return	0;
+}
+
+static	void	s_vbkx$os_outclose	(void)
+{
+	if ( s_outfd >= 0 )
+		close(s_outfd);
+
+	s_outfd	= -1;
+}
+
+/*
 **  Open the directory a name lies in, below the output directory, one
 **  component at a time with O_NOFOLLOW - a symbolic link on the way makes
 **  it fail.  <a_create>: the missing ones are made.  <*a_last> receives
 **  the last component of the name.
-**
-**  RETURN VALUE:
-**	A descriptor of the directory, or -1 (errno says why).
 */
-static	int	s_vbkx$parent	(
+static	int	s_vbkx$os_parent	(
 		char *		a_name,
 		int		a_create,
-		char **		a_last
+		char **		a_last,
+		VBKX$PAR *	a_par
 			)
 {
 char *	l_c = a_name, *l_s;
@@ -301,9 +873,192 @@ int	l_fd = dup(s_outfd), l_next;
 		}
 
 	*a_last	= l_c;
+	*a_par	= l_fd;
 
-	return	l_fd;
+	return	(l_fd >= 0) ? 0 : -1;
 }
+
+static	void	s_vbkx$os_pclose	(
+		VBKX$PAR	a_par
+			)
+{
+	if ( a_par >= 0 )
+		close(a_par);
+}
+
+static	int	s_vbkx$os_mkdir	(
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+	return	(mkdirat(a_par, a_last, 0700) && (errno != EEXIST)) ? -1 : 0;
+}
+
+static	int	s_vbkx$os_exists	(
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+	return	!faccessat(a_par, a_last, F_OK, AT_SYMLINK_NOFOLLOW);
+}
+
+static	void	s_vbkx$os_remove	(
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+	unlinkat(a_par, a_last, 0);
+}
+
+static	int	s_vbkx$os_creat	(
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+		void *		a_path
+			)
+{
+	return	openat(a_par, a_last, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+}
+
+static	int	s_vbkx$os_symlink	(
+	const	char *		a_tgt,
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+	const	char *		a_name
+			)
+{
+	return	symlinkat(a_tgt, a_par, a_last);
+}
+
+static	int	s_vbkx$os_link	(
+		VBKX$PAR	a_tpar,
+	const	char *		a_tlast,
+		VBKX$PAR	a_par,
+	const	char *		a_last
+			)
+{
+	return	linkat(a_tpar, a_tlast, a_par, a_last, 0);
+}
+
+/*
+**  A FIFO, and - root only - a device file
+*/
+static	int	s_vbkx$os_special	(
+	const	VBKX$ENT *	a_e,
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+	const	char *		a_name
+			)
+{
+	if ( a_e->ftype == VBK$K_FT_FIFO )
+		return	mkfifoat(a_par, a_last, 0600);
+
+	if ( !s_root )
+		{
+		s_vbkx$msg("%s: a device file, made by root only", a_name);
+
+		return	1;
+		}
+
+	return	mknodat(a_par, a_last, ((a_e->ftype == VBK$K_FT_CHR) ? S_IFCHR : S_IFBLK) | 0600,
+			makedev((unsigned) (a_e->rdev >> 32), (unsigned) (a_e->rdev & 0xFFFFFFFF)));
+}
+
+/*
+**  What has no data is complete as soon as it is made: owner, mode, times
+*/
+static	void	s_vbkx$os_attrs	(
+		VBKX$PAR	a_par,
+	const	char *		a_last,
+	const	VBKX$ENT *	a_e,
+	const	char *		a_name
+			)
+{
+struct timespec	l_ts [2] = { { a_e->atime.sec, a_e->atime.nsec }, { a_e->mtime.sec, a_e->mtime.nsec } };
+
+	if ( s_root && fchownat(a_par, a_last, a_e->uid, a_e->gid, AT_SYMLINK_NOFOLLOW) )
+		s_vbkx$attrerr(a_name, "owner");
+
+	if ( (a_e->ftype != VBK$K_FT_SYMLINK) && fchmodat(a_par, a_last, (mode_t) (a_e->mode & 07777), 0) )
+		s_vbkx$attrerr(a_name, "mode");
+
+	if ( utimensat(a_par, a_last, l_ts, AT_SYMLINK_NOFOLLOW) )
+		s_vbkx$attrerr(a_name, "times");
+}
+
+static	int	s_vbkx$os_pwrite	(
+		int		a_fd,
+	const	uint8_t *	a_data,
+		uint32_t	a_n,
+		uint64_t	a_off
+			)
+{
+	return	(pwrite(a_fd, a_data, a_n, (off_t) a_off) == (ssize_t) a_n) ? 0 : -1;
+}
+
+/*
+**  A regular file complete: its size, owner, mode, times; then closed
+*/
+static	int	s_vbkx$os_fdend	(
+		int		a_fd,
+	const	void *		a_path,
+	const	VBKX$ENT *	a_e,
+		uint64_t	a_size,
+	const	char *		a_name
+			)
+{
+struct timespec	l_ts [2] = { { a_e->atime.sec, a_e->atime.nsec }, { a_e->mtime.sec, a_e->mtime.nsec } };
+
+	if ( ftruncate(a_fd, (off_t) a_size) )
+		s_vbkx$msg("%s: %s", a_name, strerror(errno));
+
+	if ( s_root && fchown(a_fd, a_e->uid, a_e->gid) )
+		s_vbkx$attrerr(a_name, "owner");
+
+	if ( fchmod(a_fd, (mode_t) (a_e->mode & 07777)) )
+		s_vbkx$attrerr(a_name, "mode");
+
+	if ( futimens(a_fd, l_ts) )
+		s_vbkx$attrerr(a_name, "times");
+
+	return	close(a_fd);
+}
+
+static	void	s_vbkx$os_dirattr	(
+		VBKX$DIR *	a_d
+			)
+{
+VBKX$PAR	l_pfd;
+char *		l_last;
+int		l_fd;
+
+	if ( s_vbkx$os_parent(a_d->path, 0, &l_last, &l_pfd) )
+		return;
+
+	if ( 0 <= (l_fd = openat(l_pfd, l_last, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) )
+		{
+		struct timespec	l_ts [2] = { { a_d->atime.sec, a_d->atime.nsec }, { a_d->mtime.sec, a_d->mtime.nsec } };
+
+		if ( fchmod(l_fd, (mode_t) (a_d->mode & 07777)) )
+			s_vbkx$attrerr(a_d->path, "mode");
+
+		if ( futimens(l_fd, l_ts) )
+			s_vbkx$attrerr(a_d->path, "times");
+
+		close(l_fd);
+		}
+
+	s_vbkx$os_pclose(l_pfd);
+}
+
+static	void	s_vbkx$os_localtime	(
+		time_t		a_t,
+		struct tm *	a_tm
+			)
+{
+	localtime_r(&a_t, a_tm);
+}
+
+#endif	/* _WIN32 */
 
 
 static	void	s_vbkx$defer	(
@@ -339,32 +1094,10 @@ static	void	s_vbkx$defer	(
 */
 static	void	s_vbkx$dirs	(void)
 {
-char *	l_last;
-int	l_pfd, l_fd;
-
 	while ( s_ndirs-- )
 		{
-		VBKX$DIR *	l_d = &s_dirs [s_ndirs];
-
-		if ( 0 <= (l_pfd = s_vbkx$parent(l_d->path, 0, &l_last)) )
-			{
-			if ( 0 <= (l_fd = openat(l_pfd, l_last, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) )
-				{
-				struct timespec	l_ts [2] = { { l_d->atime.sec, l_d->atime.nsec }, { l_d->mtime.sec, l_d->mtime.nsec } };
-
-				if ( fchmod(l_fd, (mode_t) (l_d->mode & 07777)) )
-					s_vbkx$attrerr(l_d->path, "mode");
-
-				if ( futimens(l_fd, l_ts) )
-					s_vbkx$attrerr(l_d->path, "times");
-
-				close(l_fd);
-				}
-
-			close(l_pfd);
-			}
-
-		free(l_d->path);
+		s_vbkx$os_dirattr(&s_dirs [s_ndirs]);
+		free(s_dirs [s_ndirs].path);
 		}
 
 	free(s_dirs);
@@ -419,6 +1152,9 @@ typedef struct vbkx_out_t
 	uint64_t	pos;			/* ... up to here				*/
 	uint32_t	crc;
 	int		damaged;
+#ifdef	_WIN32
+	wchar_t		wpath [VBKX$K_WPATH];	/* The file being written, for its attributes	*/
+#endif
 } VBKX$OUT;
 
 
@@ -436,7 +1172,8 @@ static	void	s_vbkx$begin	(
 {
 VBKX$ENT *	l_e = &a_out->ent;
 char		l_name [VBKX$K_SZ_PATH], l_tgt [VBKX$K_SZ_PATH], *l_last, *l_tlast;
-int		l_pfd = -1, l_tfd, l_rc = 0;
+VBKX$PAR	l_par, l_tpar;
+int		l_rc = 0;
 
 	a_out->active	= 0;
 	a_out->fd	= -1;
@@ -491,9 +1228,20 @@ int		l_pfd = -1, l_tfd, l_rc = 0;
 		return;
 		}
 
+#ifdef	_WIN32
+	if ( !s_vbkx$winname(a_out->name) )
+		{
+		s_vbkx$msg("%s: not a valid name on Windows, not extracted", a_out->name);
+		a_out->active	= 0;
+		s_bad		= 1;
+
+		return;
+		}
+#endif
+
 	strcpy(l_name, a_out->name);
 
-	if ( 0 > (l_pfd = s_vbkx$parent(l_name, 1, &l_last)) )
+	if ( s_vbkx$os_parent(l_name, 1, &l_last, &l_par) )
 		{
 		s_vbkx$msg("%s: %s (a directory on the way cannot be made, or is a link)", a_out->name, strerror(errno));
 		a_out->active	= 0;
@@ -504,108 +1252,86 @@ int		l_pfd = -1, l_tfd, l_rc = 0;
 
 	if ( l_e->ftype == VBK$K_FT_DIR )
 		{
-		if ( mkdirat(l_pfd, l_last, 0700) && (errno != EEXIST) )
-			l_rc	= -1;
-		else	s_vbkx$defer(a_out->name, l_e);
+		if ( !(l_rc = s_vbkx$os_mkdir(l_par, l_last)) )
+			s_vbkx$defer(a_out->name, l_e);
 
 		goto	l_done;
 		}
 
 	/* Something there: kept, unless -f - a directory is never removed */
-	if ( !faccessat(l_pfd, l_last, F_OK, AT_SYMLINK_NOFOLLOW) )
+	if ( s_vbkx$os_exists(l_par, l_last) )
 		{
 		if ( !s_force )
 			{
 			s_vbkx$msg("%s exists, not extracted (-f to overwrite)", a_out->name);
 			a_out->active	= 0;
 			s_bad		= 1;
-			close(l_pfd);
+			s_vbkx$os_pclose(l_par);
 
 			return;
 			}
 
-		unlinkat(l_pfd, l_last, 0);
+		s_vbkx$os_remove(l_par, l_last);
 		}
 
 	switch ( l_e->ftype )
 		{
 		case	VBK$K_FT_REG:
-			if ( 0 > (a_out->fd = openat(l_pfd, l_last, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)) )
+#ifdef	_WIN32
+			if ( 0 > (a_out->fd = s_vbkx$os_creat(l_par, l_last, a_out->wpath)) )
+#else
+			if ( 0 > (a_out->fd = s_vbkx$os_creat(l_par, l_last, NULL)) )
+#endif
 				l_rc	= -1;
 			break;
 
 		case	VBK$K_FT_SYMLINK:
 			snprintf(l_tgt, sizeof(l_tgt), "%.*s", (int) l_e->linklen, l_e->link ? l_e->link : "");
-			l_rc	= symlinkat(l_tgt, l_pfd, l_last);
+			l_rc	= s_vbkx$os_symlink(l_tgt, l_par, l_last, a_out->name);
 			break;
 
 		case	VBK$K_FT_HARDLINK:
 			snprintf(l_tgt, sizeof(l_tgt), "%.*s", (int) l_e->linklen, l_e->link ? l_e->link : "");
 
-			if ( !s_vbkx$nameok(l_tgt, strlen(l_tgt)) || (0 > (l_tfd = s_vbkx$parent(l_tgt, 0, &l_tlast))) )
+			if ( !s_vbkx$nameok(l_tgt, strlen(l_tgt)) || s_vbkx$os_parent(l_tgt, 0, &l_tlast, &l_tpar) )
 				{
 				l_rc	= -1;
 				errno	= ENOENT;
 				break;
 				}
 
-			l_rc	= linkat(l_tfd, l_tlast, l_pfd, l_last, 0);
-			close(l_tfd);
+			l_rc	= s_vbkx$os_link(l_tpar, l_tlast, l_par, l_last);
+			s_vbkx$os_pclose(l_tpar);
 			break;
 
 		case	VBK$K_FT_FIFO:
-			l_rc	= mkfifoat(l_pfd, l_last, 0600);
-			break;
-
 		case	VBK$K_FT_CHR:
 		case	VBK$K_FT_BLK:
-			if ( !s_root )
-				{
-				s_vbkx$msg("%s: a device file, made by root only", a_out->name);
-				a_out->active	= 0;
-				close(l_pfd);
-
-				return;
-				}
-
-			l_rc	= mknodat(l_pfd, l_last, ((l_e->ftype == VBK$K_FT_CHR) ? S_IFCHR : S_IFBLK) | 0600,
-					makedev((unsigned) (l_e->rdev >> 32), (unsigned) (l_e->rdev & 0xFFFFFFFF)));
+			l_rc	= s_vbkx$os_special(l_e, l_par, l_last, a_out->name);
 			break;
 
 		default:
 			/* A socket is made by its server, not by a restore */
 			a_out->active	= 0;
-			close(l_pfd);
+			s_vbkx$os_pclose(l_par);
 
 			return;
 		}
 
 l_done:
-	if ( l_rc )
+	if ( l_rc < 0 )
 		{
 		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
 		a_out->active	= 0;
 		s_bad		= 1;
 		}
-	else if ( (l_e->ftype != VBK$K_FT_DIR) && (l_e->ftype != VBK$K_FT_REG) && (l_e->ftype != VBK$K_FT_HARDLINK) )
-		{
-		/* What has no data is complete now */
-		struct timespec	l_ts [2] = { { l_e->atime.sec, l_e->atime.nsec }, { l_e->mtime.sec, l_e->mtime.nsec } };
-
-		if ( s_root && fchownat(l_pfd, l_last, l_e->uid, l_e->gid, AT_SYMLINK_NOFOLLOW) )
-			s_vbkx$attrerr(a_out->name, "owner");
-
-		if ( (l_e->ftype != VBK$K_FT_SYMLINK) && fchmodat(l_pfd, l_last, (mode_t) (l_e->mode & 07777), 0) )
-			s_vbkx$attrerr(a_out->name, "mode");
-
-		if ( utimensat(l_pfd, l_last, l_ts, AT_SYMLINK_NOFOLLOW) )
-			s_vbkx$attrerr(a_out->name, "times");
-		}
+	else if ( !l_rc && (l_e->ftype != VBK$K_FT_DIR) && (l_e->ftype != VBK$K_FT_REG) && (l_e->ftype != VBK$K_FT_HARDLINK) )
+		s_vbkx$os_attrs(l_par, l_last, l_e, a_out->name);
 
 	if ( l_e->ftype != VBK$K_FT_REG )
 		a_out->active	= 0;
 
-	close(l_pfd);
+	s_vbkx$os_pclose(l_par);
 }
 
 
@@ -670,7 +1396,7 @@ uint32_t	l_n, l_fileno;
 		if ( (a_out->pos == l_off) && (1 == fwrite(l_data, l_n, 1, stdout)) )
 			a_out->pos	+= l_n;
 		}
-	else if ( (a_out->fd >= 0) && (pwrite(a_out->fd, l_data, l_n, (off_t) l_off) != (ssize_t) l_n) )
+	else if ( (a_out->fd >= 0) && s_vbkx$os_pwrite(a_out->fd, l_data, l_n, l_off) )
 		{
 		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
 		a_out->damaged	= 1;
@@ -740,23 +1466,11 @@ int		l_hascrc = 0;
 	if ( a_out->fd < 0 )
 		return;
 
-	{
-	struct timespec	l_ts [2] = { { l_e->atime.sec, l_e->atime.nsec }, { l_e->mtime.sec, l_e->mtime.nsec } };
-
-	if ( ftruncate(a_out->fd, (off_t) l_size) )
-		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
-
-	if ( s_root && fchown(a_out->fd, l_e->uid, l_e->gid) )
-		s_vbkx$attrerr(a_out->name, "owner");
-
-	if ( fchmod(a_out->fd, (mode_t) (l_e->mode & 07777)) )
-		s_vbkx$attrerr(a_out->name, "mode");
-
-	if ( futimens(a_out->fd, l_ts) )
-		s_vbkx$attrerr(a_out->name, "times");
-	}
-
-	if ( close(a_out->fd) )
+#ifdef	_WIN32
+	if ( s_vbkx$os_fdend(a_out->fd, a_out->wpath, l_e, l_size, a_out->name) )
+#else
+	if ( s_vbkx$os_fdend(a_out->fd, NULL, l_e, l_size, a_out->name) )
+#endif
 		{
 		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
 		s_bad	= 1;
@@ -983,7 +1697,7 @@ struct tm	l_tm;
 time_t		l_t = (time_t) a_e->mtime.sec;
 char		l_ts [32];
 
-	localtime_r(&l_t, &l_tm);
+	s_vbkx$os_localtime(l_t, &l_tm);
 	strftime(l_ts, sizeof(l_ts), "%Y-%m-%d %H:%M:%S", &l_tm);
 
 	printf("%s %12llu %c%04o %.*s", l_ts, (unsigned long long) a_e->size, s_vbkx$tchar(a_e->ftype), a_e->mode & 07777,
@@ -1205,12 +1919,41 @@ VBK$RCTX	l_rctx = {0};
 char		l_op, **l_names;
 int		l_nnames = 0, l_status, l_rc;
 
+#ifdef	_WIN32
+	/* The arguments as the system has them, UTF-16, made UTF-8 - the names of a saveset are */
+	{
+	wchar_t **	l_wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+	if ( !l_wargv || !(argv = calloc((size_t) argc + 1, sizeof(char *))) )
+		return	2;
+
+	for ( int i = 0; i < argc; i++ )
+		{
+		int	l_n = WideCharToMultiByte(CP_UTF8, 0, l_wargv [i], -1, NULL, 0, NULL, NULL);
+
+		if ( (l_n <= 0) || !(argv [i] = malloc((size_t) l_n)) )
+			return	2;
+
+		WideCharToMultiByte(CP_UTF8, 0, l_wargv [i], -1, argv [i], l_n, NULL, NULL);
+		}
+
+	LocalFree(l_wargv);
+
+	/* The data of a file, and the listing, byte for byte as on Linux: no CR LF */
+	_setmode(_fileno(stdout), _O_BINARY);
+	}
+#endif
+
 	if ( (argc < 3) || (strlen(argv [1]) != 1) || !strchr("lxpt", argv [1] [0]) )
 		return	s_vbkx$usage();
 
 	l_op	= argv [1] [0];
 	s_spec	= argv [2];
+#ifdef	_WIN32
+	s_root	= 0;
+#else
 	s_root	= !geteuid();
+#endif
 
 	if ( !(l_names = calloc((size_t) argc, sizeof(char *))) )
 		return	2;
@@ -1243,23 +1986,15 @@ int		l_nnames = 0, l_status, l_rc;
 			break;
 
 		case	'x':
-			if ( mkdir(s_outdir, 0755) && (errno != EEXIST) )
+			if ( s_vbkx$os_outdir(s_outdir) )
 				{
 				s_vbkx$msg("%s: %s", s_outdir, strerror(errno));
 				l_rc	= 2;
 				break;
 				}
 
-			if ( 0 > (s_outfd = open(s_outdir, O_RDONLY | O_DIRECTORY | O_CLOEXEC)) )
-				{
-				s_vbkx$msg("%s: %s", s_outdir, strerror(errno));
-				l_rc	= 2;
-				break;
-				}
-
-			umask(0);
 			l_rc	= s_vbkx$extract(&l_rctx, l_names, l_nnames, 1, 0);
-			close(s_outfd);
+			s_vbkx$os_outclose();
 			break;
 
 		case	'p':
