@@ -179,6 +179,10 @@ vbkx before X01-14 do not read it: they say it is not a saveset.
 VBACKUP X01-14 reads both. Encrypted savesets repair without the
 passphrase, as always.
 
+The parity is computed by the vector instructions of the processor
+(AVX2 or SSSE3, NEON on ARM) where it has them, some ten times faster
+than without; VBACKUP_NOSIMD=1 turns them off for trouble-shooting.
+
 ## /VOLUME_SIZE -- cut the saveset into volumes
 
 ```

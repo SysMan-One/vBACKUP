@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-15"
+#define	__REV__		"1.15.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-15		 5-OCT-2026	RRL
+**		Stage 11: the parity of /PARITY by the vector instructions of the
+**		CPU (VBKRS.C); VBACKUP_NOSIMD.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		/PARITY=m: m parity blocks a group (format.md 4.1); the smallest

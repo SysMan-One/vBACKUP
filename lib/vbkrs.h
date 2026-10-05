@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-14"
+#define	__IDENT__	"X01-15"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.14.0"
+#define	__REV__		"1.15.0"
 #endif
 
 /*
@@ -35,6 +35,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-15		 5-OCT-2026	RRL
+**		VBK$RS_SIMD.
+**
 **	X01-14		 5-OCT-2026	RRL
 **		Initial version.
 **
@@ -53,6 +56,7 @@ extern "C" {
 
 void	vbk$rs_init	(void);
 uint8_t	vbk$rs_coef	(uint32_t a_row, uint32_t a_col);
+const char *vbk$rs_simd	(void);
 void	vbk$rs_muladd	(uint8_t *a_dst, const uint8_t *a_src, size_t a_len, uint8_t a_c);
 int	vbk$rs_repair	(uint32_t a_n, uint32_t a_m, uint8_t * const *a_data, const uint8_t *a_dok,
 			 const uint8_t * const *a_par, const uint8_t *a_pok, size_t a_len);

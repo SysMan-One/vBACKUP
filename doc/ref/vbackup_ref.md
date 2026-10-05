@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-13.
+VBACKUP X01-14.
 
-**Software Version:** VBACKUP X01-14
+**Software Version:** VBACKUP X01-15
 
 **Operating System:** Linux (x86_64, aarch64); Windows for vbkx.exe and
 the WCX plugin
@@ -22,7 +22,7 @@ the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-14 as built from
+The information in this document reflects VBACKUP X01-15 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -2327,6 +2327,7 @@ vbkx-rs and vbkx-pl.
 | `VBACKUP_KEY_FILE` | The key file of an encrypted saveset when `/KEY_FILE` is not given (*vbkx*, *extractors*, plugins). |
 | `VBACKUP_NOPROMPT` | `1` -- never ask for a passphrase at the terminal; without a key file the result is NOKEY. Set by the file manager plugins (*vbkx*). |
 | `VBACKUP_KDFITER` | The PBKDF2 iteration count of a save `/ENCRYPT`, at least 1000; values below are ignored. For tests only -- do not lower it for real savesets. The count is stored in the saveset. |
+| `VBACKUP_NOSIMD` | `1` -- compute the parity of `/PARITY` by the portable code even where the processor has vector instructions for it (AVX2, SSSE3 on x86; NEON on aarch64); for trouble-shooting. |
 | `VBACKUP_NOHWCRYPTO` | `1` -- compute SHA-256 by the portable code even where the processor has instructions for it (aarch64); for trouble-shooting. |
 | `VBACKUP_CTHREADS` | The threads of the encryption, the caller included: the number of processors by default, at most 8; `1` -- none. |
 | `VBACKUP_ZTHREADS` | The threads that compress a save `/DATA_FORMAT=COMPRESSED`: the number of processors by default, at most 8; `1` or less -- none. |

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRS"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-15"
+#define	__REV__		"1.15.0"
 
 /*
 **++
@@ -36,6 +36,13 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-15		 5-OCT-2026	RRL
+**		The products by the vector instructions of the CPU: AVX2 or
+**		SSSE3 (x86), NEON (aarch64) - two tables of 16 a coefficient, the
+**		low and the high nibble of an octet looked up at once; chosen at
+**		the first call, checked against the portable code there, which
+**		VBACKUP_NOSIMD=1 keeps.  VBK$RS_SIMD names what is used.
+**
 **	X01-14		 5-OCT-2026	RRL
 **		Initial version.
 **
@@ -48,9 +55,104 @@
 #include	"vbkrs.h"
 #include	"vbkos.h"
 
+#if	defined(__x86_64__) || defined(__i386__)
+#include	<immintrin.h>
+#define	VBK$K_RSX86	1
+#elif	defined(__aarch64__)
+#include	<arm_neon.h>
+#define	VBK$K_RSNEON	1
+#endif
+
 static	uint8_t		s_exp [512];		/* alpha^i, twice over: no modulo in a product	*/
 static	uint8_t		s_log [256];
 static	int		s_made;
+
+/*
+**  dst ^= c * src by vector instructions: LO [x] = c * x, HI [x] = c * (x << 4)
+**  for x < 16, an octet b is LO [b & 15] ^ HI [b >> 4].  They go as far as
+**  whole vectors go; the caller does the rest.  Returns the octets done.
+*/
+typedef	size_t	(*VBK$RSVEC) (uint8_t *a_dst, const uint8_t *a_src, size_t a_len, const uint8_t *a_lo, const uint8_t *a_hi);
+
+static	VBK$RSVEC	s_vec;			/* NULL - the portable code			*/
+static	const char *	s_vecname = "portable";
+
+#ifdef	VBK$K_RSX86
+__attribute__ ((target ("ssse3")))
+static	size_t	s_vbk$vec_ssse3	(
+		uint8_t *	a_dst,
+	const	uint8_t *	a_src,
+		size_t		a_len,
+	const	uint8_t *	a_lo,
+	const	uint8_t *	a_hi
+			)
+{
+__m128i	l_lo = _mm_loadu_si128((const __m128i *) a_lo), l_hi = _mm_loadu_si128((const __m128i *) a_hi);
+__m128i	l_mask = _mm_set1_epi8(0x0F);
+size_t	i = 0;
+
+	for ( ; i + 16 <= a_len; i += 16 )
+		{
+		__m128i	l_s = _mm_loadu_si128((const __m128i *) (a_src + i));
+		__m128i	l_p = _mm_xor_si128(_mm_shuffle_epi8(l_lo, _mm_and_si128(l_s, l_mask)),
+				_mm_shuffle_epi8(l_hi, _mm_and_si128(_mm_srli_epi64(l_s, 4), l_mask)));
+
+		_mm_storeu_si128((__m128i *) (a_dst + i), _mm_xor_si128(_mm_loadu_si128((const __m128i *) (a_dst + i)), l_p));
+		}
+
+	return	i;
+}
+
+__attribute__ ((target ("avx2")))
+static	size_t	s_vbk$vec_avx2	(
+		uint8_t *	a_dst,
+	const	uint8_t *	a_src,
+		size_t		a_len,
+	const	uint8_t *	a_lo,
+	const	uint8_t *	a_hi
+			)
+{
+__m256i	l_lo = _mm256_broadcastsi128_si256(_mm_loadu_si128((const __m128i *) a_lo));
+__m256i	l_hi = _mm256_broadcastsi128_si256(_mm_loadu_si128((const __m128i *) a_hi));
+__m256i	l_mask = _mm256_set1_epi8(0x0F);
+size_t	i = 0;
+
+	for ( ; i + 32 <= a_len; i += 32 )
+		{
+		__m256i	l_s = _mm256_loadu_si256((const __m256i *) (a_src + i));
+		__m256i	l_p = _mm256_xor_si256(_mm256_shuffle_epi8(l_lo, _mm256_and_si256(l_s, l_mask)),
+				_mm256_shuffle_epi8(l_hi, _mm256_and_si256(_mm256_srli_epi64(l_s, 4), l_mask)));
+
+		_mm256_storeu_si256((__m256i *) (a_dst + i), _mm256_xor_si256(_mm256_loadu_si256((const __m256i *) (a_dst + i)), l_p));
+		}
+
+	return	i;
+}
+#endif
+
+#ifdef	VBK$K_RSNEON
+static	size_t	s_vbk$vec_neon	(
+		uint8_t *	a_dst,
+	const	uint8_t *	a_src,
+		size_t		a_len,
+	const	uint8_t *	a_lo,
+	const	uint8_t *	a_hi
+			)
+{
+uint8x16_t	l_lo = vld1q_u8(a_lo), l_hi = vld1q_u8(a_hi), l_mask = vdupq_n_u8(0x0F);
+size_t		i = 0;
+
+	for ( ; i + 16 <= a_len; i += 16 )
+		{
+		uint8x16_t	l_s = vld1q_u8(a_src + i);
+		uint8x16_t	l_p = veorq_u8(vqtbl1q_u8(l_lo, vandq_u8(l_s, l_mask)), vqtbl1q_u8(l_hi, vshrq_n_u8(l_s, 4)));
+
+		vst1q_u8(a_dst + i, veorq_u8(vld1q_u8(a_dst + i), l_p));
+		}
+
+	return	i;
+}
+#endif
 
 
 /*
@@ -76,6 +178,61 @@ uint32_t	l_x = 1;
 
 	s_exp [510] = s_exp [511] = s_exp [0];
 	s_made	= 1;
+
+	/* The vector instructions, when the CPU has them and they give the bytes of the portable code */
+	{
+	const char *	l_env = getenv("VBACKUP_NOSIMD");
+	VBK$RSVEC	l_try = NULL;
+	const char *	l_name = NULL;
+
+#ifdef	VBK$K_RSX86
+	__builtin_cpu_init();
+
+	if ( __builtin_cpu_supports("avx2") )
+		l_try = s_vbk$vec_avx2, l_name = "AVX2";
+	else if ( __builtin_cpu_supports("ssse3") )
+		l_try = s_vbk$vec_ssse3, l_name = "SSSE3";
+#endif
+#ifdef	VBK$K_RSNEON
+	l_try	= s_vbk$vec_neon, l_name = "NEON";
+#endif
+
+	if ( l_try && !(l_env && (*l_env == '1')) )
+		{
+		uint8_t		l_src [203], l_d1 [203], l_d2 [203];
+		int		l_ok = 1;
+
+		for ( uint32_t k = 0; k < sizeof(l_src); k++ )
+			l_src [k] = (uint8_t) (k * 37 + 11);
+
+		for ( uint32_t c = 2; l_ok && (c < 256); c += 7 )
+			{
+			memset(l_d1, 0x5A, sizeof(l_d1));
+			memset(l_d2, 0x5A, sizeof(l_d2));
+
+			vbk$rs_muladd(l_d1, l_src + 1, sizeof(l_src) - 1, (uint8_t) c);	/* the portable code: S_VEC is NULL yet */
+			s_vec	= l_try;
+			vbk$rs_muladd(l_d2, l_src + 1, sizeof(l_src) - 1, (uint8_t) c);
+			s_vec	= NULL;
+
+			l_ok	= !memcmp(l_d1, l_d2, sizeof(l_d1));
+			}
+
+		if ( l_ok )
+			s_vec = l_try, s_vecname = l_name;
+		}
+	}
+}
+
+
+/*
+**  What makes the products: "AVX2", "SSSE3", "NEON" or "portable"
+*/
+const char *	vbk$rs_simd	(void)
+{
+	vbk$rs_init();
+
+	return	s_vecname;
 }
 
 
@@ -138,6 +295,25 @@ size_t	i = 0;
 
 		for ( ; i < a_len; i++ )
 			a_dst [i] ^= a_src [i];
+
+		return;
+		}
+
+	/* The vector instructions: two tables of 16, the whole vectors; the rest below */
+	if ( s_vec && (a_len >= 16) )
+		{
+		uint8_t	l_lo [16], l_hi [16];
+
+		for ( uint32_t x = 0; x < 16; x++ )
+			{
+			l_lo [x] = s_vbk$mul(a_c, (uint8_t) x);
+			l_hi [x] = s_vbk$mul(a_c, (uint8_t) (x << 4));
+			}
+
+		i	= s_vec(a_dst, a_src, a_len, l_lo, l_hi);
+
+		for ( ; i < a_len; i++ )
+			a_dst [i] ^= (uint8_t) (l_lo [a_src [i] & 15] ^ l_hi [a_src [i] >> 4]);
 
 		return;
 		}

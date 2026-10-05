@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 5-OCT-2026	RRL	X-15 : VBACKUP_NOSIMD.
+.\"
 .\"		 5-OCT-2026	RRL	X-14 : /PARITY: several bad blocks of a group repaired.
 .\"
 .\"		 5-OCT-2026	RRL	X-13 : The savesets of OpenVMS BACKUP: list, restore, extract.
@@ -259,6 +261,10 @@ default.
 .B VBACKUP_CTHREADS
 The threads of the encryption (the stripes of a block, the blocks of a
 group when reading); the cores by default (at most 8), 1 \- none.
+.TP
+.B VBACKUP_NOSIMD
+1 \- the parity of /PARITY by the portable code even where the CPU has
+vector instructions for it (AVX2, SSSE3, NEON); for the trouble-shooting.
 .TP
 .B VBACKUP_NOHWCRYPTO
 1 \- SHA-256 by the portable code even where the CPU has instructions
