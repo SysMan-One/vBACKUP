@@ -37,8 +37,8 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 
 Esto es todo lo que necesitas. Abajo, paso a paso.
 
-Y más: hacer la caja más pequeña, sección 7; cerrarla con contraseña, sección 8;
-guardar un disco entero, secciones 9 y 10.
+Y más: guardar la caja en otro ordenador, sección 7; hacerla más pequeña, sección 8;
+cerrarla con contraseña, sección 9; guardar un disco entero, secciones 10 y 11.
 
 ---
 
@@ -326,7 +326,94 @@ Con `/LOG`, VBACKUP muestra cada archivo:
 
 ---
 
-## 7. Hacer la caja más pequeña
+## 7. Guardar la caja en otro ordenador
+
+**Para qué:** si tu ordenador se rompe, se quema o te lo roban, la caja está a salvo, lejos.
+VBACKUP puede poner la caja directamente en otro ordenador, por la red.
+
+Escribe el nombre del otro ordenador, dos veces dos puntos `::` y el nombre de la caja allí.
+En los ejemplos el otro ordenador se llama `backup-host`:
+
+```
+vbackup /home/ivan backup-host::/backup/ivan.bck /VERIFY
+```
+
+**Qué verás:**
+
+```
+05-10-2026 10:15:02.118 3104417 %VBACKUP-I-STARTED, Operation: save, Input: /home/ivan, Output: backup-host::/backup/ivan.bck - started
+05-10-2026 10:15:02.364 812230 %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /backup/ivan.bck - started
+05-10-2026 10:15:02.371 3104417 %VBACKUP-I-SAVESUMM, Files: 6, Bytes: 9218, Blocks: 4, Volumes: 1 - saved
+05-10-2026 10:15:02.379 812230 %VBACKUP-I-XFRSUMM, Blocks: 4, Volumes: 1, Bad: 0 - copied
+05-10-2026 10:15:02.379 812230 %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.01 - completed
+05-10-2026 10:15:02.383 3104417 %VBACKUP-I-VERIFYING, Saveset: backup-host::/backup/ivan.bck - verifying
+05-10-2026 10:15:02.536 3104417 %VBACKUP-I-CMPSUMM, Files: 6, Differences: 0 - compared
+05-10-2026 10:15:02.536 3104417 %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.42 - completed
+```
+
+**Qué quiere decir:** trabajan dos VBACKUP juntos, uno aquí y otro allí.
+Los dos escriben líneas en tu pantalla. Los distingues por el número después de la hora:
+
+- `3104417` — es **nuestro** VBACKUP. `save` y `saved` — mete tus archivos en la caja.
+- `812230` — es el VBACKUP del **otro ordenador**. `copy of a saveset` y `copied` —
+  recibe la caja, revisa cada bloque y la escribe allí.
+  `(standard input)` quiere decir: la caja le llega por la red, no de un archivo.
+- `Bad: 0` — no llegó ningún bloque roto. Bien.
+- `/VERIFY` lee la caja otra vez desde el otro ordenador y la compara con tus archivos.
+  `Differences: 0` — todo coincide.
+- El último `completed` es el nuestro. Quiere decir que todo salió bien en los dos ordenadores.
+
+**Recuperar tus archivos desde allí:**
+
+```
+vbackup backup-host::/backup/ivan.bck /home/ivan/restored
+```
+
+Verás lo mismo que en la sección 3, y también unas líneas del otro ordenador.
+
+**Ver qué hay en la caja de allí:**
+
+```
+vbackup backup-host::/backup/ivan.bck /LIST
+```
+
+**¿Una caja grande en trozos?** `/VOLUME_SIZE` también funciona aquí:
+
+```
+vbackup /home/ivan backup-host::/backup/ivan.bck /VOLUME_SIZE=4G
+```
+
+Los trozos aparecen en el otro ordenador: `ivan.bck`, `ivan.bck.002`, `ivan.bck.003`…
+
+**Qué hace falta:**
+
+- VBACKUP X01-11 o más nuevo, instalado en **los dos** ordenadores.
+- El otro ordenador te deja entrar con **claves ssh**, sin pedir contraseña.
+  ¿No sabes cómo? No pasa nada: pide a tu administrador
+  (quien te preparó el ordenador) que te configure las claves ssh.
+
+**Copiar una caja tal cual**
+
+Puedes copiar una caja a otro sitio bloque a bloque, sin deshacerla.
+Escribe primero la caja y después la caja nueva:
+
+```
+vbackup /home/ivan/ivan.bck /mnt/usb/ivan.bck
+```
+
+Se copian todos sus trozos, y cada bloque se revisa por el camino.
+Así se puede copiar incluso una caja cerrada (sección 9) — **no hace falta la contraseña**:
+la copia sigue cerrada, igual que el original.
+
+También funciona con otro ordenador:
+
+```
+vbackup /home/ivan/ivan.bck backup-host::/backup/ivan.bck
+```
+
+---
+
+## 8. Hacer la caja más pequeña
 
 **Para qué:** para que la caja ocupe menos sitio en la memoria USB.
 
@@ -367,7 +454,7 @@ Los archivos de la caja están bien. Solo instala el VBACKUP nuevo.
 
 ---
 
-## 8. Cerrar la caja con una contraseña
+## 9. Cerrar la caja con una contraseña
 
 **Para qué:** para que nadie más pueda mirar dentro de la caja.
 Por ejemplo, si la memoria USB se pierde o la roban.
@@ -440,7 +527,7 @@ Para cerrar una caja nueva, escribe `/ENCRYPT` de todos modos.
 Los gestores de archivos (MC, far2l, Total Commander, Double Commander) no saben
 pedir una contraseña. Abren una caja cerrada solo así, con `VBACKUP_KEY_FILE`.
 
-**vbkx** (sección 11) también abre una caja cerrada. Dale el archivo con `-k`, o te la pide:
+**vbkx** (sección 12) también abre una caja cerrada. Dale el archivo con `-k`, o te la pide:
 
 ```
 vbkx x /mnt/usb/ivan.bck -k /root/backup.key
@@ -449,14 +536,14 @@ vbkx x /mnt/usb/ivan.bck -k /root/backup.key
 **Bueno saber:**
 
 - Una caja cerrada rota se arregla como antes (`BLKFIXED`). Para eso no hace falta la contraseña.
-- Si alguien cambió la caja a propósito, VBACKUP lo nota (`BLKFORGED`, sección 12).
+- Si alguien cambió la caja a propósito, VBACKUP lo nota (`BLKFORGED`, sección 13).
 
 **Cuidado:** un VBACKUP antiguo (antes de X01-06) no puede abrir una caja cerrada.
 Solo dice que se perdieron bloques y no escribe nada. Instala el VBACKUP nuevo.
 
 ---
 
-## 9. Guardar un disco o una partición entera, tal como está
+## 10. Guardar un disco o una partición entera, tal como está
 
 **Para qué:** para hacer una copia exacta de todo el disco, trocito a trocito.
 Así se copia el disco con el que arranca el ordenador, o un disco cifrado.
@@ -535,9 +622,9 @@ vbackup /mnt/usb/sdb1.bck /home/ivan/sdb1.img /PHYSICAL
 
 ---
 
-## 10. Guardar un sistema de archivos entero y crearlo de nuevo en otro disco
+## 11. Guardar un sistema de archivos entero y crearlo de nuevo en otro disco
 
-**En qué se diferencia de la sección 9:** la sección 9 copia cada trocito del
+**En qué se diferencia de la sección 10:** la sección 10 copia cada trocito del
 disco; aquí VBACKUP copia todos los **archivos** del disco y recuerda qué disco era.
 El disco nuevo puede tener otro tamaño.
 
@@ -580,12 +667,12 @@ Recuerda:
 - hace falta el programa que crea discos de ese tipo (`mkfs.ext4`,
   `mkfs.vfat` …). Lo instala quien te preparó el ordenador;
 - así **no** se puede mover el disco con el que arranca el ordenador.
-  Para eso guarda el disco entero (`/dev/sdb`, no `/dev/sdb1`) como en la sección 9;
+  Para eso guarda el disco entero (`/dev/sdb`, no `/dev/sdb1`) como en la sección 10;
 - no conectes el disco viejo y el nuevo a la vez: son gemelos.
 
 ---
 
-## 11. ¿No hay VBACKUP? Usa vbkx
+## 12. ¿No hay VBACKUP? Usa vbkx
 
 **Para qué:** estás en otro ordenador y allí no está VBACKUP.
 Pero existe `vbkx` — un solo programa pequeño. Llévalo en la misma memoria USB.
@@ -653,7 +740,7 @@ Para reemplazarlo, añade `-f`.
 
 ---
 
-## 12. Si algo salió mal
+## 13. Si algo salió mal
 
 Un mensaje se ve así: `%VBACKUP-E-NOMBRE, File: nombre - texto`.
 Primero dice de qué se trata (un archivo, una caja, un disco), luego qué pasó.
@@ -953,7 +1040,7 @@ head -1 /root/backup.key
 **Qué pasó:** la caja está cerrada y no hay dónde pedir la contraseña
 (cron, un gestor de archivos).
 
-**Qué hacer:** da el archivo de clave (sección 8):
+**Qué hacer:** da el archivo de clave (sección 9):
 
 ```
 vbackup /mnt/usb/ivan.bck /home/ivan/restored /KEY_FILE=/root/backup.key
@@ -982,7 +1069,7 @@ chmod 600 /root/backup.key
 ```
 
 El mismo mensaje sale si el archivo está vacío o su primera línea es demasiado larga.
-Entonces escribe la contraseña en él otra vez (sección 8).
+Entonces escribe la contraseña en él otra vez (sección 9).
 
 ### KEYMATCH
 
@@ -1050,7 +1137,7 @@ disco conectado. Desconéctalo.
 
 **Qué pasó:** el disco nuevo es más pequeño que el guardado. No cabe todo.
 
-**Qué hacer:** usa un disco más grande. O pon la caja en un archivo imagen (sección 9).
+**Qué hacer:** usa un disco más grande. O pon la caja en un archivo imagen (sección 10).
 
 ### PHYSABORT
 
@@ -1104,7 +1191,7 @@ vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
 
 **Qué pasó:** VBACKUP no sabe crear un disco de ese tipo.
 
-**Qué hacer:** guarda ese disco como en la sección 9 (`/PHYSICAL`).
+**Qué hacer:** guarda ese disco como en la sección 10 (`/PHYSICAL`).
 O saca de la caja solo los archivos (sección 3).
 
 ### IMGMKFS
@@ -1131,9 +1218,62 @@ O saca de la caja solo los archivos (sección 3).
 
 **Qué hacer:** usa un disco más grande.
 
+### REMOTE
+
+**Qué ves** (por ejemplo):
+
+```
+%VBACKUP-E-REMOTE, Node: backup-host, errno: 11 - the pipe to VBACKUP there cannot be made (Resource temporarily unavailable)
+```
+
+**Qué pasó:** VBACKUP no pudo ni empezar a hablar con el otro ordenador.
+El problema está en **este** ordenador: está demasiado ocupado, hay demasiados programas.
+No se guardó ni se sacó nada.
+
+**Qué hacer:** espera un poco y prueba otra vez. Si vuelve a pasar, pide ayuda a tu administrador.
+
+### REMOTEERR
+
+**Qué ves:**
+
+```
+%VBACKUP-E-REMOTEERR, Node: backup-host, Exit: 2 - VBACKUP there did not complete: see its messages above
+```
+
+**Qué pasó:** el trabajo con el otro ordenador no terminó.
+Por qué — está escrito **en las líneas justo encima** de esta.
+
+**Qué hacer:** lee las líneas de arriba. Por ejemplo:
+
+- `Could not resolve hostname` — no hay ningún ordenador con ese nombre. Revisa el nombre.
+- `Permission denied` — el otro ordenador no te deja entrar.
+  Pide a tu administrador que configure las claves ssh.
+- `command not found` — en el otro ordenador no hay VBACKUP.
+  Hace falta VBACKUP X01-11 o más nuevo.
+- algo sobre `/TRANSFER` — el VBACKUP de allí es demasiado antiguo. Hace falta X01-11 o más nuevo.
+- `OPENOUT … File exists` — allí ya hay una caja con ese nombre.
+  Pon otro nombre, o añade `/REPLACE`.
+- ninguna línea arriba, y al final `Exit: 127` — aquí falta el programa `ssh`.
+  Pide ayuda a tu administrador.
+
+### BLKCOPIED
+
+**Qué ves:**
+
+```
+%VBACKUP-W-BLKCOPIED, Block: 39, Volume: 2 - is bad, copied as it is: a restore repairs it from its group
+```
+
+**Qué pasó:** mientras se copiaba una caja, un trocito de ella estaba roto.
+VBACKUP lo copió tal cual. **Tus archivos están bien**: cuando los saques,
+VBACKUP arregla ese trocito solo (`BLKFIXED`).
+
+**Qué hacer:** quizá el disco o la memoria USB con la caja vieja empieza a fallar.
+Guarda la copia nueva y pronto haz una caja nueva con tus archivos.
+
 ---
 
-## 13. Ayuda, no entiendo nada
+## 14. Ayuda, no entiendo nada
 
 No pasa nada. Pide ayuda al mismo programa.
 
@@ -1189,3 +1329,7 @@ Y sobre todo: pide ayuda a quien te preparó el ordenador. Enséñale el mensaje
 - **Archivo de clave** — un archivo pequeño con la contraseña en su primera línea. Solo tú puedes leerlo (`chmod 600`).
 - **Caja cerrada (cifrada)** — una caja hecha con `/ENCRYPT`. Sin la contraseña nadie puede mirar dentro,
   ni siquiera los nombres de los archivos.
+- **Nodo (`nombre-del-ordenador::`)** — otro ordenador, en el nombre de una caja: `backup-host::/backup/ivan.bck`
+  quiere decir «la caja `/backup/ivan.bck` en el ordenador `backup-host`». Dos veces dos puntos, sin espacios.
+- **Claves ssh** — una forma segura de que un ordenador te deje entrar en otro sin escribir contraseña.
+  Las configura tu administrador.

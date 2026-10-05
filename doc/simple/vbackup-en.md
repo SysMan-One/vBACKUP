@@ -37,8 +37,8 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 
 That is all you need. Below, step by step.
 
-And more: make the box smaller — section 7; lock it with a password — section 8;
-save a whole disk — sections 9 and 10.
+And more: keep the box on another computer — section 7; make it smaller — section 8;
+lock it with a password — section 9; save a whole disk — sections 10 and 11.
 
 ---
 
@@ -326,7 +326,94 @@ With `/LOG`, VBACKUP shows every file:
 
 ---
 
-## 7. Make the box smaller
+## 7. Keep the box on another computer
+
+**Why:** if your computer breaks, burns or is stolen, the box is safe far away.
+VBACKUP can put the box straight onto another computer, over the network.
+
+Write the name of the other computer, two colons `::` and the name of the box there.
+In the examples the other computer is called `backup-host`:
+
+```
+vbackup /home/ivan backup-host::/backup/ivan.bck /VERIFY
+```
+
+**What you will see:**
+
+```
+05-10-2026 10:15:02.118 3104417 %VBACKUP-I-STARTED, Operation: save, Input: /home/ivan, Output: backup-host::/backup/ivan.bck - started
+05-10-2026 10:15:02.364 812230 %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /backup/ivan.bck - started
+05-10-2026 10:15:02.371 3104417 %VBACKUP-I-SAVESUMM, Files: 6, Bytes: 9218, Blocks: 4, Volumes: 1 - saved
+05-10-2026 10:15:02.379 812230 %VBACKUP-I-XFRSUMM, Blocks: 4, Volumes: 1, Bad: 0 - copied
+05-10-2026 10:15:02.379 812230 %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.01 - completed
+05-10-2026 10:15:02.383 3104417 %VBACKUP-I-VERIFYING, Saveset: backup-host::/backup/ivan.bck - verifying
+05-10-2026 10:15:02.536 3104417 %VBACKUP-I-CMPSUMM, Files: 6, Differences: 0 - compared
+05-10-2026 10:15:02.536 3104417 %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.42 - completed
+```
+
+**What it means:** two VBACKUPs work together — one here and one there.
+Both write lines on your screen. Tell them apart by the number after the time:
+
+- `3104417` — that is **our** VBACKUP. `save` and `saved` — it packs your files.
+- `812230` — that is the VBACKUP on **the other computer**. `copy of a saveset` and `copied` —
+  it takes the box, checks every block and writes it down there.
+  `(standard input)` means: the box comes to it through the network, not from a file.
+- `Bad: 0` — no broken blocks arrived. Good.
+- `/VERIFY` reads the box back from the other computer and compares it with your files.
+  `Differences: 0` — everything matches.
+- The last `completed` is ours. It means all went well on both computers.
+
+**Get your files back from there:**
+
+```
+vbackup backup-host::/backup/ivan.bck /home/ivan/restored
+```
+
+You see the same as in section 3, and a few lines from the other computer too.
+
+**See what is in the box there:**
+
+```
+vbackup backup-host::/backup/ivan.bck /LIST
+```
+
+**A big box in pieces?** `/VOLUME_SIZE` works here too:
+
+```
+vbackup /home/ivan backup-host::/backup/ivan.bck /VOLUME_SIZE=4G
+```
+
+The pieces appear on the other computer: `ivan.bck`, `ivan.bck.002`, `ivan.bck.003`…
+
+**What is needed for this:**
+
+- VBACKUP X01-11 or newer is installed on **both** computers.
+- The other computer lets you in by **ssh keys**, without asking for a password.
+  You do not know how? That is all right: ask your administrator
+  (the person who set up your computer) to set up ssh keys for you.
+
+**Copy a box as it is**
+
+You can copy a box to another place block for block, without unpacking it.
+Give the box first and the new box second:
+
+```
+vbackup /home/ivan/ivan.bck /mnt/usb/ivan.bck
+```
+
+All its pieces are copied, and every block is checked on the way.
+Even a locked box (section 9) can be copied like this — **no password needed**:
+the copy stays locked, just like the original.
+
+It works with another computer too:
+
+```
+vbackup /home/ivan/ivan.bck backup-host::/backup/ivan.bck
+```
+
+---
+
+## 8. Make the box smaller
 
 **Why:** so that the box takes less room on the USB stick.
 
@@ -367,7 +454,7 @@ The files in the box are fine. Just install the new VBACKUP.
 
 ---
 
-## 8. Lock the box with a password
+## 9. Lock the box with a password
 
 **Why:** so that nobody else can look into the box.
 For example, if the USB stick is lost or stolen.
@@ -440,7 +527,7 @@ To lock a new box, still write `/ENCRYPT`.
 File managers (MC, far2l, Total Commander, Double Commander) cannot ask
 for a password. They open a locked box only this way, with `VBACKUP_KEY_FILE`.
 
-**vbkx** (section 11) opens a locked box too. Give it the file with `-k`, or it asks:
+**vbkx** (section 12) opens a locked box too. Give it the file with `-k`, or it asks:
 
 ```
 vbkx x /mnt/usb/ivan.bck -k /root/backup.key
@@ -449,14 +536,14 @@ vbkx x /mnt/usb/ivan.bck -k /root/backup.key
 **Good to know:**
 
 - A broken locked box is repaired as before (`BLKFIXED`). For that no password is needed.
-- If somebody changed the box on purpose, VBACKUP notices it (`BLKFORGED`, section 12).
+- If somebody changed the box on purpose, VBACKUP notices it (`BLKFORGED`, section 13).
 
 **Careful:** an old VBACKUP (before X01-06) cannot open a locked box.
 It just says blocks are lost and writes nothing. Install the new VBACKUP.
 
 ---
 
-## 9. Save a whole disk or partition, just as it is
+## 10. Save a whole disk or partition, just as it is
 
 **Why:** to make an exact copy of the whole disk — every little piece of it.
 This is how you copy the disk the computer starts from, or an encrypted disk.
@@ -535,9 +622,9 @@ vbackup /mnt/usb/sdb1.bck /home/ivan/sdb1.img /PHYSICAL
 
 ---
 
-## 10. Save a whole file system and make it again on another disk
+## 11. Save a whole file system and make it again on another disk
 
-**How it differs from section 9:** section 9 copies every piece of the disk;
+**How it differs from section 10:** section 10 copies every piece of the disk;
 here VBACKUP copies all the **files** of the disk and remembers what disk it was.
 The new disk may have another size.
 
@@ -580,12 +667,12 @@ Remember:
 - it needs the program that makes disks of that kind
   (`mkfs.ext4`, `mkfs.vfat` …). The person who set up your computer installs it;
 - this way you **cannot** move the disk the computer starts from.
-  For that, save the whole disk (`/dev/sdb`, not `/dev/sdb1`) as in section 9;
+  For that, save the whole disk (`/dev/sdb`, not `/dev/sdb1`) as in section 10;
 - do not connect the old and the new disk at the same time — they are twins.
 
 ---
 
-## 11. No VBACKUP here? Use vbkx
+## 12. No VBACKUP here? Use vbkx
 
 **Why:** you are on another computer, and VBACKUP is not installed there.
 But there is `vbkx` — one small program. Bring it on the same USB stick.
@@ -653,7 +740,7 @@ To replace it, add `-f`.
 
 ---
 
-## 12. If something went wrong
+## 13. If something went wrong
 
 A message looks like this: `%VBACKUP-E-NAME, File: name - text`.
 First comes what it is about (a file, a box, a disk), then what happened.
@@ -953,7 +1040,7 @@ head -1 /root/backup.key
 **What happened:** the box is locked, and there is no place to ask for the password
 (cron, a file manager).
 
-**What to do:** give the key file (section 8):
+**What to do:** give the key file (section 9):
 
 ```
 vbackup /mnt/usb/ivan.bck /home/ivan/restored /KEY_FILE=/root/backup.key
@@ -982,7 +1069,7 @@ chmod 600 /root/backup.key
 ```
 
 The same message comes when the file is empty, or its first line is too long.
-Then write the password into it again (section 8).
+Then write the password into it again (section 9).
 
 ### KEYMATCH
 
@@ -1050,7 +1137,7 @@ a connected disk. Disconnect it.
 
 **What happened:** the new disk is smaller than the one saved. It does not all fit.
 
-**What to do:** take a bigger disk. Or put the box into an image file (section 9).
+**What to do:** take a bigger disk. Or put the box into an image file (section 10).
 
 ### PHYSABORT
 
@@ -1104,7 +1191,7 @@ vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
 
 **What happened:** VBACKUP cannot make a disk of this kind.
 
-**What to do:** save such a disk as in section 9 (`/PHYSICAL`).
+**What to do:** save such a disk as in section 10 (`/PHYSICAL`).
 Or take just the files out of the box (section 3).
 
 ### IMGMKFS
@@ -1131,9 +1218,62 @@ Or take just the files out of the box (section 3).
 
 **What to do:** take a bigger disk.
 
+### REMOTE
+
+**What you see** (for example):
+
+```
+%VBACKUP-E-REMOTE, Node: backup-host, errno: 11 - the pipe to VBACKUP there cannot be made (Resource temporarily unavailable)
+```
+
+**What happened:** VBACKUP could not even start the talk with the other computer.
+The trouble is on **this** computer: it is too busy, too many programs are running.
+Nothing was saved or taken out.
+
+**What to do:** wait a little and try again. If it happens again, ask your administrator.
+
+### REMOTEERR
+
+**What you see:**
+
+```
+%VBACKUP-E-REMOTEERR, Node: backup-host, Exit: 2 - VBACKUP there did not complete: see its messages above
+```
+
+**What happened:** the work with the other computer did not finish.
+Why — that is written **in the lines just above** this one.
+
+**What to do:** read the lines above. For example:
+
+- `Could not resolve hostname` — there is no computer with this name. Check the name.
+- `Permission denied` — the other computer does not let you in.
+  Ask your administrator to set up ssh keys.
+- `command not found` — there is no VBACKUP on the other computer.
+  It needs VBACKUP X01-11 or newer.
+- something about `/TRANSFER` — the VBACKUP there is too old. It needs X01-11 or newer.
+- `OPENOUT … File exists` — a box with this name is already there.
+  Give another name, or add `/REPLACE`.
+- no lines above at all, and `Exit: 127` — the `ssh` program is missing here.
+  Ask your administrator.
+
+### BLKCOPIED
+
+**What you see:**
+
+```
+%VBACKUP-W-BLKCOPIED, Block: 39, Volume: 2 - is bad, copied as it is: a restore repairs it from its group
+```
+
+**What happened:** while a box was copied, one small piece of it was broken.
+VBACKUP copied it as it is. **Your files are fine**: when you take them out,
+VBACKUP repairs that piece by itself (`BLKFIXED`).
+
+**What to do:** the disk or the USB stick with the old box may be starting to fail.
+Keep the new copy, and soon make a fresh box from your files.
+
 ---
 
-## 13. Help, I do not understand anything
+## 14. Help, I do not understand anything
 
 That is all right. Ask the program itself for help.
 
@@ -1189,3 +1329,7 @@ And most of all: ask the person who set up your computer. Show them the message.
 - **Key file** — a small file with the password on its first line. Only you may read it (`chmod 600`).
 - **Locked (encrypted) box** — a box made with `/ENCRYPT`. Without the password nobody can look inside,
   not even at the names of the files.
+- **Node (`computer-name::`)** — another computer, in the name of a box: `backup-host::/backup/ivan.bck`
+  means "the box `/backup/ivan.bck` on the computer `backup-host`". Two colons, no spaces.
+- **ssh keys** — a safe way for one computer to let you in to another without typing a password.
+  Your administrator sets them up.
