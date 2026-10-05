@@ -1,0 +1,5 @@
+# VBACKUP savesets for file(1): the header of block 0 - magic VBKB, header length 64,
+# format version 1 - and the volume it is (format.md, section 3).  Goes into /etc/magic.
+0	string		VBKB\100\0\1\0	VBACKUP saveset
+>12	byte		3		\b, volume header
+>40	lelong		x		\b, volume %d

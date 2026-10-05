@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-09"
-#define	__REV__		"1.9.0"
+#define	__IDENT__	"X01-10"
+#define	__REV__		"1.10.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-10		 5-OCT-2026	RRL
+**		MC knows a saveset by .sav as by .bck and by its contents (the
+**		magic of file(1) in /etc/magic); the kit by git archive.
 **
 **	X01-09		 5-OCT-2026	RRL
 **		Every message in the form "Label: value - words" (vbkx and the

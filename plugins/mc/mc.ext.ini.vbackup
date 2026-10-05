@@ -1,7 +1,16 @@
-# VBACKUP savesets: enter a .bck like a directory (extfs uvbk), F3 shows the full listing.
+# VBACKUP savesets: enter one like a directory (extfs uvbk), F3 shows the full listing.
+# Known by its name - .bck, .sav, any case - or by its contents, whatever its name
+# (the first block says VBKB: file(1) with the magic of VBACKUP calls it a "VBACKUP saveset").
 # To go into mc.ext.ini before the [Default] section.
 [vbackup]
-Shell=.bck
-ShellIgnoreCase=true
+Regex=\.(bck|sav)$
+RegexIgnoreCase=true
+Include=vbackup
+
+[vbackup-contents]
+Type=^VBACKUP saveset
+Include=vbackup
+
+[Include/vbackup]
 Open=%cd %p/uvbk://
 View=%view{ascii} vbackup %f /SAVE_SET /LIST /FULL

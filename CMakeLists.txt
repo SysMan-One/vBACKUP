@@ -14,6 +14,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-09 : The kit by git archive of HEAD (cmake/kit.cmake):
+#					what is not committed never gets into it.
+#					The magic of file(1) into /etc/magic: MC knows a
+#					saveset by its contents; .sav beside .bck.
+#
 #		 4-OCT-2026	RRL	X-05 : Stage 5: the WCX plugin of Total Commander and
 #					Double Commander - vbackup.wcx (Linux, the target
 #					VBKWCX), and with MinGW-w64 vbackup.wcx64 and the
@@ -467,10 +472,12 @@ option(VBACKUP$M_PLUGINS "Install the file manager plugins where MC and far2l ar
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/uvbk DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/mc)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/mc.ext.ini.vbackup DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/mc)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/far/vbackup.ini DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/far)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/magic/vbackup.magic DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/magic)
 
 set(VBACKUP_MCEXTFS "")
 set(VBACKUP_MCEXTINI "")
 set(VBACKUP_FARCUSTOM "")
+set(VBACKUP_MAGIC "")
 
 if ( VBACKUP$M_PLUGINS )
 	foreach ( D /usr/lib/mc/extfs.d /usr/libexec/mc/extfs.d /usr/local/libexec/mc/extfs.d )
@@ -491,6 +498,11 @@ if ( VBACKUP$M_PLUGINS )
 		endif()
 	endforeach()
 
+	#	The local magic of file(1): MC knows a saveset by its contents, whatever its name
+	if ( EXISTS /etc/magic )
+		set(VBACKUP_MAGIC /etc/magic)
+	endif()
+
 	if ( VBACKUP_MCEXTFS )
 		install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/uvbk DESTINATION ${VBACKUP_MCEXTFS})
 	endif()
@@ -506,7 +518,12 @@ if ( VBACKUP$M_PLUGINS )
 			-DSNIPPET=${CMAKE_CURRENT_SOURCE_DIR}/plugins/far/vbackup.ini -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)")
 	endif()
 
-	message(STATUS "VBACKUP: plugins - MC extfs ${VBACKUP_MCEXTFS}, ${VBACKUP_MCEXTINI}; far2l ${VBACKUP_FARCUSTOM}")
+	if ( VBACKUP_MAGIC )
+		install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -DMODE=add -DTARGET=\$ENV{DESTDIR}${VBACKUP_MAGIC}
+			-DSNIPPET=${CMAKE_CURRENT_SOURCE_DIR}/plugins/magic/vbackup.magic -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)")
+	endif()
+
+	message(STATUS "VBACKUP: plugins - MC extfs ${VBACKUP_MCEXTFS}, ${VBACKUP_MCEXTINI}; far2l ${VBACKUP_FARCUSTOM}; magic ${VBACKUP_MAGIC}")
 endif()
 
 if ( NOT TARGET uninstall )
@@ -519,27 +536,14 @@ if ( NOT TARGET uninstall )
 endif()
 
 #
-#	The kit: vbackup-<ident>.tar.gz, the directory within it named the same
+#	The kit: vbackup-<ident>.tar.gz, the directory within it named the same;
+#	in a git tree what is committed only (cmake/kit.cmake)
 #
 set(VBACKUP$K_KIT "vbackup-${VBACKUP$K_IDENT}")
 
 add_custom_target(kit
-	COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/kit
-	COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/src     ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/src
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/lib     ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/lib
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/tools   ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/tools
-	COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/tools/go/vbkx-go ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/tools/rust/vbkx-rs
-		${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/tools/rust/vbkx-rs-check ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/tools/rust/target
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/include
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/doc     ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/doc
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/test    ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/test
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/cmake   ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/cmake
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/plugins ${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/plugins
-	COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt ${CMAKE_CURRENT_SOURCE_DIR}/README.md
-			${CMAKE_CURRENT_BINARY_DIR}/kit/${VBACKUP$K_KIT}/
-	COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_CURRENT_BINARY_DIR}/kit
-			${CMAKE_COMMAND} -E tar czf ${CMAKE_CURRENT_BINARY_DIR}/${VBACKUP$K_KIT}.tar.gz ${VBACKUP$K_KIT}
+	COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DOUT=${CMAKE_CURRENT_BINARY_DIR} -DKIT=${VBACKUP$K_KIT}
+		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/kit.cmake
 	COMMENT "Making ${VBACKUP$K_KIT}.tar.gz")
 
 if ( BUILD_TESTING )

@@ -43,6 +43,79 @@ New to all this?  The simple guides, task by task, with commands to
 copy: [English](doc/simple/vbackup-en.md), [Русский](doc/simple/vbackup-ru.md),
 [Español](doc/simple/vbackup-es.md).
 
+## Why VBACKUP rather than tar, dar, borg or dd
+
+Each of them is good at what it was made for.  VBACKUP was made for one
+thing above speed: that what was saved comes back - from a damaged disk,
+on a machine that has nothing installed, years later.
+
+**Damage is repaired, not only found.**  Every block and every file has a
+checksum, so damage is never silent.  The XOR block of each group
+(`/GROUP_SIZE`) rebuilds one bad block of the group, without asking; with
+more lost, the reader picks the stream up again at the next good block, and
+only the files that lay in the lost blocks are hurt - and named.  A
+compressed tar is unreadable after its first bad byte; a plain tar checks
+its headers only, so damaged contents come back wrong and unnoticed.  dar
+repairs only through par2 files made beside it; borg and restic find
+damage, and a bad chunk of a deduplicated repository hurts every backup
+that shares it.
+
+**Readable without VBACKUP.**  The format is a public, complete
+specification ([doc/format.md](doc/format.md)), and there are four
+independent readers of it besides VBACKUP: `vbkx` (static C, also
+`vbkx.exe` for Windows) and `vbkx-go`, `vbkx-rs`, `vbkx-pl`, each one
+source file with no dependencies beyond the language's standard library.
+A rescue system with a C compiler, or Go, or Rust, or only Perl, reads a
+saveset - encrypted ones too.
+
+**Encryption that does not cost the repair.**  ChaCha20 and HMAC-SHA256 per
+block, keys by PBKDF2: the checksums and the XOR groups lie over the
+ciphertext, so a damaged encrypted saveset is repaired without the
+passphrase, and a block changed on purpose is recognized and rebuilt.
+No crypto library is used, so every reader above reads it.
+
+**Instant listing and extraction.**  The catalog at the end of the saveset
+lists hundreds of gigabytes at once, and one file is reached through its
+place in the catalog - tar must read everything before it.  Through a pipe
+or a damaged saveset without its catalog, the stream is read instead.
+
+**One tool for files, volumes and devices.**  Files with everything Linux
+gives them (owners, nanosecond times, xattrs, ACLs, capabilities, chattr
+flags, hard links, sparse files); `/IMAGE`, a whole file system made again
+with its label and UUID; `/PHYSICAL`, a device block by block, zero pieces
+skipped, with the same checksums, repair, compression and encryption
+that dd, partclone and Clonezilla images do not have.  Volumes of any size,
+each identifying itself; incremental chains with a journal, a restore that
+deletes what was deleted; a copy disk to disk; savesets through ssh.
+
+**The commands of OpenVMS BACKUP.**  `/SAVE_SET`, `/SINCE=BACKUP`,
+`/RECORD`, `/INCREMENTAL`, `/IMAGE`, `/PHYSICAL`, `/VERIFY`, `/LIST`,
+`/SELECT`, `/EXCLUDE` - with HELP, messages of the VMS form and a reference
+manual in the manner of DEC ([doc/ref](doc/ref/vbackup_ref.md)).
+
+**In the file managers.**  Midnight Commander, far2l and Far, Total and
+Double Commander open a saveset like a folder (read only).
+
+| | VBACKUP | tar (.gz) | dar | borg / restic | dd / partclone |
+|---|---|---|---|---|---|
+| Checksum of every block and file | yes | headers only | yes | yes | no |
+| Repairs a bad block by itself | yes (XOR group) | no | with par2 | no | no |
+| Damage spreads | lost blocks only | to the end (.gz) | slice | shared chunks | - |
+| Readers without the tool | 4, no dependencies | many | no | no | many |
+| Encryption, repair without the key | yes, no library | no | libgcrypt | yes, no | no |
+| Listing of a large backup | catalog, instant | reads it all | catalog | index | - |
+| Volumes | yes | multi-volume, awkward | slices | - | split |
+| Whole device / file system | `/PHYSICAL`, `/IMAGE` | no | no | no | yes |
+| Deduplication | **no** | no | no | **yes** | no |
+| Remote repository | pipe through ssh | pipe | pipe | **yes** | pipe |
+
+**Where others are better.**  borg and restic deduplicate - a hundred
+daily backups of a large tree cost little more than one - and keep a
+remote repository; VBACKUP makes self-contained savesets, one per save,
+for media you put on a shelf.  tar is everywhere and every tool reads it.
+VBACKUP is young: its format is fixed and tested by its own damage tests,
+but it has not had the decades of use the others have.
+
 ## For geeks: vbkx-go, vbkx-rs, vbkx-pl
 
 Two more extractors of last resort, for the day everything else is
