@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 5-OCT-2026	RRL	X-14 : /PARITY: several bad blocks of a group repaired.
+.\"
 .\"		 5-OCT-2026	RRL	X-13 : The savesets of OpenVMS BACKUP: list, restore, extract.
 .\"
 .\"		 5-OCT-2026	RRL	X-06 : /ENCRYPT, /KEY_FILE; VBACKUP_KEY_FILE,
@@ -99,6 +101,12 @@ Block size, 8192 to 1048576, a multiple of 512; default 65536.
 .TP
 .BI /GROUP_SIZE= n
 One XOR block after every n data blocks, 0 to 100; default 10.
+.TP
+.BI /PARITY= m
+m parity blocks a group, 1 to 8 (Reed-Solomon): any m bad blocks of a
+group are rebuilt.  1, the XOR block alone, is the default; 2 or more
+makes a saveset of format version 2, which VBACKUP before X01-14 does
+not read.
 .TP
 .BI /VOLUME_SIZE= size
 Cut the saveset into volumes of this size (K, M, G, T): x.bck, x.bck.002, ...
@@ -221,6 +229,7 @@ $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 $ vbackup full.bck,mon.bck /restore /INCREMENTAL
 $ vbackup /home/rrl /mnt/disk2 /VERIFY
 $ vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+$ vbackup /home /mnt/usb/home.bck /PARITY=2
 $ vbackup /backup/rrl.bck /ORIGINAL
 $ vbackup /home/rrl/old /backup/old.bck /VERIFY /DELETE
 $ vbackup /mnt/data /mnt/usb/data.bck /IMAGE

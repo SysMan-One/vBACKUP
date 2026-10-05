@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-11"
+#define	__IDENT__	"X01-14"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.11.0"
+#define	__REV__		"1.14.0"
 #endif
 
 /*
@@ -29,6 +29,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		PARITY, VERSION, NFORGED; the event VBK$K_EV_PARITY; the group
+**		arrays for VBK$K_MAXPAR parity blocks.
 **
 **	X01-11		 5-OCT-2026	RRL
 **		SBASE of a volume of a stream.
@@ -58,6 +62,7 @@
 
 #include	"vbkfmt.h"
 #include	"vbkcrp.h"
+#include	"vbkrs.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -73,7 +78,9 @@ enum	{					/* Events reported through the callback		*/
 	VBK$K_EV_MISSVOL,			/* A volume is not there			*/
 	VBK$K_EV_WRONGVOL,			/* A volume of another saveset, or no saveset	*/
 	VBK$K_EV_BADREC,			/* A record header that makes no sense		*/
-	VBK$K_EV_BADTAG				/* A block whose CRC is right, its TAG not	*/
+	VBK$K_EV_BADTAG,			/* A block whose CRC is right, its TAG not	*/
+	VBK$K_EV_PARITY				/* v2: the parity left over disagrees - the	*/
+						/* group (its first block) not repaired		*/
 	};
 
 typedef struct vbk_rvol_t
@@ -95,6 +102,8 @@ typedef struct vbk_rctx_t
 	VBK$RVOL *	vols;			/* Indexed by volno - 1				*/
 	uint32_t	nvols;
 	uint32_t	bsize, psize, grpsz;
+	uint32_t	parity;			/* Parity blocks of a group: 1, or 2 .. 8 (v2)	*/
+	uint16_t	version;		/* Of every block: that of the VHDR of volume 1	*/
 	uint8_t		ssuuid [VBK$K_UUIDSZ];
 
 	uint8_t *	summary;		/* Body of the SUMMARY of volume 1		*/
@@ -117,9 +126,9 @@ typedef struct vbk_rctx_t
 	uint32_t	cap;			/* The most PAYLEN of a DATA block may be	*/
 
 	uint8_t *	gbuf;			/* The group being read, (grpsz + 1) blocks	*/
-	uint8_t		gok [VBK$K_MAXGRP + 1];
-	uint8_t		gtag [VBK$K_MAXGRP + 1];	/* ... its TAG is right (encrypted)		*/
-	VBK$BHDR	ghdr [VBK$K_MAXGRP + 1];
+	uint8_t		gok [VBK$K_MAXGRP + VBK$K_MAXPAR];
+	uint8_t		gtag [VBK$K_MAXGRP + VBK$K_MAXPAR];	/* ... its TAG is right (encrypted)	*/
+	VBK$BHDR	ghdr [VBK$K_MAXGRP + VBK$K_MAXPAR];
 	uint32_t	gdata;			/* DATA blocks in the group			*/
 	uint32_t	gnext;			/* Next of them to deliver			*/
 	uint32_t	gvol;			/* Volume of the group				*/
@@ -141,6 +150,7 @@ typedef struct vbk_rctx_t
 	int		pendrs;			/* A gap before the next record, from a seek	*/
 
 	uint64_t	nrepaired, nlost;
+	uint64_t	nforged;		/* Groups whose surplus parity disagreed (v2)	*/
 
 	void		(*evcb) (void *a_arg, int a_ev, uint32_t a_vol, uint64_t a_blk);
 	void *		evarg;

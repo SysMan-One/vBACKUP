@@ -28,6 +28,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-14 : Version 2 (/PARITY): three bad blocks of a group
+#					rebuilt, four lost; encrypted, two rebuilt.
+#
 #		 5-OCT-2026	RRL	X-06 : The messages of the geeks in the form of vbkx: "File: name
 #					- is incomplete", "File: name - ... not extracted",
 #					"Block: 2, Volume: 1 - was bad, rebuilt from its
@@ -345,6 +348,21 @@ $VX x ezbase/x.bck -C ezref -k key > ezref.log 2>&1
 ELAST=$(ls ebase/x.bck* | sort | tail -1)
 EBLKS=$(($(stat -c %s $ELAST) / BSZ))
 
+#	Version 2 (format.md 4.1): three parity blocks a group, and two encrypted; blocks 1, 2, 3
+#	of volume 2 - the first DATA blocks of its first group - spoilt, and 1 .. 4 for one too many
+mkdir pbase pebase
+$VB src/tree pbase/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /PARITY=3 /VOLUME_SIZE=200000 > psave.log 2>&1
+[ $? = 0 ] && [ -e pbase/x.bck.003 ] || bail "the /PARITY=3 saveset could not be made: $(cat psave.log)"
+VBACKUP_KDFITER=1000 $VB src/tree pebase/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /PARITY=2 /VOLUME_SIZE=200000 /ENCRYPT /KEY_FILE=key > pesave.log 2>&1
+[ $? = 0 ] && [ -e pebase/x.bck.003 ] || bail "the /PARITY=2 /ENCRYPT saveset could not be made: $(cat pesave.log)"
+pzap () { cp -r "$1" "$2" && python3 -c "
+import sys; p, bs = sys.argv[1], int(sys.argv[2]); d = bytearray(open(p, 'rb').read())
+for k in sys.argv[3:]: d[int(k) * bs + 100] ^= 0x55
+open(p, 'wb').write(d)" "$2/x.bck.002" $BSZ $3; }
+pzap pbase p3z "1 2 3"
+pzap pbase p4z "1 2 3 4"
+pzap pebase pe2z "1 2"
+
 #	The state of a tree: types, modes, sizes, times, link targets (the top itself left out)
 state () { ( cd "$1" && find . -mindepth 1 -printf '%y %m %s %T@ %l %P\n' | sort ); }
 same () {
@@ -494,6 +512,14 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	rm -rf d && cp -r ebase d && python3 g.py forge d/${ELAST#ebase/} $((EBLKS - 1)) 0
 	$G x d/x.bck -C $N.et2 -k key > $N.et2log 2>&1
 	check '[ $? = 1 ] && same ref $N.et2 && grep -q "Saveset: d/x.bck - its trailer fails its authentication" $N.et2log' "$N: a forged trailer, $(head -3 $N.et2log)"
+
+	#	5. Version 2 (/PARITY): three bad blocks of a group rebuilt, four lost; encrypted, two rebuilt
+	rm -rf $N.p3; $G x p3z/x.bck -C $N.p3 > $N.p3log 2>&1
+	check '[ $? = 0 ] && same ref $N.p3 && [ "$(grep -c "was bad, rebuilt from its group" $N.p3log)" = 3 ]' "$N: /PARITY=3, three bad blocks of a group, $(head -3 $N.p3log)"
+	$G t p4z/x.bck > $N.p4log 2>&1
+	check '[ $? = 1 ] && grep -q "is bad and cannot be rebuilt" $N.p4log' "$N: /PARITY=3, four bad blocks of a group, $(head -3 $N.p4log)"
+	rm -rf $N.pe; $G x pe2z/x.bck -C $N.pe -k key > $N.pelog 2>&1
+	check '[ $? = 0 ] && same eref $N.pe && [ "$(grep -c "was bad, rebuilt from its group" $N.pelog)" = 2 ]' "$N: /PARITY=2 /ENCRYPT, two bad blocks, $(head -3 $N.pelog)"
 
 	#	4. A forged saveset: names that climb out, a link to go through
 	mkdir -p evil.$N/out

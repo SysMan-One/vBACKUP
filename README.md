@@ -16,7 +16,8 @@ What a saveset gives you:
   attributes, POSIX ACLs, capabilities, chattr flags; hard links,
   symbolic links, sparse files, FIFOs, devices;
 - a checksum of every block and of every file: damage is always found;
-- XOR blocks (`/GROUP_SIZE`): one bad block in a group is rebuilt, and
+- XOR blocks (`/GROUP_SIZE`): one bad block in a group is rebuilt -
+  with `/PARITY=m` (Reed-Solomon) any m of them, side by side too - and
   after a loss the reader picks the stream up again at the next good
   block - only the files that lay in the lost blocks are hurt;
 - volumes (`/VOLUME_SIZE=4G`), each of which identifies itself - on
@@ -61,8 +62,9 @@ on a machine that has nothing installed, years later.
 
 **Damage is repaired, not only found.**  Every block and every file has a
 checksum, so damage is never silent.  The XOR block of each group
-(`/GROUP_SIZE`) rebuilds one bad block of the group, without asking; with
-more lost, the reader picks the stream up again at the next good block, and
+(`/GROUP_SIZE`) rebuilds one bad block of the group, without asking -
+`/PARITY=m` adds Reed-Solomon blocks, and any m bad blocks of a group are
+rebuilt, a burst of them too; with more lost, the reader picks the stream up again at the next good block, and
 only the files that lay in the lost blocks are hurt - and named.  A
 compressed tar is unreadable after its first bad byte; a plain tar checks
 its headers only, so damaged contents come back wrong and unnoticed.  dar
@@ -123,7 +125,7 @@ Double Commander open a saveset like a folder (read only).
 | | VBACKUP | tar (.gz) | dar | borg / restic | dd / partclone |
 |---|---|---|---|---|---|
 | Checksum of every block and file | yes | headers only | yes | yes | no |
-| Repairs a bad block by itself | yes (XOR group) | no | with par2 | no | no |
+| Repairs bad blocks by itself | yes: 1 a group, or m with `/PARITY=m` | no | with par2 | no | no |
 | Damage spreads | lost blocks only | to the end (.gz) | slice | shared chunks | - |
 | Readers without the tool | 4, no dependencies | many | no | no | many |
 | Encryption, repair without the key | yes, no library | no | libgcrypt | yes, no | no |
@@ -187,7 +189,7 @@ It needs no StarLet and no CMake; with MinGW-w64, from the top of the
 source tree:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 

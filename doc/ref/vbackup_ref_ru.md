@@ -13,9 +13,9 @@
 модули файловых менеджеров, а также перечислены все сообщения утилиты.
 
 **Сведения о редакции:** Настоящее руководство заменяет редакцию для
-VBACKUP X01-11.
+VBACKUP X01-13.
 
-**Версия программного обеспечения:** VBACKUP X01-13
+**Версия программного обеспечения:** VBACKUP X01-14
 
 **Операционная система:** Linux (x86_64, aarch64); Windows -- для vbkx.exe
 и модуля WCX
@@ -24,7 +24,7 @@ VBACKUP X01-11.
 
 StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
 
-Сведения настоящего документа соответствуют VBACKUP X01-13, собранной из
+Сведения настоящего документа соответствуют VBACKUP X01-14, собранной из
 исходных текстов. Формат saveset-а определяется документом
 `doc/format.md`; при расхождении настоящего руководства с этим документом
 в части байтов на носителе преимущество имеет `format.md`.
@@ -1010,6 +1010,7 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 | `/MODIFIED` | Выбор входных файлов | S, P | `/MODIFIED` |
 | `/ORIGINAL` | Выходной файл | R | -- |
 | `/OWNER=option` | Выходной файл | R, P | `ORIGINAL` для root, иначе `DEFAULT` |
+| `/PARITY=m` | Выходной saveset | S | 1 |
 | `/PHYSICAL` | Команда | S, R | -- |
 | `/[NO]RECORD` | Команда | S, J | `/NORECORD` |
 | `/[NO]REPLACE` | Выходной файл, выходной saveset | S, R, X, T | `/NOREPLACE` |
@@ -1914,6 +1915,42 @@ $ vbackup /home home.bck /SINCE=TODAY /MODIFIED
 ```
 # vbackup /backup/rrl.bck /home /OWNER=rrl
 ```
+
+---
+
+### /PARITY
+
+Квалификатор выходного saveset-а.
+
+**Формат**
+
+`/PARITY=m`
+
+**Описание**
+
+Задаёт число блоков чётности, которыми закрывается каждая группа, от 1 до
+8. При `/PARITY=1`, по умолчанию, группа кончается XOR-блоком, и
+восстанавливается один плохой блок группы. При *m* от 2 за XOR-блоком
+идут *m* - 1 блоков PARITY (Reed-Solomon над GF(2^8), format.md 4.1):
+любые *m* плохих блоков группы -- в том числе соседние, данные или
+чётность -- восстанавливаются при чтении saveset-а (BLKFIXED). Saveset
+растёт на *m*/*n* объёма данных, где *n* -- размер группы. Когда хороших
+блоков чётности больше, чем нужно, лишние строки проверяют починку;
+группа, чётность которой не сходится, не восстанавливается (PARITYERR).
+
+Saveset с *m* от 2 имеет формат версии 2 в каждом блоке. VBACKUP и vbkx
+до X01-14 его отвергают (NOTSAVESET); vbkx-go, vbkx-rs, vbkx-pl и модуль
+WCX версии X01-14 его читают. `/PARITY` нужны группы: с `/GROUP_SIZE=0`
+он недопустим.
+
+**Пример**
+
+```
+$ vbackup /home /mnt/tape/home.bck /GROUP_SIZE=20 /PARITY=4
+```
+
+Saveset больше своих данных на 20% и переживает четыре плохих блока
+подряд в каждой группе из двадцати.
 
 ---
 
@@ -3447,6 +3484,22 @@ Ctrl/C.
 
 ---
 
+**PARITYERR**, Block: *n*, Volume: *n* - the group beginning here does not agree with its parity: a block of it with a right CRC holds other bytes, nothing of it is rebuilt
+
+**Средство:** VBACKUP. **Уровень:** предупреждение (W).
+
+**Пояснение:** Saveset сделан с `/PARITY`: блоки группы, которая
+начинается с названного блока, были плохими, и любой способ восстановить
+их по блокам чётности оставлял строку, которая не сходится, -- какой-то
+блок группы с верным CRC содержит не те байты, что были записаны. Ничего
+из группы не восстанавливается; её плохие блоки потеряны (BLKLOST), а
+файлы в них названы (FILDAMAGED).
+
+**Действие пользователя:** Сохраните saveset: остальные группы не
+затронуты. Выясните, как на носителе оказался такой блок.
+
+---
+
 **PHYSABORT**, Device: *device* - not overwritten: the answer was not YES
 
 **Средство:** VBACKUP. **Уровень:** ошибка (E).
@@ -3963,11 +4016,11 @@ G (group) = DATA x n, then XOR        (1 <= n <= N; N = 0: no XOR blocks)
 |---|---|---|---|
 | 0 | 4 | magic | `V` `B` `K` `B` |
 | 4 | 2 | hdrlen | 64 |
-| 6 | 2 | version | 1 |
+| 6 | 2 | version | 1; 2 при `/PARITY` от 2 |
 | 8 | 4 | bsize | B |
-| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER, 5 EDATA, 6 ETRAILER |
+| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER, 5 EDATA, 6 ETRAILER, 7 PARITY |
 | 13 | 1 | flags | бит 0 LASTINVOL, бит 1 LASTINSET |
-| 14 | 2 | gindex | DATA: позиция в группе; XOR: n; иначе 0 |
+| 14 | 2 | gindex | DATA: позиция в группе; XOR: n; PARITY: n + 256 * строка; иначе 0 |
 | 16 | 16 | ssuuid | UUID saveset-а |
 | 32 | 8 | blkno | номер блока |
 | 40 | 4 | volno | номер тома, с 1 |
@@ -3987,6 +4040,7 @@ G (group) = DATA x n, then XOR        (1 <= n <= N; N = 0: no XOR blocks)
 |---|---|---|
 | 1 | DATA | Часть потока записей |
 | 2 | XOR | Чётность блоков DATA своей группы (никогда не шифруется) |
+| 7 | PARITY | Строка 1 .. m - 1 чётности Reed-Solomon своей группы, версия 2 (`/PARITY`) |
 | 3 | VHDR | Первый блок каждого тома: полная запись SUMMARY (в зашифрованном saveset-е -- краткая открытая SUMMARY) |
 | 4 | TRAILER | Последний блок saveset-а: одно тело TLV с итогами и местом каталога |
 | 5 | EDATA | Блок DATA зашифрованного saveset-а |
@@ -4192,7 +4246,7 @@ Linux.
 
 ```
 $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
+      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
 $ make -f tools/Makefile.win
 ```
 

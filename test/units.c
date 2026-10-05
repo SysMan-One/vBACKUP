@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -26,6 +26,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		Reed-Solomon: every erasure pattern of n <= 10, m <= 4; m + 1
+**		refused; a forged surplus row found.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		The pool: an encrypted saveset written and read on four threads, a
@@ -58,6 +62,7 @@
 #include	"vbkrd.h"
 #include	"vbkos.h"
 #include	"vbklz4.h"
+#include	"vbkrs.h"
 #include	"vbkcrp.h"
 
 #define	UNITS$K_NREC	400			/* Records of the synthetic saveset		*/
@@ -887,6 +892,86 @@ char		l_spec [1100];
 	$CHECK(!l_bad, "decrypted wrong");
 
 	vbk$crp_wipe(&l_keys, sizeof(l_keys));
+	}
+
+	s_begin("Reed-Solomon: every erasure pattern of n <= 10, m <= 4 is rebuilt exactly");
+	{
+	enum	{ L_LEN = 37 };
+	uint8_t		l_d [10] [L_LEN], l_o [10] [L_LEN], l_p [4] [L_LEN];
+	uint8_t *	l_dp [10];
+	const uint8_t *	l_pp [4];
+	uint8_t		l_dok [10], l_pok [4];
+	uint32_t	l_bad = 0, l_npat = 0;
+
+	vbk$rs_init();
+
+	for ( uint32_t i = 0; i < 10; i++ )
+		{
+		l_dp [i] = l_d [i];
+
+		for ( uint32_t k = 0; k < L_LEN; k++ )
+			l_o [i] [k] = (uint8_t) ((i * 131 + k * 17 + (i * k)) ^ 0x5A);
+		}
+
+	for ( uint32_t j = 0; j < 4; j++ )
+		l_pp [j] = l_p [j];
+
+	for ( uint32_t n = 1; n <= 10; n++ )
+		for ( uint32_t m = 1; m <= 4; m++ )
+			{
+			/* The parity of the group */
+			memset(l_p, 0, sizeof(l_p));
+
+			for ( uint32_t j = 0; j < m; j++ )
+				for ( uint32_t i = 0; i < n; i++ )
+					vbk$rs_muladd(l_p [j], l_o [i], L_LEN, vbk$rs_coef(j, i));
+
+			/* Every subset of the n + m blocks of at most m elements */
+			for ( uint32_t l_set = 0; l_set < (1U << (n + m)); l_set++ )
+				{
+				if ( (uint32_t) __builtin_popcount(l_set) > m )
+					continue;
+
+				l_npat++;
+
+				for ( uint32_t i = 0; i < n; i++ )
+					{
+					l_dok [i] = !(l_set & (1U << i));
+					memcpy(l_d [i], l_dok [i] ? l_o [i] : (const uint8_t *) "garbage garbage garbage garbage garbag", L_LEN);
+					}
+
+				for ( uint32_t j = 0; j < m; j++ )
+					l_pok [j] = !(l_set & (1U << (n + j)));
+
+				if ( (STS$K_SUCCESS != vbk$rs_repair(n, m, l_dp, l_dok, l_pp, l_pok, L_LEN)) || memcmp(l_d, l_o, (size_t) n * L_LEN) )
+					l_bad++;
+				}
+			}
+
+	$CHECK(!l_bad, "%u of %u patterns not rebuilt", l_bad, l_npat);
+	$CHECK(vbk$rs_coef(0, 7) == 1, "row 0 is not the XOR");
+
+	/* m + 1 lost: refused, untouched; a forged parity row found by a row left over */
+	memset(l_p, 0, sizeof(l_p));
+
+	for ( uint32_t j = 0; j < 3; j++ )
+		for ( uint32_t i = 0; i < 6; i++ )
+			vbk$rs_muladd(l_p [j], l_o [i], L_LEN, vbk$rs_coef(j, i));
+
+	for ( uint32_t i = 0; i < 6; i++ )
+		memcpy(l_d [i], l_o [i], L_LEN), l_dok [i] = (i > 2);
+
+	l_pok [0] = l_pok [1] = l_pok [2] = 1;
+	$CHECK(STS$K_SUCCESS == vbk$rs_repair(6, 3, l_dp, l_dok, l_pp, l_pok, L_LEN), "three lost of three rows refused");
+
+	l_dok [3] = 0;
+	$CHECK(STS$K_ERROR == vbk$rs_repair(6, 3, l_dp, l_dok, l_pp, l_pok, L_LEN), "four lost of three rows not refused");
+
+	for ( uint32_t i = 0; i < 6; i++ )
+		l_dok [i] = (i != 1);
+
+	l_p [2] [5] ^= 1;
+	$CHECK(STS$K_WARN == vbk$rs_repair(6, 3, l_dp, l_dok, l_pp, l_pok, L_LEN), "a forged row left over not found");
 	}
 
 	if ( s_tap )

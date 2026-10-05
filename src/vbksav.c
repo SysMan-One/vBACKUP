@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-12"
-#define	__REV__		"1.12.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		The SUMMARY tag PARITY, in the clear VHDR too; /PARITY to the
+**		writer.
 **
 **	X01-12		 5-OCT-2026	RRL
 **		/RECORD of a save onto another node: the journal names the saveset
@@ -1024,6 +1028,10 @@ int		l_ok = 1;
 	l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_BLOCKSIZE, l_o->bsize);
 	l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_GROUPSIZE, l_o->grpsz);
 
+	/* Version 2 (format.md 4.1): the parity blocks of a group */
+	if ( l_o->grpsz && (l_o->parity > 1) )
+		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_PARITY, (uint8_t) l_o->parity);
+
 	/* Information only: a reader goes by the record types, not by this */
 	if ( l_o->compress )
 		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_COMPRESS, VBK$K_CODEC_LZ4);
@@ -1319,6 +1327,9 @@ int		l_status = STS$K_SUCCESS;
 		l_ok &= vbk$tlv_str(&l_vhdr, VBK$K_TAG_PRODUCT, "VBACKUP " VBACKUP_K_IDENT);
 		l_ok &= vbk$tlv_u32(&l_vhdr, VBK$K_TAG_BLOCKSIZE, a_opts->bsize);
 		l_ok &= vbk$tlv_u32(&l_vhdr, VBK$K_TAG_GROUPSIZE, a_opts->grpsz);
+
+		if ( a_opts->grpsz && (a_opts->parity > 1) )
+			l_ok &= vbk$tlv_u8(&l_vhdr, VBK$K_TAG_PARITY, (uint8_t) a_opts->parity);
 		l_ok &= vbk$tlv_u64(&l_vhdr, VBK$K_TAG_VOLSIZE, a_opts->volsize);
 		l_ok &= s_vbk$crypttags(l_sav, &l_vhdr);
 
@@ -1326,6 +1337,7 @@ int		l_status = STS$K_SUCCESS;
 			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
 		}
 
+	l_sav->wctx.parity	= a_opts->parity;
 	l_sav->wctx.volcb	= s_vbk$volcb;
 	l_sav->wctx.volarg	= l_sav;
 

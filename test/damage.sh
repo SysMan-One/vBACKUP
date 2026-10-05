@@ -13,10 +13,10 @@
 #			over several volumes.  Every round damages a copy of
 #			the saveset in one of three ways and restores it:
 #
-#			FIX	at most one block of a group - inside the groups,
-#				header or payload: every block is repaired, the
-#				tree comes back whole, no BLKLOST;
-#			LOSE	two or more blocks of some groups: blocks are lost,
+#			FIX	at most one block of a group (m with /PARITY=m) -
+#				inside the groups, header or payload: every block
+#				is repaired, the tree comes back whole, no BLKLOST;
+#			LOSE	more blocks than that in some groups: blocks are lost,
 #			CHAOS	anything - the VHDRs, the TRAILER, cut volumes, a
 #				missing volume, blocks swapped or copied over:
 #				for both, no crash and no hang, and above all no
@@ -39,6 +39,12 @@
 #	CREATION DATE:	 3-OCT-2026
 #
 #	MODIFICATION HISTORY:
+#
+#		 5-OCT-2026	RRL	X-14 : /PARITY (format.md 4.1): every fifth round damages
+#					the tree saved /PARITY=3, every tenth of them the
+#					one saved /PARITY=2 /ENCRYPT with the spoilt blocks
+#					sealed again; FIX spoils up to m blocks of a
+#					group, LOSE more than m.
 #
 #		 5-OCT-2026	RRL	X-08 : The judge reads the messages of VBACKUP and vbkx in
 #					their new form, "File: name - text".
@@ -86,6 +92,7 @@ cat > dmg.py <<'EOF'
 import os, random, re, sys, glob, zlib
 
 BSZ, GRP = int(os.environ["BSZ"]), int(os.environ["GRP"])
+PAR = int(os.environ.get("PAR", "1"))			# parity blocks of a group (/PARITY)
 
 def vols(d):
 	v = [d + "/x.bck"] + sorted(glob.glob(d + "/x.bck.[0-9][0-9][0-9]"))
@@ -130,16 +137,18 @@ def damage(d, mode, seed):
 	if mode == "FIX":
 		for i, p in enumerate(v):
 			pos = groupblocks(p, i == len(v) - 1)
-			for g in range(0, len(pos), GRP + 1):
+			for g in range(0, len(pos), GRP + PAR):
+				grp = pos[g:g + GRP + PAR]
 				if rnd.random() < 0.5:
-					hit(p, rnd.choice(pos[g:g + GRP + 1]), rnd)
+					for b in rnd.sample(grp, min(len(grp), rnd.randint(1, PAR))):
+						hit(p, b, rnd)
 	elif mode == "LOSE":
 		for i, p in enumerate(v):
 			pos = groupblocks(p, i == len(v) - 1)
-			for g in range(0, len(pos), GRP + 1):
-				grp = pos[g:g + GRP + 1]
-				if len(grp) >= 2 and rnd.random() < 0.3:
-					for b in rnd.sample(grp, rnd.randint(2, len(grp))):
+			for g in range(0, len(pos), GRP + PAR):
+				grp = pos[g:g + GRP + PAR]
+				if len(grp) >= PAR + 1 and rnd.random() < 0.3:
+					for b in rnd.sample(grp, rnd.randint(PAR + 1, len(grp))):
 						hit(p, b, rnd)
 	else:
 		for _ in range(rnd.randint(1, 6)):
@@ -269,6 +278,13 @@ $VB basee/x.bck re0 > re0.log 2>&1
 python3 dmg.py judge src/tree re0 re0.log > /dev/null && [ "$(grep -c BLK re0.log)" = 0 ]
 [ $? = 0 ] && ok "the undamaged encrypted saveset restores" || fail "the undamaged encrypted saveset does not restore: $(head -3 re0.log)"
 
+#	The same tree with three parity blocks a group, and with two and encrypted (format.md 4.1)
+mkdir -p basep basepe
+$VB src/tree basep/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /PARITY=3 /VOLUME_SIZE=$VOLSZ > savep.log 2>&1
+[ $? = 0 ] && [ -e basep/x.bck.003 ] || bail "the /PARITY=3 saveset could not be made: $(cat savep.log)"
+$VB src/tree basepe/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /PARITY=2 /VOLUME_SIZE=$VOLSZ /ENCRYPT > savepe.log 2>&1
+[ $? = 0 ] && [ -e basepe/x.bck.003 ] || bail "the /PARITY=2 /ENCRYPT saveset could not be made: $(cat savepe.log)"
+
 #	The undamaged saveset first: the judge itself must agree with it
 $VB base/x.bck r0 > r0.log 2>&1
 python3 dmg.py judge src/tree r0 r0.log > /dev/null && [ "$(grep -c BLK r0.log)" = 0 ]
@@ -290,17 +306,20 @@ while [ $r -le "$ROUNDS" ]; do
 	BASE=base
 	[ $((r % 2)) = 0 ] && BASE=basez
 	[ $((r % 4)) = 3 ] && BASE=basee
+	[ $((r % 5)) = 0 ] && BASE=basep
+	[ $((r % 10)) = 5 ] && BASE=basepe
 	cp -r $BASE d
-	[ $BASE = basee ] && DMG_FORGE=1 || DMG_FORGE=0
-	DMG_FORGE=$DMG_FORGE python3 dmg.py damage d $MODE $RS
+	case $BASE in basee|basepe) DMG_FORGE=1 ;; *) DMG_FORGE=0 ;; esac
+	case $BASE in basep) PAR=3 ;; basepe) PAR=2 ;; *) PAR=1 ;; esac
+	PAR=$PAR DMG_FORGE=$DMG_FORGE python3 dmg.py damage d $MODE $RS
 
 	#	A forged block repaired is a warning still: the saveset was changed by somebody
 	FIXRC=0
-	[ $BASE = basee ] && grep -q BLKFORGED rst.log 2>/dev/null && FIXRC=1
+	[ $DMG_FORGE = 1 ] && grep -q BLKFORGED rst.log 2>/dev/null && FIXRC=1
 
 	timeout 120 $VB d/x.bck out > rst.log 2>&1
 	RC=$?
-	[ $BASE = basee ] && grep -q BLKFORGED rst.log && FIXRC=1
+	[ $DMG_FORGE = 1 ] && grep -q BLKFORGED rst.log && FIXRC=1
 
 	if crashed $RC rst.log; then
 		fail "round $r $MODE seed $RS: the restore crashed or hung, completion code $RC"
@@ -309,7 +328,7 @@ while [ $r -le "$ROUNDS" ]; do
 	elif [ $MODE = FIX ] && { grep -q BLKLOST rst.log || [ $RC != $FIXRC ]; }; then
 		fail "round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v BLKFIXED rst.log | head -3)"
 	else
-		ok "round $r $MODE seed $RS: restore${DMG_FORGE:+ ($BASE)}"
+		ok "round $r $MODE seed $RS: restore ($BASE)"
 	fi
 
 	#	The same damage through the stand-alone extractor

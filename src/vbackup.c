@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-13"
-#define	__REV__		"1.13.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		/PARITY=m: m parity blocks a group (format.md 4.1); the smallest
+**		volume (N + m + 2) blocks.
 **
 **	X01-13		 5-OCT-2026	RRL
 **		A saveset of OpenVMS BACKUP on the input (VBKVMS.C): /LIST,
@@ -131,6 +135,7 @@ enum	{
 	VBACKUP$K_QUAL_SAVE_SET	= 0,
 	VBACKUP$K_QUAL_BLOCK_SIZE,
 	VBACKUP$K_QUAL_GROUP_SIZE,
+	VBACKUP$K_QUAL_PARITY,
 	VBACKUP$K_QUAL_VOLUME_SIZE,
 	VBACKUP$K_QUAL_COMMENT,
 	VBACKUP$K_QUAL_SELECT,
@@ -196,6 +201,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("SAVE_SET")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("BLOCK_SIZE")},	.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("GROUP_SIZE")},	.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("PARITY")},		.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("VOLUME_SIZE")},	.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("COMMENT")},		.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("SELECT")},		.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL,	.flag = CLI$M_LIST },
@@ -258,7 +264,7 @@ static	const char	s_usage [] = {
 	"    saveset[,...] /RECORD   rebuild the journal from the catalogs\n"
 	"    /JOURNAL /LIST [/FULL]  list the journal\n"
 	"\n"
-	"  Save:     /BLOCK_SIZE=n /GROUP_SIZE=n /VOLUME_SIZE=size /COMMENT=\"...\"\n"
+	"  Save:     /BLOCK_SIZE=n /GROUP_SIZE=n /PARITY=m /VOLUME_SIZE=size /COMMENT=\"...\"\n"
 	"            /SINCE=time /BEFORE=time /MODIFIED /CREATED /CHANGED\n"
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
 	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
@@ -533,9 +539,23 @@ ASC		l_val;
 		a_opts->grpsz	= (uint32_t) l_v;
 		}
 
+	/* /PARITY=m: m parity blocks a group, any m lost blocks of it rebuilt (format.md 4.1) */
+	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_PARITY, l_str, sizeof(l_str)) )
+		{
+		l_v	= strtoull(l_str, NULL, 0);
+
+		if ( (l_v < 1) || (l_v > VBK$K_MAXPAR) )
+			return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "PARITY");
+
+		if ( (l_v > 1) && !a_opts->grpsz )
+			return	$VBKMSG(VBACKUP$_QUALUSE, "PARITY", "needs groups: not with /GROUP_SIZE=0");
+
+		a_opts->parity	= (uint32_t) l_v;
+		}
+
 	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_VOLUME_SIZE, l_str, sizeof(l_str)) )
 		{
-		if ( !(1 & s_vbk$cvtsize(l_str, &l_v)) || (l_v < ((uint64_t) (a_opts->grpsz + 3) * a_opts->bsize)) )
+		if ( !(1 & s_vbk$cvtsize(l_str, &l_v)) || (l_v < ((uint64_t) (a_opts->grpsz + a_opts->parity + 2) * a_opts->bsize)) )
 			return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "VOLUME_SIZE");
 
 		a_opts->volsize	= (l_v / a_opts->bsize) * a_opts->bsize;
@@ -866,6 +886,7 @@ size_t		l_cmdlen = 0;
 	/* The defaults */
 	l_opts.bsize	= VBK$K_DEFBSZ;
 	l_opts.grpsz	= VBK$K_DEFGRP;
+	l_opts.parity	= 1;
 	l_opts.xattrs	= 1;
 	l_opts.ownmode	= geteuid() ? VBACKUP$K_OWN_DEFAULT : VBACKUP$K_OWN_ORIGINAL;
 

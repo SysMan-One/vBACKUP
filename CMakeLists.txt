@@ -14,6 +14,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-14 : Stage 10: VBKRS, the Reed-Solomon parity of a group
+#					(/PARITY), into VBKCORE, vbkx, vbkx.exe and WCX.
+#
 #		 5-OCT-2026	RRL	X-13 : Stage 9: VBKVMS - the savesets of OpenVMS BACKUP
 #					(lib/vbkvms.c into VBKCORE, vbkx and vbkx.exe;
 #					src/vbkvms.c); doc/vmsbackup.md installed.
@@ -159,7 +162,7 @@ endif()
 #	CRC), no writer, no utility, no tests.
 #
 if ( WIN32 )
-	add_executable(vbkx tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c)
+	add_executable(vbkx tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c)
 	target_include_directories(vbkx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 	target_link_libraries(vbkx PRIVATE vbackup_options shell32)
 	target_link_options(vbkx PRIVATE -static)
@@ -167,7 +170,7 @@ if ( WIN32 )
 	install(TARGETS vbkx RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 	#	The WCX plugin of Total Commander: a DLL, the __stdcall names undecorated
-	add_library(vbkwcx MODULE plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c)
+	add_library(vbkwcx MODULE plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkrs.c)
 	target_include_directories(vbkwcx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 	target_link_libraries(vbkwcx PRIVATE vbackup_options)
 	target_link_options(vbkwcx PRIVATE -static -Wl,--kill-at)
@@ -220,6 +223,7 @@ add_library(vbkcore STATIC
 	lib/vbklz4.c
 	lib/vbkcrp.c
 	lib/vbkvms.c
+	lib/vbkrs.c
 	lib/vbkpar.c)
 
 target_include_directories(vbkcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
@@ -327,7 +331,7 @@ if ( VBACKUP$M_WINVBKX )
 	find_program(VBACKUP_WINE wine)
 
 	if ( VBACKUP_MINGW )
-		set(L_SRC tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c)
+		set(L_SRC tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c)
 
 		#	In a directory of its own: as a file next to them, CMake took vbkx.exe for the target vbkx
 		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe
@@ -351,7 +355,7 @@ endif()
 #	MinGW-w64, vbackup.wcx64 and the 32-bit vbackup.wcx for Total
 #	Commander, the same command lines as plugins/wcx/Makefile
 #
-add_library(vbkwcx MODULE plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c)
+add_library(vbkwcx MODULE plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkrs.c)
 target_include_directories(vbkwcx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_compile_definitions(vbkwcx PRIVATE VBK_NOSTARLET)
 target_link_libraries(vbkwcx PRIVATE vbackup_options)
@@ -367,7 +371,7 @@ set(VBACKUP_WCX32 "")
 if ( VBACKUP$M_WINVBKX )
 	find_program(VBACKUP_MINGW32 i686-w64-mingw32-gcc)
 
-	set(L_SRC plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c)
+	set(L_SRC plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkrs.c)
 	set(L_DEP ${L_SRC} lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h lib/vbkcrp.h)
 
 	if ( VBACKUP_MINGW )

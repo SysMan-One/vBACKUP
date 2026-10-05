@@ -93,6 +93,14 @@
 **		block size is found by trying every legal size against the
 **		CRC of the blocks after it.
 **
+**  PARITY:	a saveset of vbackup /PARITY=m (format.md 4.1, version 2 in
+**		every block header) closes each group with its XOR block and
+**		m - 1 PARITY blocks: any m bad blocks of a group are rebuilt
+**		by Reed-Solomon in GF(2^8) - the payloads and the RECOFF and
+**		PAYLEN of their headers alike; parity rows left over check the
+**		result, and one row whose CRC is right and whose bytes are not
+**		is passed over while enough are left.
+**
 **  GUARANTEED:	no crash and no hang on any input; nothing written outside
 **		the output directory; no silent damage - a file that is not
 **		named in a message is the file that was saved.
@@ -105,6 +113,11 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		Version 2 (format.md 4.1): PARITY blocks, the tag PARITY, groups
+**		of GRPSZ + m blocks, any m bad blocks of a group rebuilt by
+**		Reed-Solomon with the header parity; selftest of the code.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		The messages in the form of vbkx and VBACKUP: what a message is
@@ -165,6 +178,8 @@ const (
 	btTrailer = 4
 	btEdata   = 5 // DATA of an encrypted saveset, format.md 6.10
 	btEtrlr   = 6 // TRAILER of an encrypted saveset
+	btParity  = 7 // a parity row >= 1, version 2: format.md 4.1
+	maxPar    = 8 // parity blocks of a group at most
 
 	tagSize = 32   // the TAG at the end of an EDATA/ETRAILER payload
 	kdfMin  = 1000 // the fewest PBKDF2 iterations a reader accepts
@@ -178,7 +193,7 @@ const (
 	rtEnd     = 6
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
 
-	ident = "X01-08"
+	ident = "X01-14"
 
 	maxData  = 1 << 20 // the most octets a DATA or DATAZ record holds
 	codecLZ4 = 1
@@ -243,6 +258,7 @@ func u64(b []byte, off int) uint64 {
 
 /* The block header, format.md section 3 */
 type bhdr struct {
+	version                                                 uint16
 	bsize, recoff, paylen, prvrecoff, prvpaylen, volno, crc uint32
 	typ                                                     uint8
 	gindex                                                  uint16
@@ -257,9 +273,10 @@ type bhdr struct {
  */
 func check(b []byte, bsize uint32, uuid *[16]byte) (bhdr, bool) {
 	var h bhdr
-	if len(b) != int(bsize) || bsize < hdrSize || string(b[0:4]) != "VBKB" || u16(b, 4) != hdrSize || u16(b, 6) != 1 {
+	if len(b) != int(bsize) || bsize < hdrSize || string(b[0:4]) != "VBKB" || u16(b, 4) != hdrSize || (u16(b, 6) != 1 && u16(b, 6) != 2) {
 		return h, false
 	}
+	h.version = u16(b, 6)
 	h.bsize = u32(b, 8)
 	h.typ = b[12]
 	h.gindex = u16(b, 14)
@@ -272,8 +289,12 @@ func check(b []byte, bsize uint32, uuid *[16]byte) (bhdr, bool) {
 	h.prvpaylen = u32(b, 56)
 	h.crc = u32(b, 60)
 	psize := bsize - hdrSize
-	if h.bsize != bsize || (uuid != nil && h.uuid != *uuid) || h.typ < btData || h.typ > btEtrlr ||
-		h.paylen > psize || (h.recoff != none && h.recoff >= psize) {
+	if h.bsize != bsize || (uuid != nil && h.uuid != *uuid) || h.typ < btData || h.typ > btParity ||
+		(h.typ == btParity && h.version != 2) {
+		return h, false
+	}
+	/* The parity blocks of version 2 hold the header parity in RECOFF and PAYLEN (format.md 4.1) */
+	if (h.version == 1 || (h.typ != btXor && h.typ != btParity)) && (h.paylen > psize || (h.recoff != none && h.recoff >= psize)) {
 		return h, false
 	}
 	var hdr [hdrSize]byte
@@ -385,6 +406,8 @@ type reader struct {
 	spec    string
 	bsize   uint32
 	grpsz   uint32
+	parity  uint32 // parity blocks of a group: 1, or 2 .. 8 (version 2)
+	version uint16 // of every block: that of the VHDR
 	uuid    [16]byte
 	vols    []volume
 	trailer bool
@@ -473,6 +496,8 @@ func summaryGroup(r *reader, blk []byte, h bhdr) (uint32, bool) {
 			r.salt = append([]byte(nil), v...)
 		case 92:
 			r.keycheck = append([]byte(nil), v...)
+		case 93:
+			r.parity = uint32(getu(v))
 		}
 	})
 	return grp, grp <= maxGrp
@@ -492,10 +517,18 @@ func guess(r *reader, f *os.File) bool {
 			}
 			r.bsize, r.uuid = bs, h.uuid
 			r.crypt = h.typ == btEdata || h.typ == btEtrlr
-			r.grpsz = 0
+			r.grpsz, r.version, r.parity = 0, h.version, 1
 			for p := uint64(1); p <= maxGrp+1; p++ {
-				if x, ok := check(readBlock(f, bs, p), bs, &r.uuid); ok && x.typ == btXor && uint64(x.gindex) == p-1 {
-					r.grpsz = uint32(x.gindex)
+				if x, ok := check(readBlock(f, bs, p), bs, &r.uuid); ok && x.typ == btXor && uint64(x.gindex&0xFF) == p-1 {
+					r.grpsz = uint32(x.gindex & 0xFF)
+					/* Version 2: the PARITY blocks that follow the XOR block, row after row */
+					for j := uint64(1); r.version == 2 && j < maxPar; j++ {
+						y, ok := check(readBlock(f, bs, p+j), bs, &r.uuid)
+						if !ok || y.typ != btParity || uint64(y.gindex) != uint64(r.grpsz)|j<<8 {
+							break
+						}
+						r.parity = uint32(j) + 1
+					}
 					break
 				}
 			}
@@ -520,11 +553,18 @@ func open(spec string) (*reader, error) {
 		blk := readBlock(f, bs, 0)
 		if h, ok := check(blk, bs, nil); ok && h.typ == btVhdr && h.volno == 1 {
 			if grp, ok := summaryGroup(r, blk, h); ok {
-				r.bsize, r.uuid, r.grpsz, found = bs, h.uuid, grp, true
+				r.bsize, r.uuid, r.grpsz, r.version, found = bs, h.uuid, grp, h.version, true
 			}
 		}
 	}
 	if !found && !guess(r, f) {
+		f.Close()
+		return nil, fmt.Errorf("File: %s - is not a saveset", spec)
+	}
+	/* Version 1: the XOR block alone; version 2: as many parity blocks as the SUMMARY says */
+	if r.version == 1 {
+		r.parity = 1
+	} else if r.parity < 2 || r.parity > maxPar || r.grpsz == 0 {
 		f.Close()
 		return nil, fmt.Errorf("File: %s - is not a saveset", spec)
 	}
@@ -658,7 +698,7 @@ func (r *reader) loadGroup() bool {
 	}
 	n := uint64(1)
 	if r.grpsz > 0 {
-		n = uint64(r.grpsz) + 1
+		n = uint64(r.grpsz) + uint64(r.parity)
 	}
 	if end-r.curpos < n {
 		n = end - r.curpos
@@ -669,7 +709,15 @@ func (r *reader) loadGroup() bool {
 	for i := range blks {
 		blks[i] = readBlock(v.f, r.bsize, r.curpos+uint64(i))
 		hdrs[i], ok[i] = check(blks[i], r.bsize, &r.uuid)
-		ok[i] = ok[i] && hdrs[i].blkno == v.firstblk+r.curpos+uint64(i) && hdrs[i].volno == uint32(r.curvol)
+		ok[i] = ok[i] && hdrs[i].blkno == v.firstblk+r.curpos+uint64(i) && hdrs[i].volno == uint32(r.curvol) &&
+			hdrs[i].version == r.version
+	}
+
+	/* Version 2: several parity blocks a group, Reed-Solomon */
+	if r.grpsz > 0 && r.parity > 1 {
+		r.group2(v, int(n), blks, hdrs, ok)
+		r.curpos += n
+		return true
 	}
 
 	/* Where the XOR block is: a full group ends with it; a short one, cut short, may not have one */
@@ -754,6 +802,318 @@ func (r *reader) loadGroup() bool {
 	r.next = 0
 	r.curpos += n
 	return true
+}
+
+/*
+** Reed-Solomon in GF(2^8), the polynomial 0x11D (format.md 4.1): the
+** coefficient of DATA block i in row j is y_i / (j + y_i), y_i = 128 + i -
+** a Cauchy matrix scaled so that row 0 is all ones, the XOR block.
+ */
+var gfExp [512]byte
+var gfLog [256]byte
+
+func init() {
+	x := 1
+	for i := 0; i < 255; i++ {
+		gfExp[i], gfExp[i+255] = byte(x), byte(x)
+		gfLog[x] = byte(i)
+		x <<= 1
+		if x&0x100 != 0 {
+			x ^= 0x11D
+		}
+	}
+	gfExp[510], gfExp[511] = gfExp[0], gfExp[0]
+}
+
+func gfMul(a, b byte) byte {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	return gfExp[int(gfLog[a])+int(gfLog[b])]
+}
+
+func gfInv(a byte) byte { return gfExp[255-int(gfLog[a])] }
+
+func rsCoef(row, col int) byte {
+	if row == 0 {
+		return 1
+	}
+	y := byte(128 + col)
+	return gfMul(y, gfInv(byte(row)^y))
+}
+
+/* dst += c * src */
+func rsMulAdd(dst, src []byte, c byte) {
+	if c == 0 {
+		return
+	}
+	var t [256]byte
+	for x := 1; x < 256; x++ {
+		t[x] = gfMul(c, byte(x))
+	}
+	for i := range dst {
+		if i < len(src) {
+			dst[i] ^= t[src[i]]
+		}
+	}
+}
+
+/* The inverse of an e x e matrix by Gauss-Jordan; false - singular */
+func rsInvert(m [][]byte) ([][]byte, bool) {
+	e := len(m)
+	inv := make([][]byte, e)
+	for r := range inv {
+		inv[r] = make([]byte, e)
+		inv[r][r] = 1
+	}
+	for c := 0; c < e; c++ {
+		p := c
+		for p < e && m[p][c] == 0 {
+			p++
+		}
+		if p == e {
+			return nil, false
+		}
+		m[c], m[p] = m[p], m[c]
+		inv[c], inv[p] = inv[p], inv[c]
+		f := gfInv(m[c][c])
+		for k := 0; k < e; k++ {
+			m[c][k], inv[c][k] = gfMul(m[c][k], f), gfMul(inv[c][k], f)
+		}
+		for r := 0; r < e; r++ {
+			if r == c || m[r][c] == 0 {
+				continue
+			}
+			f := m[r][c]
+			for k := 0; k < e; k++ {
+				m[r][k] ^= gfMul(f, m[c][k])
+				inv[r][k] ^= gfMul(f, inv[c][k])
+			}
+		}
+	}
+	return inv, true
+}
+
+/*
+** Rebuild the bad DATA vectors from the good ones and the good parity rows.
+** 0 - rebuilt (or none bad); 1 - more bad than rows, nothing touched;
+** 2 - rebuilt, but a parity row left over disagrees.
+ */
+func rsRepair(data [][]byte, dok []bool, par [][]byte, pok []bool) int {
+	var lost, rows, extra []int
+	for i := range data {
+		if !dok[i] {
+			lost = append(lost, i)
+		}
+	}
+	for j := range par {
+		if pok[j] {
+			if len(rows) < len(lost) {
+				rows = append(rows, j)
+			} else {
+				extra = append(extra, j)
+			}
+		}
+	}
+	if len(rows) < len(lost) {
+		return 1
+	}
+	if len(lost) > 0 {
+		e, n := len(lost), len(data[lost[0]])
+		syn := make([][]byte, e)
+		mat := make([][]byte, e)
+		for k := 0; k < e; k++ {
+			syn[k] = append([]byte(nil), par[rows[k]]...)
+			for i := range data {
+				if dok[i] {
+					rsMulAdd(syn[k], data[i], rsCoef(rows[k], i))
+				}
+			}
+			mat[k] = make([]byte, e)
+			for t := 0; t < e; t++ {
+				mat[k][t] = rsCoef(rows[k], lost[t])
+			}
+		}
+		inv, ok := rsInvert(mat)
+		if !ok {
+			return 1
+		}
+		for t := 0; t < e; t++ {
+			d := data[lost[t]][:n]
+			for i := range d {
+				d[i] = 0
+			}
+			for k := 0; k < e; k++ {
+				rsMulAdd(d, syn[k], inv[t][k])
+			}
+		}
+	}
+	for _, x := range extra {
+		s := make([]byte, len(par[x]))
+		for i := range data {
+			rsMulAdd(s, data[i], rsCoef(x, i))
+		}
+		if string(s) != string(par[x]) {
+			return 2
+		}
+	}
+	return 0
+}
+
+/*
+** A group of version 2 (format.md 4.1): d DATA blocks and m parity blocks -
+** where the parity blocks are, the TAGs, the repair of up to as many bad
+** DATA blocks as there are good rows (the header parity first, then the
+** payloads), once more without each good row in turn when the result does
+** not hold; then the payloads delivered as loadGroup does.
+ */
+func (r *reader) group2(v volume, n int, blks [][]byte, hdrs []bhdr, ok []bool) {
+	m := int(r.parity)
+	d := -1
+	for i := 0; i < n && d < 0; i++ {
+		row, cnt := int(hdrs[i].gindex>>8), int(hdrs[i].gindex&0xFF)
+		if ok[i] && ((hdrs[i].typ == btXor && row == 0) || (hdrs[i].typ == btParity && row >= 1 && row < m)) &&
+			cnt >= 1 && cnt <= int(r.grpsz) && cnt+row == i {
+			d = cnt
+		}
+	}
+	if d < 0 {
+		switch {
+		case n == int(r.grpsz)+m:
+			d = int(r.grpsz)
+		case ok[n-1] && hdrs[n-1].typ == r.dtype:
+			d = n
+		case n > m:
+			d = n - m
+		default:
+			d = n
+		}
+	}
+	if d > n {
+		d = n
+	}
+	first := v.firstblk + r.curpos
+
+	/* The parity rows there are, and their header parity */
+	par, hpar := make([][]byte, m), make([][]byte, m)
+	pok := make([]bool, m)
+	for j := 0; j < m; j++ {
+		i := d + j
+		par[j], hpar[j] = make([]byte, r.bsize-hdrSize), make([]byte, 8)
+		if i < n {
+			typ := byte(btXor)
+			if j > 0 {
+				typ = btParity
+			}
+			pok[j] = ok[i] && hdrs[i].typ == typ && int(hdrs[i].gindex) == d|j<<8
+			if pok[j] {
+				par[j] = blks[i][hdrSize:]
+				le.PutUint32(hpar[j][0:], hdrs[i].recoff)
+				le.PutUint32(hpar[j][4:], hdrs[i].paylen)
+			}
+		}
+	}
+
+	nbad, npok := 0, 0
+	for _, p := range pok {
+		if p {
+			npok++
+		}
+	}
+	dok := make([]bool, d)
+	data, hdat := make([][]byte, d), make([][]byte, d)
+	for i := 0; i < d; i++ {
+		if ok[i] && (hdrs[i].typ != r.dtype || int(hdrs[i].gindex) != i) {
+			ok[i] = false
+		}
+		/* A good CRC and a wrong TAG: a bad block all the same */
+		if ok[i] && r.crypt && !r.k.tagOK(&hdrs[i], blks[i][hdrSize:]) {
+			ok[i] = false
+			msg("Block: %d, Volume: %d - is not what was written: its CRC is right, its authentication fails", hdrs[i].blkno, r.curvol)
+		}
+		dok[i] = ok[i]
+		data[i], hdat[i] = blks[i][hdrSize:], make([]byte, 8)
+		if ok[i] {
+			le.PutUint32(hdat[i][0:], hdrs[i].recoff)
+			le.PutUint32(hdat[i][4:], hdrs[i].paylen)
+		} else {
+			nbad++
+		}
+	}
+
+	forged, done := false, false
+	for skip := -1; nbad > 0 && nbad <= npok && !done && skip < m; skip++ {
+		if skip >= 0 && !pok[skip] {
+			continue
+		}
+		try := append([]bool(nil), pok...)
+		if skip >= 0 {
+			try[skip] = false
+		}
+		nt := 0
+		for _, p := range try {
+			if p {
+				nt++
+			}
+		}
+		if nt < nbad {
+			continue
+		}
+		rc := rsRepair(hdat, dok, hpar, try)
+		if rc == 0 {
+			rc = rsRepair(data, dok, par, try)
+		}
+		forged = forged || rc == 2
+		allok := rc == 0
+		nh := append([]bhdr(nil), hdrs...)
+		for i := 0; allok && i < d; i++ {
+			if dok[i] {
+				continue
+			}
+			h := bhdr{version: r.version, bsize: r.bsize, typ: r.dtype, gindex: uint16(i), uuid: r.uuid, volno: uint32(r.curvol),
+				blkno: first + uint64(i), recoff: le.Uint32(hdat[i][0:]), paylen: le.Uint32(hdat[i][4:]), prvrecoff: none}
+			if i > 0 {
+				h.prvrecoff, h.prvpaylen = nh[i-1].recoff, nh[i-1].paylen
+			}
+			if h.paylen > r.cap || (h.recoff != none && h.recoff >= h.paylen) || (r.crypt && !r.k.tagOK(&h, data[i])) {
+				allok = false
+			}
+			nh[i] = h
+		}
+		if allok {
+			done = true
+			for i := 0; i < d; i++ {
+				if !dok[i] {
+					hdrs[i], ok[i] = nh[i], true
+					msg("Block: %d, Volume: %d - was bad, rebuilt from its group", first+uint64(i), r.curvol)
+				}
+			}
+		}
+	}
+	if nbad > 0 && !done && forged {
+		msg("Block: %d, Volume: %d - the group beginning here does not agree with its parity: nothing of it is rebuilt", first, r.curvol)
+		bad = true
+	}
+
+	for i := 0; r.crypt && i < d; i++ {
+		if ok[i] {
+			r.k.decrypt(&hdrs[i], blks[i][hdrSize:])
+		}
+	}
+	r.pays, r.recoffs, r.blks = r.pays[:0], r.recoffs[:0], r.blks[:0]
+	for i := 0; i < d; i++ {
+		b := first + uint64(i)
+		if !ok[i] {
+			msg("Block: %d, Volume: %d - is bad and cannot be rebuilt", b, r.curvol)
+			bad = true
+			r.pays = append(r.pays, nil)
+		} else {
+			r.pays = append(r.pays, blks[i][hdrSize:hdrSize+int(hdrs[i].paylen)])
+		}
+		r.recoffs = append(r.recoffs, hdrs[i].recoff)
+		r.blks = append(r.blks, b)
+	}
+	r.next = 0
 }
 
 /*
@@ -1073,6 +1433,62 @@ func selftest() int {
 		"514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d")
 	chacha20(key, nonce, 1, buf)
 	try("ChaCha20 decrypted back", buf, hex.EncodeToString(pt))
+
+	/* Reed-Solomon: every pattern of up to 3 lost of 6 DATA and 3 parity rows rebuilt exactly */
+	{
+		const nd, np, ln = 6, 3, 19
+		orig := make([][]byte, nd)
+		for i := range orig {
+			orig[i] = make([]byte, ln)
+			for k := range orig[i] {
+				orig[i][k] = byte(i*131 + k*17 + i*k)
+			}
+		}
+		par := make([][]byte, np)
+		for j := range par {
+			par[j] = make([]byte, ln)
+			for i := 0; i < nd; i++ {
+				rsMulAdd(par[j], orig[i], rsCoef(j, i))
+			}
+		}
+		rsBad := 0
+		for set := 0; set < 1<<(nd+np); set++ {
+			cnt := 0
+			for b := set; b != 0; b &= b - 1 {
+				cnt++
+			}
+			if cnt > np {
+				continue
+			}
+			data, dok, pok := make([][]byte, nd), make([]bool, nd), make([]bool, np)
+			for i := range data {
+				dok[i] = set&(1<<i) == 0
+				data[i] = make([]byte, ln)
+				if dok[i] {
+					copy(data[i], orig[i])
+				}
+			}
+			for j := range pok {
+				pok[j] = set&(1<<(nd+j)) == 0
+			}
+			if rsRepair(data, dok, par, pok) != 0 {
+				rsBad++
+				continue
+			}
+			for i := range data {
+				if string(data[i]) != string(orig[i]) {
+					rsBad++
+					break
+				}
+			}
+		}
+		if rsBad == 0 {
+			fmt.Printf("selftest: Reed-Solomon, every erasure of 3 of 6+3: ok\n")
+		} else {
+			fmt.Printf("selftest: Reed-Solomon: FAILED (%d patterns)\n", rsBad)
+			failed++
+		}
+	}
 
 	if failed > 0 {
 		fmt.Printf("selftest: %d failed\n", failed)

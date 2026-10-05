@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-13"
+#define	__IDENT__	"X01-14"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.13.0"
+#define	__REV__		"1.14.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		PARITY of the options; PARITYERR.
 **
 **	X01-13		 5-OCT-2026	RRL
 **		VBKVMS.C: the savesets of OpenVMS BACKUP read; VMSSAVESET,
@@ -200,6 +203,7 @@ enum	{
 	VBACKUP$K_MSG_VMSSAVESET,		/* The input is a saveset of OpenVMS BACKUP	*/
 	VBACKUP$K_MSG_VMSNOCRC,			/* ... written /NOCRC				*/
 	VBACKUP$K_MSG_VMSRAW,			/* ... a file restored as it is, not converted	*/
+	VBACKUP$K_MSG_PARITYERR,		/* v2: the parity of a group disagrees		*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -302,6 +306,7 @@ enum	{
 #define	VBACKUP$_VMSSAVESET	$VBKSTS(VBACKUP$K_MSG_VMSSAVESET,	STS$K_INFO)
 #define	VBACKUP$_VMSNOCRC	$VBKSTS(VBACKUP$K_MSG_VMSNOCRC,		STS$K_INFO)
 #define	VBACKUP$_VMSRAW		$VBKSTS(VBACKUP$K_MSG_VMSRAW,		STS$K_INFO)
+#define	VBACKUP$_PARITYERR	$VBKSTS(VBACKUP$K_MSG_PARITYERR,	STS$K_WARN)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -406,6 +411,7 @@ typedef struct vbk_opts_t
 
 	uint32_t	bsize;			/* /BLOCK_SIZE					*/
 	uint32_t	grpsz;			/* /GROUP_SIZE					*/
+	uint32_t	parity;			/* /PARITY: parity blocks a group, 1 - the XOR	*/
 	uint64_t	volsize;		/* /VOLUME_SIZE, 0 - one volume			*/
 	char		comment [VBACKUP$K_SZ_STR];
 
