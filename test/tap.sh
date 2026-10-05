@@ -5,10 +5,10 @@
 #	MODULE:		test/tap.sh
 #
 #	ABSTRACT:	The check helpers of the functional tests, read in by
-#			smoke.sh, damage.sh and geeks.sh: plain output, or TAP
+#			smoke.sh, damage.sh, geeks.sh and vms.sh: plain output, or TAP
 #			(the Test Anything Protocol) when TAP is set.
 #
-#	DESCRIPTION:	The script sets TAPNAME (SMOKE, DAMAGE, GEEKS) and reads
+#	DESCRIPTION:	The script sets TAPNAME (SMOKE, DAMAGE, GEEKS, VMS) and reads
 #			this file in:  . "$(dirname "$0")/tap.sh"
 #
 #			    ok "what"			a check passed

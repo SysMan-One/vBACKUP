@@ -12,6 +12,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 5-OCT-2026	RRL	X-13 : The savesets of OpenVMS BACKUP.
+.\"
 .\"		 5-OCT-2026	RRL	X-06 : -k keyfile, -n: encrypted savesets.
 .\"
 .\"		 3-OCT-2026	RRL	X-01 : Initial version.
@@ -87,6 +89,14 @@ Names that lead out of the output directory (".." , a leading "/", a
 symbolic link on the way) are refused.  Damage is repaired as far as
 the XOR blocks of the saveset allow; every incomplete file and every
 file that could not be reached is named.
+.PP
+A saveset written by OpenVMS BACKUP is taken the same way: its files
+by their Linux names ([A.B]C.TXT;3 is A/B/C.TXT, older versions keep
+";n"; the name of VMS is taken by
+.B p
+too), its text files made texts with LF, its indexed and relative files
+copied as they are on the VMS disk; bad blocks are rebuilt from its XOR
+blocks.
 .SH EXIT STATUS
 0 \- done; 1 \- something damaged or not done; 2 \- the command or the
 saveset cannot be used.
@@ -95,6 +105,8 @@ saveset cannot be used.
 $ vbkx l /mnt/usb/home.bck
 $ vbkx x /mnt/usb/home.bck -C /tmp/restore home/rrl/notes
 $ vbkx p /mnt/usb/home.bck home/rrl/notes/todo.txt | less
+$ vbkx x USERS.BCK -C /tmp/vms SMITH
+$ vbkx p USERS.BCK "[SMITH]LOGIN.COM;3"
 .fi
 .SH SEE ALSO
 .BR vbackup (1),

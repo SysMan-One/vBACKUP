@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-13"
+#define	__REV__		"1.13.0"
 
 /*
 **++
@@ -25,6 +25,10 @@
 **		    vbkx t saveset			test: read all, check CRCs
 **		    ... [-k keyfile] [-n]		an encrypted saveset; -n: never
 **							ask on the terminal (programs)
+**
+**		A saveset of OpenVMS BACKUP is known by its first block and
+**		taken alike (LIB/VBKVMS.C): l, x, p, t by the Linux names of
+**		its files, the texts made texts with LF (doc/vmsbackup.md).
 **
 **		A name is a stored name as the listing shows it; a directory
 **		name takes what is below it.  Without names the whole saveset
@@ -66,14 +70,14 @@
 **		Build on Linux: with the product (CMake), or by hand -
 **
 **		    gcc -O2 -D_GNU_SOURCE -Ilib -I/usr/local/include \
-**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c \
+**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c \
 **			/usr/local/lib/libstarlet.a -static -o vbkx
 **
 **		Build on Windows / cross, from the top of the source tree -
 **		no StarLet, no CMake, one command:
 **
 **		    x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
+**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
 **
 **		(make -f tools/Makefile.win does the same; on Windows itself
 **		gcc of MinGW-w64 or MSYS2 takes the same line.)
@@ -83,6 +87,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-13		 5-OCT-2026	RRL
+**		The savesets of OpenVMS BACKUP: l, x, p, t (LIB/VBKVMS.C).
 **
 **	X01-08		 5-OCT-2026	RRL
 **		"-": a saveset from a pipe - listed and extracted as it is read;
@@ -137,6 +144,7 @@
 #include	"vbkrd.h"
 #include	"vbkos.h"
 #include	"vbklz4.h"
+#include	"vbkvms.h"
 
 #define	VBKX$K_SZ_PATH	4096
 #define	VBKX$K_WPATH	32768			/* A path of Windows, in UTF-16 units		*/
@@ -2066,10 +2074,414 @@ size_t		l_n = 0;
 }
 
 
+/*
+**  A saveset of OpenVMS BACKUP (LIB/VBKVMS.C, doc/vmsbackup.md): l, x, p
+**  and t on it as on one of VBACKUP.  The names are the Linux names -
+**  [A.B]C.TXT;3 is A/B/C.TXT, the older versions keep ";n" - and so are
+**  the names given; a text file becomes a text with LF.
+*/
+typedef struct vbkx_vout_t
+{
+	VBK$VMSFILE	file;
+	VBKX$ENT	ent;
+	char		name [VBKX$K_SZ_PATH];
+	int		fd;			/* -1 - its data goes nowhere			*/
+	int		tostd;
+	int		mode;			/* VBK$K_VMSCNV_*				*/
+	VBK$VMSCNV	cnv;
+	uint64_t	pos;			/* Octets written				*/
+	uint32_t	nextvbn;
+	int		damaged, failed;
+#ifdef	_WIN32
+	wchar_t		wpath [VBKX$K_WPATH];
+#endif
+} VBKX$VOUT;
+
+/*
+**  Is the saveset one of OpenVMS BACKUP: its first block judged
+*/
+static	int	s_vbkx$isvms	(
+	const	char *		a_spec
+			)
+{
+uint8_t *	l_blk;
+size_t		l_got = 0;
+int64_t		l_rc;
+int		l_fd, l_is = 0;
+struct stat	l_st;
+
+	/* A regular file only: a FIFO would hang the open, a device be read from */
+	if ( !strcmp(a_spec, "-") || stat(a_spec, &l_st) || !S_ISREG(l_st.st_mode) || (0 > (l_fd = vbk$os_open(a_spec))) )
+		return	0;
+
+	if ( (l_blk = malloc(VBK$K_VMSMAXBSZ)) )
+		{
+		while ( (l_got < VBK$K_VMSMAXBSZ) && (0 < (l_rc = vbk$os_read(l_fd, l_blk + l_got, VBK$K_VMSMAXBSZ - l_got))) )
+			l_got	+= (size_t) l_rc;
+
+		/* By its header: a bad first block is rebuilt from its group */
+		l_is	= (l_got >= VBK$K_VMSHDR) && (1 & vbk$vms_probe(l_blk, VBK$K_VMSHDR));
+		free(l_blk);
+		}
+
+	vbk$os_close(l_fd);
+
+	return	l_is;
+}
+
+/*
+**  VMS time - the local time of the system that wrote it - as the time here
+*/
+static	VBK$TIME	s_vbkx$vtime	(
+		uint64_t	a_vtime
+			)
+{
+VBK$TIME	l_t = { 0, 0 };
+int64_t		l_sec;
+uint32_t	l_nsec;
+time_t		l_w;
+struct tm *	l_tm;
+
+	if ( !vbk$vms_time(a_vtime, &l_sec, &l_nsec) )
+		return	l_t;
+
+	l_w	= (time_t) l_sec;
+
+	if ( (l_tm = gmtime(&l_w)) )
+		{
+		l_tm->tm_isdst = -1;
+		l_t.sec	= (int64_t) mktime(l_tm);
+		l_t.nsec = l_nsec;
+		}
+
+	return	l_t;
+}
+
+static	int	s_vbkx$vwrite	(
+		void *		a_arg,
+	const	uint8_t *	a_buf,
+		size_t		a_len
+			)
+{
+VBKX$VOUT *	l_o = (VBKX$VOUT *) a_arg;
+
+	if ( l_o->tostd ? (fwrite(a_buf, 1, a_len, stdout) != a_len) : s_vbkx$os_pwrite(l_o->fd, a_buf, (uint32_t) a_len, l_o->pos) )
+		{
+		s_vbkx$msg("File: %s, errno: %d - cannot be written (%s)", l_o->name, errno, strerror(errno));
+		l_o->failed	= 1;
+
+		return	STS$K_ERROR;
+		}
+
+	l_o->pos	+= a_len;
+
+	return	STS$K_SUCCESS;
+}
+
+/*
+**  A file begins: its entry, and - x - the file or the directory made
+*/
+static	void	s_vbkx$vbegin	(
+		VBKX$VOUT *	a_o,
+		int		a_make
+			)
+{
+char		l_name [VBKX$K_SZ_PATH], *l_last;
+VBKX$PAR	l_par;
+int		l_rc = 0;
+
+	a_o->fd		= -1;
+	a_o->pos	= 0;
+	a_o->nextvbn	= 1;
+	a_o->damaged	= 0;
+	a_o->failed	= 0;
+	a_o->mode	= vbk$vms_cnvmode(&a_o->file);
+
+	if ( !a_make || a_o->file.isdir )
+		{
+		if ( !a_make || s_junk )
+			return;
+		}
+
+	if ( s_junk )
+		{
+		char *	l_slash = strrchr(a_o->name, '/');
+
+		if ( l_slash )
+			memmove(a_o->name, l_slash + 1, strlen(l_slash + 1) + 1);
+		}
+
+	if ( !s_vbkx$nameok(a_o->name, strlen(a_o->name)) )
+		{
+		s_vbkx$msg("File: %s - its name leads out of the output directory, not extracted", a_o->name);
+		s_bad	= 1;
+
+		return;
+		}
+
+#ifdef	_WIN32
+	if ( !s_vbkx$winname(a_o->name) )
+		{
+		s_vbkx$msg("File: %s - not a valid name on Windows, not extracted", a_o->name);
+		s_bad	= 1;
+
+		return;
+		}
+#endif
+
+	strcpy(l_name, a_o->name);
+
+	if ( s_vbkx$os_parent(l_name, 1, &l_last, &l_par) )
+		{
+		s_vbkx$msg("File: %s, errno: %d - a directory on the way cannot be made, or is a link (%s)", a_o->name, errno, strerror(errno));
+		s_bad	= 1;
+
+		return;
+		}
+
+	if ( a_o->file.isdir )
+		{
+		if ( !(l_rc = s_vbkx$os_mkdir(l_par, l_last)) )
+			s_vbkx$defer(a_o->name, &a_o->ent);
+		}
+	else if ( s_vbkx$os_exists(l_par, l_last) && !s_force )
+		{
+		s_vbkx$msg("File: %s - already exists, not extracted (-f to overwrite)", a_o->name);
+		s_bad	= 1;
+		}
+	else	{
+		s_vbkx$os_remove(l_par, l_last);
+#ifdef	_WIN32
+		l_rc	= (0 > (a_o->fd = s_vbkx$os_creat(l_par, l_last, a_o->wpath)));
+#else
+		l_rc	= (0 > (a_o->fd = s_vbkx$os_creat(l_par, l_last, NULL)));
+#endif
+		}
+
+	if ( l_rc )
+		{
+		s_vbkx$msg("File: %s, errno: %d - cannot be made (%s)", a_o->name, errno, strerror(errno));
+		s_bad	= 1;
+		a_o->fd	= -1;
+		}
+
+	s_vbkx$os_pclose(l_par);
+
+	if ( (a_o->fd >= 0) && (a_o->file.org != VBK$K_VMSORG_SEQ) )
+		s_vbkx$msg("File: %s, Organization: %s - extracted as it is on the VMS disk: its records are not converted", a_o->name,
+			vbk$vms_orgname(a_o->file.org));
+
+	if ( a_o->fd >= 0 )
+		vbk$vms_cnvinit(&a_o->cnv, &a_o->file, a_o->mode, s_vbkx$vwrite, a_o);
+}
+
+/*
+**  A VBN record of the file in hand; 0 - it goes back: another file's,
+**  whose FILE record was lost
+*/
+static	int	s_vbkx$vdata	(
+		VBKX$VOUT *	a_o,
+	const	VBK$VMSREC *	a_rec
+			)
+{
+uint64_t	l_off = (uint64_t) (a_rec->address - 1) * 512, l_n = a_rec->len;
+
+	if ( !a_rec->address || (a_rec->address < a_o->nextvbn) )
+		return	0;
+
+	if ( a_rec->resync || (a_rec->address != a_o->nextvbn) )
+		a_o->damaged	= 1;
+
+	a_o->nextvbn	= a_rec->address + a_rec->len / 512;
+
+	if ( ((a_o->fd < 0) && !a_o->tostd) || a_o->failed || (l_off >= a_o->file.bytes) )
+		return	1;
+
+	if ( l_off + l_n > a_o->file.bytes )
+		l_n	= a_o->file.bytes - l_off;
+
+	/* As it is: at its place, a lost block a hole */
+	if ( (a_o->mode == VBK$K_VMSCNV_RAW) && !a_o->tostd )
+		a_o->pos = l_off;
+
+	vbk$vms_cnv(&a_o->cnv, a_rec->body, (size_t) l_n);
+
+	return	1;
+}
+
+static	void	s_vbkx$vend	(
+		VBKX$VOUT *	a_o
+			)
+{
+	if ( (a_o->fd >= 0) || a_o->tostd )
+		vbk$vms_cnvend(&a_o->cnv);
+
+	if ( (uint64_t) (a_o->nextvbn - 1) * 512 < a_o->file.bytes )
+		a_o->damaged	= 1;
+
+	if ( a_o->damaged )
+		{
+		s_vbkx$msg("File: %s - incomplete: its data was lost in bad blocks", a_o->name);
+		s_bad	= 1;
+		}
+
+	if ( a_o->fd >= 0 )
+		{
+		/* The size: a converted text is what was written, an image the end of file */
+		if ( s_vbkx$os_fdend(a_o->fd, NULL, &a_o->ent, (a_o->mode == VBK$K_VMSCNV_RAW) ? a_o->file.bytes : a_o->pos, a_o->name) )
+			s_bad	= 1;
+		}
+
+	a_o->fd	= -1;
+}
+
+static	int	s_vbkx$vms	(
+		char		a_op,
+		char **		a_names,
+		int		a_nnames
+			)
+{
+VBK$VMS		l_vms;
+VBK$VMSREC	l_rec;
+static	VBKX$VOUT	l_o;
+char		l_prev [VBK$K_VMSNAME] = "";
+int		l_fd, l_in = 0, l_found = 0, l_files = 0, l_status;
+
+	if ( 0 > (l_fd = vbk$os_open(s_spec)) )
+		return	s_vbkx$msg("File: %s, errno: %d - cannot be opened (%s)", s_spec, errno, strerror(errno)), 2;
+
+	if ( !(1 & (l_status = vbk$vms_open(&l_vms, l_fd, s_vbkx$event, NULL))) )
+		{
+		vbk$os_close(l_fd);
+
+		return	s_vbkx$msg("File: %s - is not a saveset", s_spec), 2;
+		}
+
+	if ( l_vms.nocrc && (a_op == 't') )
+		s_vbkx$msg("Saveset: %s - written /NOCRC: its blocks carry no CRC, damage in them cannot be seen", s_spec);
+
+	if ( (a_op == 'x') && s_vbkx$os_outdir(s_outdir) )
+		{
+		s_vbkx$msg("Directory: %s, errno: %d - cannot be made or entered (%s)", s_outdir, errno, strerror(errno));
+		vbk$vms_close(&l_vms);
+		vbk$os_close(l_fd);
+
+		return	2;
+		}
+
+	memset(&l_o, 0, sizeof(l_o));
+	l_o.fd		= -1;
+	l_o.tostd	= (a_op == 'p');
+
+	while ( 1 & vbk$vms_next(&l_vms, &l_rec) )
+		{
+		if ( l_rec.rtype == VBK$K_VMSRT_FILE )
+			{
+			int	l_older;
+
+			if ( l_in )
+				s_vbkx$vend(&l_o);
+
+			l_in	= 0;
+
+			if ( (a_op == 'p') && l_found )
+				break;
+
+			if ( !(1 & vbk$vms_file(l_rec.body, l_rec.len, &l_o.file)) )
+				{
+				s_vbkx$msg("Block: %llu, Volume: 1 - an invalid record, skipped", (unsigned long long) l_rec.blkno);
+				s_bad	= 1;
+				continue;
+				}
+
+			l_older	= !l_o.file.isdir && vbk$vms_same(l_o.file.spec, l_o.file.speclen, l_prev, strlen(l_prev));
+			snprintf(l_prev, sizeof(l_prev), "%s", l_o.file.spec);
+
+			if ( !vbk$vms_unix(l_o.file.spec, l_o.file.speclen, l_o.file.isdir, l_older, l_o.name, sizeof(l_o.name)) )
+				continue;
+
+			memset(&l_o.ent, 0, sizeof(l_o.ent));
+			l_o.ent.path	= l_o.name;
+			l_o.ent.pathlen	= (uint32_t) strlen(l_o.name);
+			l_o.ent.ftype	= l_o.file.isdir ? VBK$K_FT_DIR : VBK$K_FT_REG;
+			l_o.ent.mode	= vbk$vms_mode(l_o.file.fpro, l_o.file.isdir) | (l_o.file.isdir ? 0700 : 0);
+			l_o.ent.size	= l_o.file.bytes;
+			l_o.ent.mtime	= s_vbkx$vtime(l_o.file.revdate);
+			l_o.ent.atime	= l_o.file.accdate ? s_vbkx$vtime(l_o.file.accdate) : l_o.ent.mtime;
+#ifndef	_WIN32
+			l_o.ent.uid	= getuid();
+			l_o.ent.gid	= getgid();
+#endif
+			/* p: the file asked for - its Linux name with or without the version, or its VMS name */
+			if ( a_op == 'p' )
+				{
+				char	l_plain [VBKX$K_SZ_PATH];
+
+				if ( l_o.file.isdir || (strcmp(a_names [0], l_o.name) && strcmp(a_names [0], l_o.file.spec)
+					&& !(vbk$vms_unix(l_o.file.spec, l_o.file.speclen, 0, 0, l_plain, sizeof(l_plain)) && !strcmp(a_names [0], l_plain))) )
+					continue;
+
+				l_found	= 1;
+				}
+			else if ( !s_vbkx$wanted(&l_o.ent, a_names, a_nnames) )
+				continue;
+
+			l_files++;
+
+			if ( a_op == 'l' )
+				{
+				s_vbkx$line(&l_o.ent);
+				continue;
+				}
+
+			s_vbkx$vbegin(&l_o, a_op == 'x');
+
+			if ( l_o.tostd )
+				vbk$vms_cnvinit(&l_o.cnv, &l_o.file, l_o.mode, s_vbkx$vwrite, &l_o);
+
+			l_in	= !l_o.file.isdir;
+			continue;
+			}
+
+		if ( (l_rec.rtype == VBK$K_VMSRT_VBN) && l_in && !s_vbkx$vdata(&l_o, &l_rec) )
+			{
+			s_vbkx$vend(&l_o);
+			l_in	= 0;
+			}
+		}
+
+	if ( l_in )
+		s_vbkx$vend(&l_o);
+
+	vbk$vms_close(&l_vms);
+	vbk$os_close(l_fd);
+
+	if ( a_op == 'x' )
+		{
+		s_vbkx$dirs();
+		s_vbkx$os_outclose();
+		}
+
+	if ( (a_op == 'p') && !l_found )
+		return	s_vbkx$msg("Saveset: %s - no such file in it", s_spec), 2;
+
+	if ( (a_op == 'x') && a_nnames && !l_files )
+		return	s_vbkx$msg("Saveset: %s - no such file in it", s_spec), 2;
+
+	if ( (a_op == 'p') && fflush(stdout) )
+		return	2;
+
+	if ( (a_op == 't') && !s_bad )
+		printf("%s: an OpenVMS BACKUP saveset, all files read, %s\n", s_spec, l_vms.nocrc ? "no CRC to check (/NOCRC)" : "all block CRCs match");
+
+	return	s_bad ? 1 : 0;
+}
+
+
 static	int	s_vbkx$usage	(void)
 {
 	fprintf(stderr,
-		"VBKX " __IDENT__ " - the stand-alone extractor of VBACKUP savesets\n"
+		"VBKX " __IDENT__ " - the stand-alone extractor of VBACKUP savesets, and of OpenVMS BACKUP ones\n"
 		"\n"
 		"  vbkx l saveset [-m]                  list the files (-m: no link targets, for programs)\n"
 		"  vbkx x saveset [-C dir] [-f] [-j] [name...]  extract (all, or the names given; -j: no directories)\n"
@@ -2156,6 +2568,16 @@ const char *	l_keyfile = NULL;
 
 	if ( ((l_op == 'p') && (l_nnames != 1)) || (((l_op == 'l') || (l_op == 't')) && l_nnames) )
 		return	s_vbkx$usage();
+
+	/* A saveset of OpenVMS BACKUP: read by VBKVMS.C */
+	if ( s_vbkx$isvms(s_spec) )
+		{
+		l_rc	= s_vbkx$vms(l_op, l_names, l_nnames);
+		free(l_names);
+		free(s_seen);
+
+		return	l_rc;
+		}
 
 	if ( !(1 & (l_status = vbk$rd_open(&l_rctx, s_spec, s_vbkx$event, NULL))) )
 		{

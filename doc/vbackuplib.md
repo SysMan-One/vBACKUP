@@ -56,6 +56,8 @@ WILDCARDS.
 
 When you restore, list, compare or extract: the saveset. Give the
 name of its first volume; VBACKUP finds the other volumes by itself.
+A saveset written by OpenVMS BACKUP is read too: see the topic
+OPENVMS.
 
 A saveset may come through a pipe: "-" is the standard input.
 
@@ -726,6 +728,47 @@ A job that fails stays in the queue with its log (`batch show`), the
 messages of VBACKUP and its completion code in it; nothing is lost
 silently, as with cron.
 
+## OpenVMS -- savesets written by OpenVMS BACKUP
+
+A saveset that OpenVMS BACKUP wrote is read too: copy it here in binary
+mode (FTP "binary", or a raw copy of the tape file) and give it as the
+input. VBACKUP knows it by its first block and says VMSSAVESET.
+
+```
+$ vbackup USERS.BCK /LIST                what BACKUP/LIST shows
+$ vbackup USERS.BCK /LIST /FULL          what BACKUP/LIST/FULL shows
+$ vbackup USERS.BCK /restore/vms         the files under /restore/vms
+$ vbackup USERS.BCK /restore/vms /SELECT=*.COM
+$ vbackup USERS.BCK "/EXTRACT=[SMITH]LOGIN.COM;3" login.com
+$ vbkx x USERS.BCK -C /restore/vms       the same with vbkx (vbkx.exe too)
+```
+
+The listing is BACKUP's own, line for line. On restore the names
+become Linux names: [SMITH.WORK]NOTES.TXT;5 is SMITH/WORK/NOTES.TXT
+under the output directory; the highest version gets the plain name,
+older ones keep ";n" (NOTES.TXT;4). The escapes of ODS-5 are undone
+(^_ a blank, ^. a dot). /SELECT, /EXCLUDE and /EXTRACT take the Linux
+names; /EXTRACT also the name with ";n", or the name of VMS as the
+listing shows it.
+
+Text files - variable, VFC, fixed records with a carriage control, the
+stream formats - become texts with LF, as FTP of VMS makes them.
+Executables, object files and other files without a carriage control
+are copied as they are on the VMS disk. Indexed and relative files are
+copied as the image of the RMS file (VMSRAW): their records need RMS.
+The mode comes from the protection (R - r, W - w; E only on
+directories), the time from the revision date; the owner is the user
+who restores.
+
+Bad blocks are rebuilt from the XOR blocks of /GROUP_SIZE as BACKUP
+would; a file that lost data is said FILDAMAGED. Not read: savesets
+BACKUP encrypted (/ENCRYPT), and the LBN data of /IMAGE and /PHYSICAL
+savesets. /COMPARE, /INCREMENTAL, /ORIGINAL, /IMAGE and /TRANSFER are
+not for such a saveset. Midnight Commander opens it like one of
+VBACKUP's (through vbackup); MultiArc of far2l (it knows a saveset by
+"VBKB" at its start, which BACKUP does not write), the WCX plugin of
+Total and Double Commander and vbkx-go, vbkx-rs, vbkx-pl do not. doc/vmsbackup.md tells the format.
+
 ## Time -- how a time value is written
 
 ```
@@ -793,6 +836,9 @@ names every file that is incomplete ("is incomplete") and every file it
 could not reach ("not extracted"). Completion code: 0 -- done;
 1 -- something was damaged or not done; 2 -- the command or the
 saveset cannot be used.
+
+A saveset written by OpenVMS BACKUP is taken the same way, by the
+Linux names of its files (see the topic OPENVMS).
 
 An encrypted saveset: vbkx takes the passphrase from -k keyfile, else
 from VBACKUP_KEY_FILE, else asks on the terminal (the console on
@@ -946,6 +992,20 @@ copied, so that the save finds them in the cache. VBACKUP_PREFETCH=n
 sets their number; 0 turns the read-ahead off. More threads may help on
 NFS or a slow network disk; fewer on a single slow hard disk.
 
+**A saveset from OpenVMS is "not a saveset", or a copy is made of it.**
+It was copied in text mode, or with another record format: FTP must be
+in binary mode ("binary", "type image"). A saveset taken off a tape must
+keep its block size. The size of a good copy is a multiple of the block
+size BACKUP/LIST shows.
+
+**A text file from OpenVMS has a byte count before each line.** It has
+no carriage control on VMS (SET FILE/ATTRIBUTE=RAT:CR it there, or
+CONVERT it), so VBACKUP copied it as it is, the record counts with it.
+
+**%VBACKUP-I-VMSRAW for an indexed file.** Its records need RMS. Restore
+it, copy it back to VMS in binary mode and SET FILE/ATTRIBUTE it, or
+CONVERT it to a sequential file on VMS before the save.
+
 **Files are not in the page cache after a save.** This is on purpose.
 VBACKUP drops the pages of the saveset it writes or reads, and the
 pages of a file that was not in the cache before it was read. Files
@@ -1048,6 +1108,9 @@ that were in the cache stay there.
 %VBACKUP-E-REMOTEERR    node::file: VBACKUP there did not complete
 %VBACKUP-I-STARTED      the work begins: what, from where, to where
 %VBACKUP-I-COMPLETED    the work is done: completed, with warnings or with errors; how long
+%VBACKUP-I-VMSSAVESET   the input is a saveset of OpenVMS BACKUP: its block and group size
+%VBACKUP-I-VMSNOCRC     ... written /NOCRC: damage in its blocks cannot be seen
+%VBACKUP-I-VMSRAW       ... an indexed or relative file restored as its RMS image
 ```
 
 A message goes to the standard error. It begins with the date, the

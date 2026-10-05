@@ -1,0 +1,5 @@
+FILE
+	ORGANIZATION	sequential
+RECORD
+	CARRIAGE_CONTROL	carriage_return
+	FORMAT	stream_lf

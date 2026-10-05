@@ -8,6 +8,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-13 : VMS, the savesets of OpenVMS BACKUP.
+#
 #		 4-OCT-2026	RRL	X-05 : WCX, the WCX plugin natively; WCXWIN, its Windows
 #					builds under wine.
 #
@@ -46,6 +48,14 @@ add_test(NAME damage
 		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/damage.d
 		ROUNDS=15
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/damage.sh)
+
+#	The savesets of OpenVMS BACKUP (test/vms): VBACKUP and vbkx against BACKUP's own listing
+add_test(NAME vms
+	COMMAND ${CMAKE_COMMAND} -E env
+		VBACKUP=$<TARGET_FILE:vbackup>
+		VBKX=$<TARGET_FILE:vbkx>
+		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/vms.d
+		sh ${CMAKE_CURRENT_SOURCE_DIR}/vms.sh)
 
 #	The extractors for the geeks, those that the toolchains here could build
 if ( VBACKUP_GEEKS )
