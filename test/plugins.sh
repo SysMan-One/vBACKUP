@@ -33,6 +33,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-04 : mc: Enter on x.sav, Works.save and a saveset with no
+#					extension at all opens it (.sav, and file(1) with
+#					our magic).
+#
 #		 5-OCT-2026	RRL	X-03 : far2l's question to revive an instance is known by
 #					its prompt too: with many instances left over the
 #					first line of it is scrolled off the screen.
@@ -205,6 +209,29 @@ if command -v tmux > /dev/null 2>&1 && command -v mc > /dev/null 2>&1; then
 	sleep 1
 	tmux kill-session -t $TMUXSESS 2>/dev/null
 	TMUXSESS=
+
+	#	Enter on a saveset: known by .sav as by .bck, and by its contents whatever its name (file(1) and our magic)
+	if [ -r /etc/mc/mc.ext.ini ] && command -v file > /dev/null 2>&1; then
+		mkdir -p "$MH/.config/mc"
+		cp /etc/mc/mc.ext.ini "$MH/.config/mc/mc.ext.ini"
+		cmake -DMODE=add -DTARGET="$MH/.config/mc/mc.ext.ini" -DSNIPPET="$SRC/plugins/mc/mc.ext.ini.vbackup" "-DBEFORE=[Default]" \
+			-P "$SRC/cmake/plugcfg.cmake" > /dev/null
+		L_MAGIC="$SRC/plugins/magic/vbackup.magic:$(file --version | sed -n 's/^magic file from //p')"
+		for N in w.sav Works.save noname; do
+			rm -rf "assoc.$N" && mkdir "assoc.$N" && cp x.bck "assoc.$N/$N"
+			TMUXSESS=vbkplug-mca-$$
+			tmux new-session -d -s $TMUXSESS -x 140 -y 32 "cd '$S/assoc.$N' && HOME='$MH' PATH='$PATH' MAGIC='$L_MAGIC' TERM=xterm exec mc -u '$S/assoc.$N' '$S/assoc.$N'"
+			waitfor $TMUXSESS "$N" 15
+			tmux send-keys -t $TMUXSESS Down
+			sleep 1
+			tmux send-keys -t $TMUXSESS Enter
+			check 'waitfor $TMUXSESS "uvbk:" 15' "mc: Enter on $N does not open the saveset: $(tmux capture-pane -t $TMUXSESS -p | head -3)"
+			tmux send-keys -t $TMUXSESS F10
+			sleep 1
+			tmux kill-session -t $TMUXSESS 2>/dev/null
+			TMUXSESS=
+		done
+	fi
 else
 	echo "%VBACKUP-W-PLUGINS, no tmux or no mc: the real Midnight Commander not tried"
 fi

@@ -681,7 +681,7 @@ read only: you can look inside and copy files out; a saveset is never
 changed. The list comes from the catalog, so even a very large saveset
 opens at once.
 
-Midnight Commander: press Enter on a .bck file. The installation puts
+Midnight Commander: press Enter on a .bck or .sav file - or on a saveset of any name: the installation adds the magic of VBACKUP to /etc/magic, and MC knows it by its contents. The installation puts
 the script uvbk into the extfs of MC and a [vbackup] section into
 mc.ext.ini; by hand: copy share/vbackup/plugins/mc/uvbk into
 ~/.local/share/mc/extfs.d and the section of mc.ext.ini.vbackup into
@@ -691,7 +691,7 @@ from a local disk only.
 far2l (Linux) and Far Manager 3 (Windows): MultiArc, with the format in
 share/vbackup/plugins/far/vbackup.ini (the installation adds it for
 far2l). It runs vbkx; on Windows put vbkx.exe on the PATH. Press Enter
-or Ctrl+PgDn on a .bck file; F5 copies files out.
+or Ctrl+PgDn on a saveset (known by its signature, whatever its name); F5 copies files out.
 
 Total Commander (Windows) and Double Commander (Linux): the packer
 plugin vbackup.wcx64 (64-bit TC) / vbackup.wcx (32-bit TC; on Linux, for DC) - install it in the

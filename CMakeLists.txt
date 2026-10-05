@@ -16,6 +16,8 @@
 #
 #		 5-OCT-2026	RRL	X-09 : The kit by git archive of HEAD (cmake/kit.cmake):
 #					what is not committed never gets into it.
+#					The magic of file(1) into /etc/magic: MC knows a
+#					saveset by its contents; .sav beside .bck.
 #
 #		 4-OCT-2026	RRL	X-05 : Stage 5: the WCX plugin of Total Commander and
 #					Double Commander - vbackup.wcx (Linux, the target
@@ -470,10 +472,12 @@ option(VBACKUP$M_PLUGINS "Install the file manager plugins where MC and far2l ar
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/uvbk DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/mc)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/mc.ext.ini.vbackup DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/mc)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/far/vbackup.ini DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/far)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugins/magic/vbackup.magic DESTINATION ${CMAKE_INSTALL_DATADIR}/vbackup/plugins/magic)
 
 set(VBACKUP_MCEXTFS "")
 set(VBACKUP_MCEXTINI "")
 set(VBACKUP_FARCUSTOM "")
+set(VBACKUP_MAGIC "")
 
 if ( VBACKUP$M_PLUGINS )
 	foreach ( D /usr/lib/mc/extfs.d /usr/libexec/mc/extfs.d /usr/local/libexec/mc/extfs.d )
@@ -494,6 +498,11 @@ if ( VBACKUP$M_PLUGINS )
 		endif()
 	endforeach()
 
+	#	The local magic of file(1): MC knows a saveset by its contents, whatever its name
+	if ( EXISTS /etc/magic )
+		set(VBACKUP_MAGIC /etc/magic)
+	endif()
+
 	if ( VBACKUP_MCEXTFS )
 		install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mc/uvbk DESTINATION ${VBACKUP_MCEXTFS})
 	endif()
@@ -509,7 +518,12 @@ if ( VBACKUP$M_PLUGINS )
 			-DSNIPPET=${CMAKE_CURRENT_SOURCE_DIR}/plugins/far/vbackup.ini -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)")
 	endif()
 
-	message(STATUS "VBACKUP: plugins - MC extfs ${VBACKUP_MCEXTFS}, ${VBACKUP_MCEXTINI}; far2l ${VBACKUP_FARCUSTOM}")
+	if ( VBACKUP_MAGIC )
+		install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -DMODE=add -DTARGET=\$ENV{DESTDIR}${VBACKUP_MAGIC}
+			-DSNIPPET=${CMAKE_CURRENT_SOURCE_DIR}/plugins/magic/vbackup.magic -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/plugcfg.cmake)")
+	endif()
+
+	message(STATUS "VBACKUP: plugins - MC extfs ${VBACKUP_MCEXTFS}, ${VBACKUP_MCEXTINI}; far2l ${VBACKUP_FARCUSTOM}; magic ${VBACKUP_MAGIC}")
 endif()
 
 if ( NOT TARGET uninstall )

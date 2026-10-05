@@ -55,7 +55,7 @@ foreach ( F ${FILES} )
 endforeach()
 
 #	The sections of VBACKUP in the configuration of the file managers
-foreach ( F "@VBACKUP_MCEXTINI@" "@VBACKUP_FARCUSTOM@" )
+foreach ( F "@VBACKUP_MCEXTINI@" "@VBACKUP_FARCUSTOM@" "@VBACKUP_MAGIC@" )
 	if ( F )
 		execute_process(COMMAND ${CMAKE_COMMAND} -DMODE=remove "-DTARGET=$ENV{DESTDIR}${F}" -P "@VBACKUP_PLUGCFG@")
 	endif()

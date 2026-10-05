@@ -681,7 +681,7 @@ Saveset-ы можно смотреть в файловых менеджерах 
 меняется. Список берётся из каталога, поэтому даже очень большой
 saveset открывается сразу.
 
-Midnight Commander: нажмите Enter на файле .bck. Установка кладёт
+Midnight Commander: нажмите Enter на файле .bck или .sav -- или на saveset-е с любым именем: установка добавляет магию VBACKUP в /etc/magic, и MC узнаёт его по содержимому. Установка кладёт
 скрипт uvbk в extfs MC и секцию [vbackup] в mc.ext.ini; вручную:
 скопируйте share/vbackup/plugins/mc/uvbk в ~/.local/share/mc/extfs.d, а
 секцию из mc.ext.ini.vbackup -- в свой mc.ext.ini перед [Default].
@@ -690,7 +690,7 @@ Midnight Commander: нажмите Enter на файле .bck. Установк�
 far2l (Linux) и Far Manager 3 (Windows): MultiArc с описанием формата
 share/vbackup/plugins/far/vbackup.ini (для far2l установка добавляет
 его сама). Работу делает vbkx; на Windows положите vbkx.exe в PATH.
-Enter или Ctrl+PgDn на файле .bck; F5 копирует файлы.
+Enter или Ctrl+PgDn на saveset-е (он узнаётся по сигнатуре при любом имени); F5 копирует файлы.
 
 Total Commander (Windows) и Double Commander (Linux): плагин архиватора
 vbackup.wcx64 (64-битный TC) / vbackup.wcx (32-битный TC; на Linux -- для DC) -- установите его в настройках
