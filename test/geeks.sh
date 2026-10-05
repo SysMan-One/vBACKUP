@@ -28,6 +28,12 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-06 : The messages of the geeks in the form of vbkx: "File: name
+#					- is incomplete", "File: name - ... not extracted",
+#					"Block: 2, Volume: 1 - was bad, rebuilt from its
+#					group", "Saveset: name - the passphrase does not
+#					open it" - the judge and the checks read them so.
+#
 #		 5-OCT-2026	RRL	X-05 : Encrypted savesets (format.md 6.10): one plain, one
 #					multi-volume compressed of 16 KB blocks, read by
 #					the geeks with -k and VBACKUP_KEY_FILE the same as
@@ -232,9 +238,9 @@ def lz4ref(path, outdir):
 def judge(src, out, log):
 	"""Silent damage is the one thing never allowed"""
 	text = open(log, errors="replace").read()
-	named = set(re.findall(r"vbkx-(?:go|rs|pl): (.+?) is incomplete", text))
-	lost = set(re.findall(r"vbkx-(?:go|rs|pl): (.+?) was not extracted", text))
-	unnamed = re.search(r"cannot all be named|is not a saveset|no volume has a readable VHDR", text)
+	named = set(re.findall(r"vbkx-(?:go|rs|pl): File: (.+?) - is incomplete", text))
+	lost = set(re.findall(r"vbkx-(?:go|rs|pl): File: (.+?)(?:, errno: \d+)? - [^\n]*not extracted", text))
+	unnamed = re.search(r"- files missing from the output cannot all be named|- is not a saveset|- is encrypted, and no volume has a readable VHDR", text)
 	bad = []
 	for root, ds, fs in os.walk(src):
 		for f in fs:
@@ -363,7 +369,7 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	check '[ "$(stat -c %i $N.out/tree/a.txt)" = "$(stat -c %i $N.out/tree/sub/hard)" ] && [ "$(du -k $N.out/tree/sparse | cut -f1)" -lt 1000 ]' \
 		"$N x: hard link or holes lost"
 	$G x base/x.bck -C $N.out > $N.log2 2>&1
-	check '[ $? = 1 ] && grep -q "was not extracted: it exists" $N.log2' "$N x over the files that are there: $(head -2 $N.log2)"
+	check '[ $? = 1 ] && grep -q "File: tree/a.txt - already exists, not extracted" $N.log2' "$N x over the files that are there: $(head -2 $N.log2)"
 	$G t base/x.bck > $N.t 2>&1
 	check '[ $? = 0 ] && grep -q "all checksums match" $N.t' "$N t: $(cat $N.t)"
 	$G q base/x.bck > /dev/null 2>&1
@@ -389,7 +395,7 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	#	2. Volume 1 without its VHDR: the block size and the group size found by trying
 	rm -rf d && cp -r base d && python3 g.py damage d VHDR 0
 	$G x d/x.bck -C $N.vh > $N.vh.log 2>&1
-	check '[ $? = 0 ] && same ref $N.vh && grep -q "found by trying" $N.vh.log' "$N: volume 1 without its VHDR, $(head -3 $N.vh.log)"
+	check '[ $? = 0 ] && same ref $N.vh && grep -q "Saveset: d/x.bck - its first block is bad: block size $BSZ and group size $GRP found by trying" $N.vh.log' "$N: volume 1 without its VHDR, $(head -3 $N.vh.log)"
 
 	#	3. The rounds of damage: on the plain saveset, then on the compressed one - there also
 	#	   garbage inside the compressed bytes of DATAZ records with the blocks resealed (ZBODY),
@@ -423,7 +429,7 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 		elif ! python3 g.py judge src/tree o x.log; then
 			fail "$N $BASE round $r $MODE seed $RS: silent damage"
 		elif [ $MODE = FIX ] && { [ $RC != 0 ] || ! same ref o; }; then
-			fail "$N $BASE round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v repaired x.log | head -3)"
+			fail "$N $BASE round $r FIX seed $RS: not all repaired, completion code $RC: $(grep -v "rebuilt from its group" x.log | head -3)"
 		else
 			ok "$N $BASE round $r $MODE seed $RS: x"
 		fi
@@ -466,28 +472,28 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	$G x ezbase/x.bck -C $N.ezout -k key > $N.ezlog 2>&1
 	check '[ $? = 0 ] && same ezref $N.ezout && same ref $N.ezout' "$N x of the encrypted saveset in volumes, compressed: $(head -3 $N.ezlog)"
 	$G x ebase/x.bck -C $N.ebad -k badkey > $N.ebadlog 2>&1
-	check '[ $? = 2 ] && [ ! -e $N.ebad ] && grep -q "the passphrase does not open" $N.ebadlog' "$N: a wrong passphrase, $(head -2 $N.ebadlog)"
+	check '[ $? = 2 ] && [ ! -e $N.ebad ] && grep -q "Saveset: ebase/x.bck - the passphrase does not open it" $N.ebadlog' "$N: a wrong passphrase, $(head -2 $N.ebadlog)"
 	chmod 644 key
 	$G t ebase/x.bck -k key > $N.eperm 2>&1
-	check '[ $? = 2 ] && grep -q "chmod 600" $N.eperm' "$N: a key file others may read, $(head -2 $N.eperm)"
+	check '[ $? = 2 ] && grep -q "Key file: key - not a regular file, or others may read it: chmod 600 it" $N.eperm' "$N: a key file others may read, $(head -2 $N.eperm)"
 	chmod 600 key
 
 	#	5f. A forged EDATA block - one octet of its ciphertext, the CRC made right again:
 	#	    the TAG catches it, the XOR block rebuilds it; two of a group are lost and named
 	rm -rf d && cp -r ebase d && python3 g.py forge d/x.bck 2 100
 	$G x d/x.bck -C $N.ef -k key > $N.eflog 2>&1
-	check '[ $? = 0 ] && same ref $N.ef && grep -q "block 2 of volume 1 is not what was written: its CRC is right, its authentication fails" $N.eflog && grep -q "repaired" $N.eflog' \
+	check '[ $? = 0 ] && same ref $N.ef && grep -q "Block: 2, Volume: 1 - is not what was written: its CRC is right, its authentication fails" $N.eflog && grep -q "Block: 2, Volume: 1 - was bad, rebuilt from its group" $N.eflog' \
 		"$N: a forged block not caught or not repaired, $(head -3 $N.eflog)"
 	python3 g.py forge d/x.bck 3 10
 	$G x d/x.bck -C $N.ef2 -k key > $N.ef2log 2>&1
 	RC=$?
-	check '[ $RC = 1 ] && [ $(grep -c "authentication fails" $N.ef2log) = 2 ] && grep -q "cannot be repaired" $N.ef2log && python3 g.py judge src/tree $N.ef2 $N.ef2log' \
+	check '[ $RC = 1 ] && [ $(grep -c "authentication fails" $N.ef2log) = 2 ] && grep -q "is bad and cannot be rebuilt" $N.ef2log && python3 g.py judge src/tree $N.ef2 $N.ef2log' \
 		"$N: two forged blocks of a group, completion code $RC, $(head -3 $N.ef2log)"
 
 	#	5t. A forged ETRAILER: said, and the stream read all the same
 	rm -rf d && cp -r ebase d && python3 g.py forge d/${ELAST#ebase/} $((EBLKS - 1)) 0
 	$G x d/x.bck -C $N.et2 -k key > $N.et2log 2>&1
-	check '[ $? = 1 ] && same ref $N.et2 && grep -q "its trailer fails its authentication" $N.et2log' "$N: a forged trailer, $(head -3 $N.et2log)"
+	check '[ $? = 1 ] && same ref $N.et2 && grep -q "Saveset: d/x.bck - its trailer fails its authentication" $N.et2log' "$N: a forged trailer, $(head -3 $N.et2log)"
 
 	#	4. A forged saveset: names that climb out, a link to go through
 	mkdir -p evil.$N/out

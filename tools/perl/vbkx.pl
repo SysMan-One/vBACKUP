@@ -100,10 +100,11 @@
 #		rebuilt from the group's XOR block; after a loss the stream
 #		is picked up at the next good block (in an encrypted saveset
 #		the TAG judges a block as much as its CRC does).  A file that lost data
-#		is kept as far as it got and named: "<name> is incomplete".
-#		A file whose records were lost entirely is named from the
-#		catalog: "<name> was not extracted"; without a readable
-#		catalog that is said once ("... cannot all be named").  A
+#		is kept as far as it got and named: "File: <name> - is
+#		incomplete".  A file whose records were lost entirely is named
+#		from the catalog: "File: <name> - not extracted"; without a
+#		readable catalog that is said once ("Saveset: <saveset> - files
+#		missing from the output cannot all be named").  A
 #		missing or cut volume is skipped, the next one is read.  A
 #		volume 1 whose first block (VHDR) is bad is still read: the
 #		block size is found by trying every legal size against the
@@ -118,13 +119,20 @@
 #  EXIT:	0 - all done; 1 - something was damaged or not done;
 #		2 - the command or the saveset cannot be used.
 #
-#		Messages go to the standard error, each beginning "vbkx-pl: ".
+#		Messages go to the standard error, each beginning "vbkx-pl: ",
+#		in the form of vbkx's: what it is about first, "Label: value"
+#		("File: name, errno: n"), then " - " and the words.
 #
 #  AUTHOR:	StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
 #
 #  CREATION DATE:  4-OCT-2026
 #
 #  MODIFICATION HISTORY:
+#
+#	X01-08		 5-OCT-2026	RRL
+#		The messages in the form of vbkx's and VBACKUP's: "Label: value"
+#		first, then " - " and the words; a system error as "errno: N -
+#		words (text)".
 #
 #	X01-06		 5-OCT-2026	RRL
 #		Encrypted savesets (format.md 6.10): -k keyfile, VBACKUP_KEY_FILE
@@ -555,7 +563,7 @@ sub set_key
 		my $th = check($R{trlraw}, $R{bsize}, $R{uuid});
 		if (!$th || !tag_ok($th, $R{trlraw}))
 		{
-			msg('%s: its trailer fails its authentication - read as a saveset without a catalog', $R{spec});
+			msg('Saveset: %s - its trailer fails its authentication: read as a saveset without a catalog', $R{spec});
 			$bad = 1;
 		}
 	}
@@ -657,7 +665,7 @@ sub guess
 					last;
 				}
 			}
-			msg('%s: the first block is bad; block size %d and group size %d found by trying', $R{spec}, $bs, $R{grpsz});
+			msg('Saveset: %s - its first block is bad: block size %d and group size %d found by trying', $R{spec}, $bs, $R{grpsz});
 			return 1;
 		}
 	}
@@ -670,7 +678,7 @@ sub open_saveset
 	my ($spec) = @_;
 	$R{spec} = $spec;
 	my $fh;
-	sysopen($fh, $spec, O_RDONLY) or return "$spec: $!";
+	sysopen($fh, $spec, O_RDONLY) or return sprintf("File: %s, errno: %d - cannot be opened (%s)", $spec, $! + 0, "$!");
 
 	# The block size comes from the first header; it is believed only when the block checks
 	my $head = ${ read_block($fh, HDRSZ, 0) };
@@ -693,7 +701,7 @@ sub open_saveset
 	if (!$found && !guess($fh))
 	{
 		close($fh);
-		return "$spec is not a saveset";
+		return "File: $spec - is not a saveset";
 	}
 	push @{ $R{vols} }, { fh => $fh, firstblk => 0, nblk => blocks_in($fh, $R{bsize}) };
 
@@ -718,11 +726,11 @@ sub open_saveset
 		elsif (($h = check(read_block($vf, $R{bsize}, 1), $R{bsize}, $R{uuid})) && $h->{volno} == $n && $h->{blkno} > 0)
 		{
 			$first = $h->{blkno} - 1;
-			msg('volume %d: its first block is bad, it is read all the same', $n);
+			msg('Volume: %d - its first block is bad, it is read all the same', $n);
 		}
 		else
 		{
-			msg('volume %d belongs to another saveset, or is none', $n);
+			msg('Volume: %d - belongs to another saveset, or is none', $n);
 			close($vf);
 			$miss++;
 			next;
@@ -733,8 +741,8 @@ sub open_saveset
 	}
 
 	# Encrypted (6.10): DATA blocks are EDATA, the TRAILER an ETRAILER, a payload leaves room for the TAG
-	return "$spec: an encryption this extractor does not know - it cannot be read" if $R{crypt} && !crypt_known();
-	return "$spec is encrypted, and no volume has a readable VHDR to give its keys" if $R{guessenc} && !$R{crypt};
+	return "Saveset: $spec - an encryption this extractor does not know: it cannot be read" if $R{crypt} && !crypt_known();
+	return "Saveset: $spec - is encrypted, and no volume has a readable VHDR to give its keys" if $R{guessenc} && !$R{crypt};
 	$R{dtype} = $R{crypt} ? BT_EDATA : BT_DATA;
 	$R{ttype} = $R{crypt} ? BT_ETRAILER : BT_TRAILER;
 	$R{cap}	  = $R{bsize} - HDRSZ - ($R{crypt} ? TAGSZ : 0);
@@ -774,7 +782,7 @@ sub load_group
 		$v = $R{vols}[$R{curvol} - 1];
 		if (!defined($v))
 		{
-			msg('volume %d is missing', $R{curvol});
+			msg('Volume: %d - is missing', $R{curvol});
 			$bad = 1;
 			$R{gap} = 1;
 			$R{curvol}++;
@@ -821,7 +829,7 @@ sub load_group
 		if ($ok[$i] && $R{crypt} && !tag_ok($hdrs[$i], $blks[$i]))
 		{
 			$ok[$i] = 0;
-			msg('block %d of volume %d is not what was written: its CRC is right, its authentication fails',
+			msg('Block: %d, Volume: %d - is not what was written: its CRC is right, its authentication fails',
 				$hdrs[$i]{blkno}, $R{curvol});
 		}
 		if (!$ok[$i])
@@ -850,7 +858,7 @@ sub load_group
 			$blks[$badi] = \$blk;
 			$hdrs[$badi] = \%h;
 			$ok[$badi] = 1;
-			msg('block %d of volume %d was bad and has been repaired', $h{blkno}, $R{curvol});
+			msg('Block: %d, Volume: %d - was bad, rebuilt from its group', $h{blkno}, $R{curvol});
 		}
 	}
 
@@ -860,7 +868,7 @@ sub load_group
 		my $b = $v->{firstblk} + $R{curpos} + $i;
 		if (!$ok[$i])
 		{
-			msg('block %d of volume %d is bad and cannot be repaired', $b, $R{curvol});
+			msg('Block: %d, Volume: %d - is bad and cannot be rebuilt', $b, $R{curvol});
 			$bad = 1;
 			push @pays, undef;
 			push @recoffs, NONE;
@@ -939,7 +947,7 @@ sub next_record
 		}
 		if ($typ == 0 || $len > MAXREC)
 		{
-			msg('a bad record in block %d of volume %d', $R{payblk}, $R{payvol});
+			msg('Block: %d, Volume: %d - an invalid record, skipped', $R{payblk}, $R{payvol});
 			$bad = 1;
 			$R{gap} = 1;
 			$R{pay} = undef;
@@ -969,7 +977,7 @@ sub next_record
 		}
 		if ($st == 2)
 		{
-			msg('the saveset ends inside a record');
+			msg('Saveset: %s - ends inside a record', $R{spec});
 			$bad = 1;
 			$R{resync} = 1;
 			return ();
@@ -1003,11 +1011,11 @@ sub parents
 		$p .= "/$c";
 		if (lstat($p))
 		{
-			return 'a directory on the way is a link, or no directory' unless -d _ && !-l _;
+			return [POSIX::ENOTDIR(), POSIX::strerror(POSIX::ENOTDIR())] unless -d _ && !-l _;
 			next;
 		}
-		return "$!" unless $create;
-		mkdir($p, 0700) or return "$!";
+		return [$! + 0, "$!"] unless $create;
+		mkdir($p, 0700) or return [$! + 0, "$!"];
 	}
 	return undef;
 }
@@ -1058,7 +1066,7 @@ sub x_begin
 	my $e = parse_entry($body);
 	if (!$e)
 	{
-		msg('a FILE record that makes no sense is skipped');
+		msg('Record: FILE - makes no sense, skipped');
 		$bad = 1;
 		return;
 	}
@@ -1072,23 +1080,24 @@ sub x_begin
 	my $name = $e->{path};
 	if (!name_ok($name))
 	{
-		msg('%s was not extracted: a name that leads out of the output directory', $name);
+		msg('File: %s - its name leads out of the output directory, not extracted', $name);
 		$bad = 1;
 		return;
 	}
 	my $err = parents($X{out}, $name, 1);
 	if (defined($err))
 	{
-		msg('%s was not extracted: %s', $name, $err);
+		msg('File: %s, errno: %d - a directory on the way cannot be made, or is a link, not extracted (%s)', $name, @$err);
 		$bad = 1;
 		return;
 	}
 	my $path = "$X{out}/$name";
 	if ($e->{ftype} == FT_DIR)
 	{
-		if (!mkdir($path, 0700) && !(lstat($path) && -d _ && !-l _))
+		my @why;
+		if (!mkdir($path, 0700) && (@why = ($! + 0, "$!")) && !(lstat($path) && -d _ && !-l _))
 		{
-			msg('%s was not extracted: %s', $name, "$!");
+			msg('File: %s, errno: %d - cannot be made, not extracted (%s)', $name, @why);
 			$bad = 1;
 			return;
 		}
@@ -1097,7 +1106,7 @@ sub x_begin
 	}
 	if (lstat($path))
 	{
-		msg('%s was not extracted: it exists, and is never overwritten', $name);
+		msg('File: %s - already exists, not extracted (never overwritten)', $name);
 		$bad = 1;
 		return;
 	}
@@ -1109,19 +1118,19 @@ sub x_begin
 			binmode($fh);
 			@X{qw(fh active path)} = ($fh, 1, $path);
 		}
-		else { $err = "$!"; }
+		else { $err = [$! + 0, "$!"]; }
 	}
 	elsif ($e->{ftype} == FT_SYMLINK)
 	{
 		if (symlink($e->{link}, $path)) { set_times($path, $e, 1); }
-		else				{ $err = "$!"; }
+		else				{ $err = [$! + 0, "$!"]; }
 	}
 	elsif ($e->{ftype} == FT_HARDLINK)
 	{
-		if (!name_ok($e->{link})) { $err = 'a link that leads out of the output directory'; }
+		if (!name_ok($e->{link})) { $err = 'a link that leads out of the output directory, not extracted'; }
 		elsif (!defined($err = parents($X{out}, $e->{link}, 0)))
 		{
-			$err = "$!" unless link("$X{out}/$e->{link}", $path);
+			$err = [$! + 0, "$!"] unless link("$X{out}/$e->{link}", $path);
 		}
 	}
 	elsif ($e->{ftype} == FT_FIFO)
@@ -1131,7 +1140,7 @@ sub x_begin
 			chmod($e->{mode} & 07777, $path);
 			set_times($path, $e, 0);
 		}
-		else { $err = "$!"; }
+		else { $err = [$! + 0, "$!"]; }
 	}
 	else
 	{
@@ -1139,7 +1148,8 @@ sub x_begin
 	}
 	if (defined($err))
 	{
-		msg('%s was not extracted: %s', $name, $err);
+		if (ref($err)) { msg('File: %s, errno: %d - cannot be made, not extracted (%s)', $name, @$err); }
+		else	       { msg('File: %s - %s', $name, $err); }
 		$bad = 1;
 	}
 }
@@ -1229,7 +1239,7 @@ sub x_data
 	my ($fileno, $off, $d) = data_view($typ, $body);
 	if (!defined($fileno))
 	{
-		msg('%s: a data record that makes no sense', $X{e}{path});
+		msg('File: %s - a data record that makes no sense', $X{e}{path});
 		$X{damaged} = 1;
 		return;
 	}
@@ -1251,7 +1261,7 @@ sub x_data
 	}
 	if (!$ok)
 	{
-		msg('%s: %s', $X{e}{path}, "$!");
+		msg('File: %s, errno: %d - cannot be written (%s)', $X{e}{path}, $! + 0, "$!");
 		$X{damaged} = 1;
 	}
 }
@@ -1282,22 +1292,22 @@ sub x_end
 	}
 	elsif ($hascrc && $crc != $X{crc})
 	{
-		msg('%s: the checksum does not match', $e->{path});
+		msg('File: %s - checksum mismatch: the data differ from what was saved', $e->{path});
 		$X{damaged} = 1;
 	}
 	if ($X{damaged})
 	{
-		msg('%s is incomplete: its data was lost in bad blocks', $e->{path});
+		msg('File: %s - is incomplete: its data was lost in bad blocks', $e->{path});
 		$bad = 1;
 	}
-	elsif ($status == FS_CHANGED) { msg('%s changed while it was saved: the copy may be a mix', $e->{path}); }
-	elsif ($status == FS_READERR) { msg('%s could not be read whole when it was saved', $e->{path}); }
+	elsif ($status == FS_CHANGED) { msg('File: %s - changed while it was saved: the copy may be a mix', $e->{path}); }
+	elsif ($status == FS_READERR) { msg('File: %s - could not be read whole when it was saved', $e->{path}); }
 
 	return unless defined($X{fh});
 	truncate($X{fh}, $size) if $size <= 2**53;
 	if (!close($X{fh}))
 	{
-		msg('%s: %s', $e->{path}, "$!");
+		msg('File: %s, errno: %d - cannot be written (%s)', $e->{path}, $! + 0, "$!");
 		$bad = 1;
 	}
 	$X{fh} = undef;
@@ -1322,7 +1332,7 @@ sub x_catalog
 		my $e = parse_entry(substr($body, $off + 4, $elen));
 		if ($e && $e->{status} != FS_PRESENT && !$X{seen}{ $e->{fileno} })
 		{
-			msg('%s was not extracted: its records were lost in bad blocks', $e->{path});
+			msg('File: %s - not extracted: its records were lost in bad blocks', $e->{path});
 			$bad = 1;
 		}
 		$off += 4 + $elen;
@@ -1371,7 +1381,7 @@ sub run
 	x_end(undef) if $X{active};
 
 	# Blocks were lost, and the catalog could not tell every name
-	msg('%s: files missing from the output cannot all be named', $R{spec}) if $bad && (!$X{catseen} || $X{cathole} || !$ended);
+	msg('Saveset: %s - files missing from the output cannot all be named', $R{spec}) if $bad && (!$X{catseen} || $X{cathole} || !$ended);
 }
 
 sub list
@@ -1410,14 +1420,14 @@ sub get_pass
 		my $fh;
 		if (!open($fh, '<:raw', $kf))
 		{
-			msg('%s: %s', $kf, "$!");
+			msg('Key file: %s, errno: %d - cannot be read (%s)', $kf, $! + 0, "$!");
 			return undef;
 		}
 		my @st = stat($fh);
 		if (!@st || !-f _ || ($st[2] & 077))
 		{
 			close($fh);
-			msg('%s: not a regular file, or others may read it - chmod 600 it', $kf);
+			msg('Key file: %s - not a regular file, or others may read it: chmod 600 it', $kf);
 			return undef;
 		}
 		local $/ = "\n";
@@ -1430,7 +1440,7 @@ sub get_pass
 		my $t = POSIX::Termios->new();
 		if (!open($tty, '+<:raw', '/dev/tty') || !defined($t->getattr(fileno($tty))))
 		{
-			msg('%s is encrypted: no terminal to ask the passphrase on - give -k file', $spec);
+			msg('Saveset: %s - is encrypted, and there is no terminal to ask the passphrase on: give -k file', $spec);
 			return undef;
 		}
 		my $save = $t->getlflag();
@@ -1456,7 +1466,7 @@ sub get_pass
 	$line =~ s/\r\z//;
 	if (!length($line) || length($line) >= PASSMAX + 2)
 	{
-		msg('no passphrase, or one longer than %d bytes', PASSMAX + 1);
+		msg('Passphrase: none - empty, or longer than %d bytes', PASSMAX + 1);
 		return undef;
 	}
 	return $line;
@@ -1525,7 +1535,7 @@ sub selftest
 
 sub usage
 {
-	print STDERR "vbkx-pl X01-06 - the extractor of last resort for VBACKUP savesets\n\n",
+	print STDERR "vbkx-pl X01-08 - the extractor of last resort for VBACKUP savesets\n\n",
 		"  perl vbkx.pl l saveset [-k file]           list the files (times in UTC)\n",
 		"  perl vbkx.pl x saveset [-C dir] [-k file]  extract them all\n",
 		"  perl vbkx.pl t saveset [-k file]           read it all, check the checksums\n",
@@ -1562,7 +1572,7 @@ sub main
 		return 2 unless defined($pass);
 		if (!set_key($pass))
 		{
-			msg('the passphrase does not open %s', $spec);
+			msg('Saveset: %s - the passphrase does not open it', $spec);
 			return 2;
 		}
 	}
@@ -1574,7 +1584,7 @@ sub main
 	{
 		if (!mkdir($out, 0755) && !-d $out)
 		{
-			msg('%s: %s', $out, "$!");
+			msg('Directory: %s, errno: %d - cannot be made or entered (%s)', $out, $! + 0, "$!");
 			return 2;
 		}
 		umask(0);
@@ -1596,7 +1606,7 @@ if (!defined($rc))
 {
 	my $why = $@ || 'unknown';
 	$why =~ s/\s+\z//;
-	msg('internal error: %s', $why);
+	msg('Error: %s - internal error', $why);
 	$rc = 2;
 }
 exit($rc);
