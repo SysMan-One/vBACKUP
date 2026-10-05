@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-08"
+#define	__IDENT__	"X01-14"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.8.0"
+#define	__REV__		"1.14.0"
 #endif
 
 /*
@@ -34,6 +34,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		VBK$K_VERSION2, VBK$K_BT_PARITY, VBK$K_TAG_PARITY; VERSION in
+**		VBK$BHDR.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		VBK$STRPUT.
@@ -70,6 +74,7 @@ extern "C" {
 **  Block geometry, format.md section 2 and 3
 */
 #define	VBK$K_VERSION	1			/* Format version				*/
+#define	VBK$K_VERSION2	2			/* ... with PARITY blocks (format.md 4.1)	*/
 #define	VBK$K_HDRSZ	64			/* Block header					*/
 #define	VBK$K_SZ_SPEC	4096			/* Longest volume specification			*/
 #define	VBK$K_MINBSZ	8192			/* Smallest block				*/
@@ -99,7 +104,8 @@ enum	{					/* Block types					*/
 	VBK$K_BT_VHDR,
 	VBK$K_BT_TRAILER,
 	VBK$K_BT_EDATA,				/* DATA of an encrypted saveset (X01-06)	*/
-	VBK$K_BT_ETRAILER			/* TRAILER of an encrypted saveset		*/
+	VBK$K_BT_ETRAILER,			/* TRAILER of an encrypted saveset		*/
+	VBK$K_BT_PARITY				/* A parity row >= 1, version 2 (X01-14)	*/
 	};
 
 #define	VBK$M_LASTINVOL	1			/* Last block of a volume			*/
@@ -175,6 +181,7 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_KDFITER,			/* ... its iterations				*/
 	VBK$K_TAG_SALT,				/* ... its salt, 32 octets			*/
 	VBK$K_TAG_KEYCHECK,			/* ... CHECK, 32 octets: the passphrase is right */
+	VBK$K_TAG_PARITY,			/* SUMMARY, VHDR: parity blocks a group, 2 .. 8	*/
 
 	VBK$K_TAG_NFILES = 96,
 	VBK$K_TAG_NBYTES,
@@ -220,6 +227,7 @@ enum	{					/* STATUS of FEND				*/
 */
 typedef struct vbk_bhdr_t
 {
+	uint16_t	version;		/* 0 - VBK$K_VERSION, when it is written	*/
 	uint32_t	bsize;
 	uint8_t		type;
 	uint8_t		flags;

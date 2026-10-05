@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKFMT"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -18,6 +18,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		Version 2 (format.md 4.1): the version of a header kept and
+**		written; type 7 PARITY; the parity blocks of version 2 carry the
+**		header parity in RECOFF and PAYLEN, not checked as lengths.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		No printf in the core: VBK$VOLSPEC writes the number of a volume
@@ -70,7 +75,7 @@ void	vbk$bhdr_put	(
 {
 	memcpy(a_blk, vbk$t_magic, sizeof(vbk$t_magic));
 	vbk$put16(a_blk + 4, VBK$K_HDRSZ);
-	vbk$put16(a_blk + 6, VBK$K_VERSION);
+	vbk$put16(a_blk + 6, a_hdr->version ? a_hdr->version : VBK$K_VERSION);
 	vbk$put32(a_blk + 8, a_hdr->bsize);
 	a_blk [12]	= a_hdr->type;
 	a_blk [13]	= a_hdr->flags;
@@ -138,9 +143,10 @@ int	vbk$bhdr_peek	(
 	if ( memcmp(a_blk, vbk$t_magic, sizeof(vbk$t_magic)) )
 		return	STS$K_ERROR;
 
-	if ( (vbk$get16(a_blk + 4) != VBK$K_HDRSZ) || (vbk$get16(a_blk + 6) != VBK$K_VERSION) )
+	if ( (vbk$get16(a_blk + 4) != VBK$K_HDRSZ) || ((vbk$get16(a_blk + 6) != VBK$K_VERSION) && (vbk$get16(a_blk + 6) != VBK$K_VERSION2)) )
 		return	STS$K_ERROR;
 
+	a_hdr->version	= vbk$get16(a_blk + 6);
 	a_hdr->bsize	= vbk$get32(a_blk + 8);
 	a_hdr->type	= a_blk [12];
 	a_hdr->flags	= a_blk [13];
@@ -163,8 +169,9 @@ int	vbk$bhdr_peek	(
 **  FUNCTIONAL DESCRIPTION:
 **
 **	Judge a block read from a volume: it is valid when its header is
-**	one of version 1 for this block size and this saveset, the lengths
-**	in it are sane and the checksum is right.
+**	one of version 1 or 2 for this block size and this saveset, the
+**	lengths in it are sane and the checksum is right.  That every block
+**	of a saveset has the version of its VHDR is the reader's to check.
 **
 **  FORMAL PARAMETERS:
 **
@@ -194,11 +201,19 @@ uint32_t	l_crc, l_psize = a_bsize - VBK$K_HDRSZ;
 	if ( (a_hdr->bsize != a_bsize) || (a_ssuuid && memcmp(a_hdr->ssuuid, a_ssuuid, VBK$K_UUIDSZ)) )
 		return	STS$K_ERROR;
 
-	if ( (a_hdr->type < VBK$K_BT_DATA) || (a_hdr->type > VBK$K_BT_ETRAILER) || (a_hdr->paylen > l_psize) )
+	if ( (a_hdr->type < VBK$K_BT_DATA) || (a_hdr->type > VBK$K_BT_PARITY)
+		|| ((a_hdr->type == VBK$K_BT_PARITY) && (a_hdr->version != VBK$K_VERSION2)) )
 		return	STS$K_ERROR;
 
-	if ( (a_hdr->recoff != VBK$K_NONE) && (a_hdr->recoff >= l_psize) )
-		return	STS$K_ERROR;
+	/* The parity blocks of version 2 carry the header parity in RECOFF and PAYLEN (format.md 4.1) */
+	if ( (a_hdr->version == VBK$K_VERSION) || ((a_hdr->type != VBK$K_BT_XOR) && (a_hdr->type != VBK$K_BT_PARITY)) )
+		{
+		if ( a_hdr->paylen > l_psize )
+			return	STS$K_ERROR;
+
+		if ( (a_hdr->recoff != VBK$K_NONE) && (a_hdr->recoff >= l_psize) )
+			return	STS$K_ERROR;
+		}
 
 	/* The checksum is taken with its own field zero: the header is copied, not patched */
 	memcpy(l_hdr, a_blk, VBK$K_HDRSZ);

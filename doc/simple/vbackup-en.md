@@ -118,7 +118,16 @@ vbackup /home/ivan /mnt/usb/ivan.bck /VOLUME_SIZE=4G
 The pieces are called `ivan.bck`, `ivan.bck.002`, `ivan.bck.003`…
 Always keep them together, in one folder.
 
+**Tip: a box that survives more damage.** If the USB stick or the disk is
+old, add `/PARITY=2`: the box gets a little bigger (20%), but even two broken
+pieces next to each other are repaired by themselves.
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /PARITY=2
+```
+
 ---
+
 
 ## 2. See what is inside
 

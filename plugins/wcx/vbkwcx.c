@@ -94,11 +94,11 @@
 **		Linux .so (Double Commander), from the root of the sources:
 **		    gcc -O2 -shared -fPIC -DVBK_NOSTARLET -D_GNU_SOURCE -Ilib
 **			-o vbackup.wcx plugins/wcx/vbkwcx.c lib/vbkfmt.c
-**			lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c
+**			lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkrs.c
 **		Windows, 64 and 32 bits:
 **		    x86_64-w64-mingw32-gcc -O2 -shared -Ilib -o vbackup.wcx64
 **			plugins/wcx/vbkwcx.c lib/vbkfmt.c lib/vbkrd.c
-**			lib/vbklz4.c lib/vbkcrp.c -static -Wl,--kill-at
+**			lib/vbklz4.c lib/vbkcrp.c lib/vbkrs.c -static -Wl,--kill-at
 **		    i686-w64-mingw32-gcc ... -o vbackup.wcx ... (the same)
 **		or make -f plugins/wcx/Makefile linux|win64|win32|all.
 **

@@ -37,7 +37,7 @@ CC32	?= i686-w64-mingw32-gcc
 
 CFLAGS	?= -O2
 WFLAGS	:= -Wall -Wextra -Wno-unused-parameter
-SRC	:= $(TOP)/plugins/wcx/vbkwcx.c $(TOP)/lib/vbkfmt.c $(TOP)/lib/vbkrd.c $(TOP)/lib/vbklz4.c $(TOP)/lib/vbkcrp.c
+SRC	:= $(TOP)/plugins/wcx/vbkwcx.c $(TOP)/lib/vbkfmt.c $(TOP)/lib/vbkrd.c $(TOP)/lib/vbklz4.c $(TOP)/lib/vbkcrp.c $(TOP)/lib/vbkrs.c
 DEP	:= $(SRC) $(TOP)/lib/vbkos.h $(TOP)/lib/vbkfmt.h $(TOP)/lib/vbkrd.h $(TOP)/lib/vbklz4.h $(TOP)/lib/vbkcrp.h
 
 .PHONY:	all linux win64 win32 zip clean

@@ -27,6 +27,13 @@ skips them by the rules of sections 5 and 6:
   CIPHER, KDF, KDFITER, SALT, KEYCHECK, since X01-06; a reader of an
   earlier version sees every block of such a saveset as bad and
   restores nothing from it;
+- parity of more than one block per group (4.1): with `/PARITY=m`,
+  m >= 2, a group ends with its XOR block and m - 1 PARITY blocks (type
+  7), any m lost blocks of a group are rebuilt; such a saveset has
+  version 2 in every block header and the SUMMARY tag PARITY, since
+  X01-14.  A reader of an earlier version refuses it at its first block
+  (version 2) - it never misreads its groups.  Without `/PARITY`, or with
+  `/PARITY=1`, a saveset is version 1, byte for byte as before;
 - the XATTR value (6.1) carries a counted name (u8 length, name) since
   X01-03; before it the name was ended by a NUL.  No saveset of the
   earlier form was ever given out: the change is made within version 1,
@@ -74,16 +81,20 @@ volume 2 : VHDR  G G ... G
 ...
 volume K : VHDR  G G ... G  TRAILER
 
-G (group) = DATA x n, then XOR        (n = gcount, 1 <= n <= N)
+G (group) = DATA x n, then XOR, then PARITY x (m - 1)
+            (n = gcount, 1 <= n <= N; m = the parity count, 1 by default)
 ```
 
 - N is the group size (`/GROUP_SIZE`).  N = 0 means no XOR blocks: the
   DATA blocks simply follow one another.
+- m is the parity count (`/PARITY`, 1 .. 8; section 4.1): the XOR block
+  and m - 1 PARITY blocks close every group.  m = 1 is the saveset of
+  version 1; m >= 2 needs N >= 1 and makes a saveset of version 2.
 - A group never crosses a volume boundary.  The last group of a volume,
   and the last group of the saveset, may be shorter than N.
 - The volume size (`/VOLUME_SIZE`) is rounded down to a multiple of B.
   Every volume except the last one is exactly that size.  The minimum is
-  (N + 3) * B.
+  (N + m + 2) * B.
 - A volume holding only VHDR and TRAILER is legal (the TRAILER did not
   fit into the previous volume).
 - A stream (a pipe, since X01-11) carries the volumes back to back, each
@@ -97,22 +108,23 @@ G (group) = DATA x n, then XOR        (n = gcount, 1 <= n <= N)
 |---|---|---|---|
 | 0 | 4 | magic | bytes `V` `B` `K` `B` |
 | 4 | 2 | hdrlen | 64 |
-| 6 | 2 | version | 1 |
+| 6 | 2 | version | 1; 2 in every block of a saveset with m >= 2 (4.1) |
 | 8 | 4 | bsize | B |
-| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER; 5 EDATA, 6 ETRAILER - those two of an encrypted saveset (6.10) |
+| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER; 5 EDATA, 6 ETRAILER - those two of an encrypted saveset (6.10); 7 PARITY (version 2 only, 4.1) |
 | 13 | 1 | flags | bit 0 LASTINVOL: last block of this volume; bit 1 LASTINSET: last block of the saveset |
-| 14 | 2 | gindex | DATA: position in its group, 0-based; XOR: n, the number of DATA blocks it covers; else 0 |
+| 14 | 2 | gindex | DATA: position in its group, 0-based; XOR: n, the number of DATA blocks it covers; PARITY: n + 256 * j, j its row (1 .. m - 1); else 0 |
 | 16 | 16 | ssuuid | UUID of the saveset |
 | 32 | 8 | blkno | block number |
 | 40 | 4 | volno | volume number, from 1 |
-| 44 | 4 | recoff | DATA: offset in the payload of the first record header that begins in this block, 0xFFFFFFFF if none begins here; VHDR, TRAILER: 0; XOR: 0xFFFFFFFF |
-| 48 | 4 | paylen | DATA: bytes of the payload used; VHDR, TRAILER: length of their TLV body; XOR: P |
-| 52 | 4 | prvrecoff | `recoff` of the previous DATA block of the same group; 0xFFFFFFFF for the first block of a group and for VHDR, TRAILER |
-| 56 | 4 | prvpaylen | `paylen` of the previous DATA block of the same group; 0 when there is none |
+| 44 | 4 | recoff | DATA: offset in the payload of the first record header that begins in this block, 0xFFFFFFFF if none begins here; VHDR, TRAILER: 0; XOR: 0xFFFFFFFF in version 1; XOR and PARITY of version 2: bytes 0..3 of the header parity (4.1) |
+| 48 | 4 | paylen | DATA: bytes of the payload used; VHDR, TRAILER: length of their TLV body; XOR: P in version 1; XOR and PARITY of version 2: bytes 4..7 of the header parity (4.1) |
+| 52 | 4 | prvrecoff | `recoff` of the previous DATA block of the same group (for XOR and PARITY: of the last one); 0xFFFFFFFF for the first block of a group and for VHDR, TRAILER |
+| 56 | 4 | prvpaylen | `paylen` of the previous DATA block of the same group (for XOR and PARITY: of the last one); 0 when there is none |
 | 60 | 4 | crc | CRC of the 64-byte header with this field set to 0, followed by the whole payload area (P bytes) |
 
 A block is valid when magic, hdrlen, version, bsize, ssuuid match and
-the CRC is right.
+the CRC is right.  The version of every block of a saveset is that of
+its first VHDR.
 
 ## 4. XOR blocks and the repair of one lost block
 
@@ -130,8 +142,69 @@ When exactly one DATA block k of a group is bad:
   when k is the last DATA block.
 
 When the XOR block itself is bad and all DATA blocks are good, nothing
-needs repair.  Two or more bad blocks in a group cannot be repaired; the
-reader skips them (section 8).
+needs repair.  With m = 1, two or more bad blocks in a group cannot be
+repaired; the reader skips them (section 8).
+
+### 4.1 More than one parity block: Reed-Solomon (version 2)
+
+With m >= 2 a group of n DATA blocks D_0 .. D_n-1 is followed by m
+parity blocks: row 0 is the XOR block above, rows 1 .. m-1 PARITY blocks
+(type 7), in the order of their rows.  Any m bad blocks of a group, DATA
+or parity, are repaired - the group stays readable while any n of its
+n + m blocks are good.
+
+Arithmetic is in GF(2^8) with the polynomial x^8 + x^4 + x^3 + x^2 + 1
+(0x11D); addition is XOR.  The coefficient of DATA block i in row j is
+
+```
+a(j, i) = y_i / (j + y_i)       y_i = 128 + i      ("+" is XOR)
+```
+
+- a Cauchy matrix 1 / (x_j + y_i) with x_j = j, each column scaled so
+that row 0 is all ones: a(0, i) = 1, the XOR block.  Every square
+submatrix of a Cauchy matrix is regular, and the scaling keeps it so;
+that is why any n good blocks suffice.  The coefficients depend on i and
+j only, not on n or m.
+
+Payload of the parity block of row j, byte by byte over the P bytes of
+the payload areas (zero tails included):
+
+```
+parity_j[k] = sum over i of a(j, i) * D_i[k]
+```
+
+**Header parity.**  The two fields of a DATA header that cannot be
+derived - `recoff` and `paylen` - are covered too: for every DATA block
+take the 8 bytes `recoff` (u32) `paylen` (u32), little-endian, and apply
+the same sum; row j of these 8 bytes is stored as the `recoff` (bytes
+0..3) and `paylen` (bytes 4..7) fields of the parity block of row j.  In
+version 2 these two fields of the XOR block carry row 0 (the XOR of the
+8 bytes), not 0xFFFFFFFF and P.  `prvrecoff` and `prvpaylen` keep their
+meaning.
+
+**Repair.**  Let L be the bad DATA blocks of a group, |L| = e, and R the
+good parity rows.  When e <= |R|: take e rows of R; for each, subtract
+(XOR) the contribution of every good DATA block from its payload and from
+its header parity; solve the e x e system of the coefficients a(r, l),
+r in those rows, l in L, for the payloads and the 8 header bytes of the
+blocks of L.  The rebuilt header: magic, hdrlen, version, bsize, ssuuid,
+volno as the group's; type DATA (EDATA when encrypted); flags 0;
+gindex = its position; blkno = blkno of the first block of the group +
+position; `recoff`, `paylen` from the header parity; `prvrecoff`,
+`prvpaylen` those of the DATA block before it (0xFFFFFFFF and 0 for the
+first).  A rebuilt block must pass the checks of a good one
+(`paylen` <= the capacity, `recoff` < `paylen` or 0xFFFFFFFF, its TAG
+when encrypted); if any of them fails, the blocks of L are lost.
+
+When more parity rows are good than needed, a reader recomputes the
+rows left over from the repaired group and compares: a difference means
+a block whose CRC is right and whose contents are not (a forged or
+mis-written parity or DATA block); the reader reports it and does not
+deliver the group's repaired blocks.
+
+n is in `gindex` of every parity block, j in its high byte.  A reader
+that lost every parity block of a short group (the last of a volume)
+takes n as the number of its blocks less m.
 
 ## 5. The record stream
 
@@ -274,6 +347,7 @@ SUMMARY tags:
 | 85 | FSUSED | u64 | bytes in use when it was saved |
 | 86 | ROOTATTR | STR | the per-file tags (6.1) of its root directory: PATH `.`, owner, mode, times, XATTR items |
 | 87 | MOUNTOPTS | STR | the options it was mounted with (for the operator only) |
+| 93 | PARITY | u8 | m, the parity blocks of a group (4.1), 2 .. 8; absent - 1 |
 
 END and TRAILER tags:
 
@@ -391,8 +465,9 @@ numbers, the layout on the disk and anything outside the file system
 
 An encrypted saveset is an ordinary saveset whose DATA and TRAILER
 blocks carry their payload encrypted and authenticated.  Everything
-below the payload stays as it is: block headers, CRCs and XOR blocks
-are computed over the bytes as they lie on the medium (the ciphertext),
+below the payload stays as it is: block headers, CRCs, XOR and PARITY
+blocks are computed over the bytes as they lie on the medium (the
+ciphertext),
 so a reader checks, repairs (section 4) and resynchronizes a saveset
 without the passphrase; it needs the passphrase only to read records.
 
@@ -461,7 +536,7 @@ checks the TAG before it decrypts, and decrypts only blocks that passed.
 **VHDR.**  The VHDR of an encrypted saveset carries a short SUMMARY in
 the clear, the same in every volume - so that any one volume can be
 opened by itself - and nothing that names the system or the files:
-PRODUCT, BLOCKSIZE, GROUPSIZE, VOLSIZE and
+PRODUCT, BLOCKSIZE, GROUPSIZE, PARITY (version 2), VOLSIZE and
 
 | Tag | Name | Type | Meaning |
 |---|---|---|---|
@@ -496,9 +571,10 @@ a file of the saving system.
 2. A DATA block is closed when full, when fewer than 8 bytes are left for
    a record header, at the end of the stream, or when the volume is full.
 3. After n DATA blocks (n = N, or fewer at the end of a volume or of the
-   stream) an XOR block follows, if N > 0.
+   stream) an XOR block follows, if N > 0, then the m - 1 PARITY blocks
+   (4.1).
 4. A volume is closed when the next block of the current group and its
-   XOR block would not fit.  The next volume starts with VHDR.
+   m parity blocks would not fit.  The next volume starts with VHDR.
 5. After the END record: the last group is closed, then the TRAILER
    block, with LASTINVOL and LASTINSET set.  The last block of every other
    volume has LASTINVOL set.
@@ -513,11 +589,13 @@ CATBLK, CATOFF and read the CATALOG records.  A single file is reached
 through its LOCVOL, LOCBLK, LOCOFF without reading anything else.
 
 **Sequential mode** (full restore, `/COMPARE`, damaged or truncated
-savesets): read the blocks in order.  For each group, check every CRC:
+savesets): read the blocks in order.  For each group - N + m blocks, fewer at the end of a volume -
+check every CRC:
 
 - all good: deliver the payloads;
-- one bad DATA block: repair it (section 4);
-- two or more bad: report the lost blocks, mark the file being restored
+- one bad DATA block: repair it (section 4); with m >= 2, up to as many
+  bad blocks as there are good parity rows (4.1);
+- more bad than that: report the lost blocks, mark the file being restored
   as damaged, and resume at the `recoff` of the next good DATA block
   (records that only continue are skipped).  DATA records carry their
   fileno, so a resumed reader always knows which file a DATA record

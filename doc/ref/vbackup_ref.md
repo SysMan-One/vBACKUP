@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-11.
+VBACKUP X01-13.
 
-**Software Version:** VBACKUP X01-13
+**Software Version:** VBACKUP X01-14
 
 **Operating System:** Linux (x86_64, aarch64); Windows for vbkx.exe and
 the WCX plugin
@@ -22,7 +22,7 @@ the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-13 as built from
+The information in this document reflects VBACKUP X01-14 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -1018,6 +1018,7 @@ copy of a saveset.
 | `/MODIFIED` | Input file-selection | S, P | `/MODIFIED` |
 | `/ORIGINAL` | Output file | R | -- |
 | `/OWNER=option` | Output file | R, P | `ORIGINAL` for root, `DEFAULT` otherwise |
+| `/PARITY=m` | Output save-set | S | 1 |
 | `/PHYSICAL` | Command | S, R | -- |
 | `/[NO]RECORD` | Command | S, J | `/NORECORD` |
 | `/[NO]REPLACE` | Output file, Output save-set | S, R, X, T | `/NOREPLACE` |
@@ -1924,6 +1925,42 @@ with IVQUAL; an owner that cannot be set, with ATTRERR.
 ```
 # vbackup /backup/rrl.bck /home /OWNER=rrl
 ```
+
+---
+
+### /PARITY
+
+Output save-set qualifier.
+
+**Format**
+
+`/PARITY=m`
+
+**Description**
+
+Specifies the number of parity blocks that close every group, 1 to 8.
+With `/PARITY=1`, the default, a group ends with its XOR block and one
+bad block of a group is rebuilt. With *m* of 2 or more the XOR block is
+followed by *m* - 1 PARITY blocks (Reed-Solomon over GF(2^8), format.md
+4.1): any *m* bad blocks of a group - adjacent ones too, DATA or parity -
+are rebuilt when the saveset is read (BLKFIXED). The saveset grows by
+*m*/*n* of its data, *n* being the group size. When more parity blocks of
+a group are good than are needed, the rows left over check the repair; a
+group whose parity does not agree is not rebuilt (PARITYERR).
+
+A saveset with *m* of 2 or more has format version 2 in every block.
+VBACKUP and vbkx before X01-14 refuse it (NOTSAVESET); vbkx-go, vbkx-rs,
+vbkx-pl and the WCX plugin of X01-14 read it. `/PARITY` needs groups:
+it is not valid with `/GROUP_SIZE=0`.
+
+**Example**
+
+```
+$ vbackup /home /mnt/tape/home.bck /GROUP_SIZE=20 /PARITY=4
+```
+
+The saveset is 20% larger than its data and survives four bad blocks in
+a row in every group of twenty.
 
 ---
 
@@ -3457,6 +3494,22 @@ saveset back under the directory given; one message per base.
 
 ---
 
+**PARITYERR**, Block: *n*, Volume: *n* - the group beginning here does not agree with its parity: a block of it with a right CRC holds other bytes, nothing of it is rebuilt
+
+**Facility:** VBACKUP. **Severity:** Warning.
+
+**Explanation:** A saveset made with `/PARITY`: blocks of the group that
+begins at the block named were bad, and every way of rebuilding them from
+its parity blocks left a parity row that disagrees - some block of the
+group whose CRC is right holds other bytes than were written. Nothing of
+the group is rebuilt; its bad blocks are lost (BLKLOST), and the files in
+them are reported (FILDAMAGED).
+
+**User Action:** Keep the saveset; the other groups are not affected. Find
+out how the medium came to hold such a block.
+
+---
+
 **PHYSABORT**, Device: *device* - not overwritten: the answer was not YES
 
 **Facility:** VBACKUP. **Severity:** Error.
@@ -3974,11 +4027,11 @@ and the catalog at the end of the stream is not used for seeking.
 |---|---|---|---|
 | 0 | 4 | magic | `V` `B` `K` `B` |
 | 4 | 2 | hdrlen | 64 |
-| 6 | 2 | version | 1 |
+| 6 | 2 | version | 1; 2 with `/PARITY` of 2 or more |
 | 8 | 4 | bsize | B |
-| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER, 5 EDATA, 6 ETRAILER |
+| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER, 5 EDATA, 6 ETRAILER, 7 PARITY |
 | 13 | 1 | flags | bit 0 LASTINVOL, bit 1 LASTINSET |
-| 14 | 2 | gindex | DATA: position in the group; XOR: n; else 0 |
+| 14 | 2 | gindex | DATA: position in the group; XOR: n; PARITY: n + 256 * row; else 0 |
 | 16 | 16 | ssuuid | UUID of the saveset |
 | 32 | 8 | blkno | block number |
 | 40 | 4 | volno | volume number, from 1 |
@@ -3999,6 +4052,7 @@ follows it.
 |---|---|---|
 | 1 | DATA | A part of the record stream |
 | 2 | XOR | Parity of the DATA blocks of its group (never encrypted) |
+| 7 | PARITY | Row 1 .. m - 1 of the Reed-Solomon parity of its group, version 2 (`/PARITY`) |
 | 3 | VHDR | First block of every volume: a complete SUMMARY record (encrypted saveset: a short clear SUMMARY) |
 | 4 | TRAILER | Last block of the saveset: one TLV body with the totals and the place of the catalog |
 | 5 | EDATA | DATA block of an encrypted saveset |
@@ -4205,7 +4259,7 @@ source tree:
 
 ```
 $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
+      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
 $ make -f tools/Makefile.win
 ```
 

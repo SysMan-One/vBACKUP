@@ -97,7 +97,9 @@
 #		vbackup's business, not this one's.
 #
 #  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
-#		rebuilt from the group's XOR block; after a loss the stream
+#		rebuilt from the group's XOR block - any m of them in a saveset
+#		of version 2 made /PARITY=m (format.md 4.1), from its XOR and
+#		PARITY blocks by Reed-Solomon; after a loss the stream
 #		is picked up at the next good block (in an encrypted saveset
 #		the TAG judges a block as much as its CRC does).  A file that lost data
 #		is kept as far as it got and named: "File: <name> - is
@@ -128,6 +130,13 @@
 #  CREATION DATE:  4-OCT-2026
 #
 #  MODIFICATION HISTORY:
+#
+#	X01-14		 5-OCT-2026	RRL
+#		Version 2 (format.md 4.1): /PARITY=m, a group closed by its XOR
+#		block and m - 1 PARITY blocks; any m bad blocks of a group
+#		rebuilt by Reed-Solomon in GF(2^8), the header parity first,
+#		surplus rows checked, a row whose CRC is right and whose bytes
+#		are not passed over; selftest of it.
 #
 #	X01-08		 5-OCT-2026	RRL
 #		The messages in the form of vbkx's and VBACKUP's: "Label: value"
@@ -167,6 +176,8 @@ use constant {
 
 	BT_DATA	=> 1, BT_XOR => 2, BT_VHDR => 3, BT_TRAILER => 4,
 	BT_EDATA => 5, BT_ETRAILER => 6,	# DATA and TRAILER of an encrypted saveset: format.md 6.10
+	BT_PARITY => 7,			# a parity row >= 1, version 2 only: format.md 4.1
+	MAXPAR	=> 8,			# parity blocks of a group at most
 	TAGSZ	=> 32,			# the TAG at the end of their payload area
 	KDFMIN	=> 1000,		# the fewest PBKDF2 iterations taken
 	PASSMAX	=> 1024,		# the longest passphrase
@@ -390,8 +401,9 @@ sub check
 {
 	my ($b, $bsize, $uuid) = @_;
 	return undef unless length($$b) == $bsize && $bsize >= HDRSZ;
-	return undef unless substr($$b, 0, 4) eq 'VBKB' && u16($b, 4) == HDRSZ && u16($b, 6) == 1;
+	return undef unless substr($$b, 0, 4) eq 'VBKB' && u16($b, 4) == HDRSZ && (u16($b, 6) == 1 || u16($b, 6) == 2);
 	my %h = (
+		version	  => u16($b, 6),
 		bsize	  => u32($b, 8),
 		typ	  => u8($b, 12),
 		gindex	  => u16($b, 14),
@@ -406,8 +418,13 @@ sub check
 	);
 	my $psize = $bsize - HDRSZ;
 	return undef if $h{bsize} != $bsize || (defined($uuid) && $h{uuid} ne $uuid);
-	return undef if $h{typ} < BT_DATA || $h{typ} > BT_ETRAILER || $h{paylen} > $psize;
-	return undef if $h{recoff} != NONE && $h{recoff} >= $psize;
+	return undef if $h{typ} < BT_DATA || $h{typ} > BT_PARITY || ($h{typ} == BT_PARITY && $h{version} != 2);
+	# The parity blocks of version 2 carry the header parity in RECOFF and PAYLEN (4.1)
+	if ($h{version} == 1 || ($h{typ} != BT_XOR && $h{typ} != BT_PARITY))
+	{
+		return undef if $h{paylen} > $psize;
+		return undef if $h{recoff} != NONE && $h{recoff} >= $psize;
+	}
 	my $c = crc(0, substr($$b, 0, 60) . "\0\0\0\0");
 	$c = crc($c, substr($$b, HDRSZ));
 	return ($c == $h{crc}) ? \%h : undef;
@@ -487,6 +504,8 @@ my %R = (
 	spec	=> '',
 	bsize	=> 0,
 	grpsz	=> 0,
+	parity	=> 1,		# parity blocks of a group: 1 (version 1), 2 .. 8 (version 2, 4.1)
+	version	=> 1,		# of every block: that of the VHDR of volume 1
 	uuid	=> '',
 	vols	=> [],		# [ { fh, firstblk, nblk } or undef - missing ], index volno - 1
 	trailer	=> 0,
@@ -614,12 +633,14 @@ sub summary_group
 	{
 		my ($tag, $v) = @$it;
 		if    ($tag == 71) { $grp = getu($v); }
+		elsif ($tag == 93) { $c{parity}	  = getu($v); }
 		elsif ($tag == 88) { $c{cipher}	  = getu($v); }
 		elsif ($tag == 89) { $c{kdf}	  = getu($v); }
 		elsif ($tag == 90) { $c{kdfiter}  = getu($v); }
 		elsif ($tag == 91) { $c{salt}	  = $v; }
 		elsif ($tag == 92) { $c{keycheck} = $v; }
 	}
+	$R{parity} = $c{parity} if defined($c{parity}) && !$R{gotpar}++;
 	if (defined($c{cipher}) && !$R{crypt})
 	{
 		$R{crypt} = 1;
@@ -655,13 +676,26 @@ sub guess
 			$R{guessenc} = 1 if $h->{typ} == BT_EDATA || $h->{typ} == BT_ETRAILER;
 			$R{bsize} = $bs;
 			$R{uuid}  = $h->{uuid};
+			$R{version} = $h->{version};
 			$R{grpsz} = 0;
 			for my $p (1 .. MAXGRP + 1)
 			{
 				my $x = check(read_block($fh, $bs, $p), $bs, $R{uuid});
-				if ($x && $x->{typ} == BT_XOR && $x->{gindex} == $p - 1)
+				if ($x && $x->{typ} == BT_XOR && ($x->{gindex} & 0xFF) == $p - 1 && ($x->{gindex} >> 8) == 0)
 				{
-					$R{grpsz} = $x->{gindex};
+					$R{grpsz} = $x->{gindex} & 0xFF;
+					# Version 2: the parity blocks are the XOR block and the PARITY blocks after it
+					if ($R{version} == 2 && !$R{gotpar})
+					{
+						my $m = 1;
+						while ($m < MAXPAR)
+						{
+							my $y = check(read_block($fh, $bs, $p + $m), $bs, $R{uuid});
+							last unless $y && $y->{typ} == BT_PARITY && $y->{gindex} == ($R{grpsz} | ($m << 8));
+							$m++;
+						}
+						$R{parity} = $m;
+					}
 					last;
 				}
 			}
@@ -693,7 +727,7 @@ sub open_saveset
 			my $grp = summary_group($blk, $h);
 			if (defined($grp))
 			{
-				@R{qw(bsize uuid grpsz)} = ($bs, $h->{uuid}, $grp);
+				@R{qw(bsize uuid grpsz version)} = ($bs, $h->{uuid}, $grp, $h->{version});
 				$found = 1;
 			}
 		}
@@ -702,6 +736,16 @@ sub open_saveset
 	{
 		close($fh);
 		return "File: $spec - is not a saveset";
+	}
+	# Version 2: as many parity blocks a group as the SUMMARY says (4.1); version 1: the XOR block
+	if ($R{version} == 1)
+	{
+		$R{parity} = 1;
+	}
+	elsif ($R{parity} < 2 || $R{parity} > MAXPAR || !$R{grpsz})
+	{
+		close($fh);
+		return "File: $spec - is not a saveset: version 2 without a parity count it can use";
 	}
 	push @{ $R{vols} }, { fh => $fh, firstblk => 0, nblk => blocks_in($fh, $R{bsize}) };
 
@@ -798,7 +842,7 @@ sub load_group
 		}
 		last;
 	}
-	my $n = ($R{grpsz} > 0) ? $R{grpsz} + 1 : 1;
+	my $n = ($R{grpsz} > 0) ? $R{grpsz} + $R{parity} : 1;
 	$n = $end - $R{curpos} if $end - $R{curpos} < $n;
 
 	my (@blks, @hdrs, @ok);
@@ -806,8 +850,12 @@ sub load_group
 	{
 		$blks[$i] = read_block($v->{fh}, $R{bsize}, $R{curpos} + $i);
 		$hdrs[$i] = check($blks[$i], $R{bsize}, $R{uuid});
-		$ok[$i] = ($hdrs[$i] && $hdrs[$i]{blkno} == $v->{firstblk} + $R{curpos} + $i && $hdrs[$i]{volno} == $R{curvol}) ? 1 : 0;
+		$ok[$i] = ($hdrs[$i] && $hdrs[$i]{blkno} == $v->{firstblk} + $R{curpos} + $i && $hdrs[$i]{volno} == $R{curvol}
+			&& $hdrs[$i]{version} == $R{version}) ? 1 : 0;
 	}
+
+	# Version 2: groups of several parity blocks, repaired by Reed-Solomon
+	return load_group2($v, $n, \@blks, \@hdrs, \@ok) if $R{grpsz} > 0 && $R{parity} > 1;
 
 	# Where the XOR block is: a full group ends with it; a short one, cut short, may not have one
 	my $hasxor = 0;
@@ -878,6 +926,251 @@ sub load_group
 			# Every check done, the repair too: only now is a block decrypted
 			push @pays, $R{crypt} ? decrypt($hdrs[$i], $blks[$i]) : substr(${ $blks[$i] }, HDRSZ, $hdrs[$i]{paylen});
 			push @recoffs, $hdrs[$i]{recoff};
+		}
+		push @bnos, $b;
+	}
+	@R{qw(pays recoffs blks next gvol)} = (\@pays, \@recoffs, \@bnos, 0, $R{curvol});
+	$R{curpos} += $n;
+	return 1;
+}
+
+#
+#  Reed-Solomon of version 2 (format.md 4.1): GF(2^8), the polynomial
+#  0x11D; a(j, i) = y_i / (j + y_i), y_i = 128 + i - row 0 all ones, the
+#  XOR block.  A multiply-accumulate over a payload goes through a tr///
+#  made once a coefficient: a lookup an octet, then the string XOR.
+#
+my (@GEXP, @GLOG, %GTR);
+{
+	my $x = 1;
+	for my $i (0 .. 254)
+	{
+		$GEXP[$i] = $GEXP[$i + 255] = $x;
+		$GLOG[$x] = $i;
+		$x <<= 1;
+		$x ^= 0x11D if $x & 0x100;
+	}
+}
+
+sub gmul { my ($a, $b) = @_; return ($a && $b) ? $GEXP[$GLOG[$a] + $GLOG[$b]] : 0; }
+sub ginv { return $GEXP[255 - $GLOG[$_[0]]]; }
+
+sub rs_coef
+{
+	my ($j, $i) = @_;
+	return 1 unless $j;
+	my $y = 128 + $i;
+	return gmul($y, ginv($j ^ $y));
+}
+
+# dst .= dst XOR c * src
+sub rs_muladd
+{
+	my ($dst, $src, $c) = @_;
+	return unless $c;
+	if ($c == 1)
+	{
+		$$dst ^= $src;
+		return;
+	}
+	$GTR{$c} ||= eval 'sub { (my $t = $_[0]) =~ tr/\x00-\xff/' . join('', map { sprintf('\\x%02x', gmul($c, $_)) } 0 .. 255) . '/; return $t; }'
+		or die "vbkx-pl: tr: $@";
+	$$dst ^= $GTR{$c}->($src);
+}
+
+#
+#  The bad DATA vectors of a group rebuilt from its good parity rows:
+#  'ok', 'err' (more bad than good rows, nothing touched) or 'warn' (a
+#  row left over disagrees - not to be trusted).  $d, $p - arrays of
+#  strings of one length; $dok, $pok - good or bad.
+#
+sub rs_repair
+{
+	my ($n, $m, $d, $dok, $p, $pok) = @_;
+	my @lost = grep { !$dok->[$_] } 0 .. $n - 1;
+	my @good = grep { $pok->[$_] } 0 .. $m - 1;
+	my $e = @lost;
+	return 'err' if $e > @good;
+	my @rows = @good[0 .. $e - 1];
+	my @extra = @good[$e .. $#good];
+	return 'ok' unless $e || @extra;
+	my $len = length($p->[$good[0]]);
+	if ($e)
+	{
+		my (@syn, @mat);
+		for my $k (0 .. $e - 1)
+		{
+			my $s = $p->[$rows[$k]];
+			rs_muladd(\$s, $d->[$_], rs_coef($rows[$k], $_)) for grep { $dok->[$_] } 0 .. $n - 1;
+			$syn[$k] = $s;
+			$mat[$k] = [ map { rs_coef($rows[$k], $_) } @lost ];
+		}
+		# Gauss-Jordan of the e x e coefficients
+		my @inv = map { my $r = $_; [ map { ($_ == $r) ? 1 : 0 } 0 .. $e - 1 ] } 0 .. $e - 1;
+		for my $c (0 .. $e - 1)
+		{
+			my $pv = $c;
+			$pv++ while $pv < $e && !$mat[$pv][$c];
+			return 'err' if $pv == $e;
+			@mat[$c, $pv] = @mat[$pv, $c];
+			@inv[$c, $pv] = @inv[$pv, $c];
+			my $f = ginv($mat[$c][$c]);
+			$mat[$c] = [ map { gmul($_, $f) } @{ $mat[$c] } ];
+			$inv[$c] = [ map { gmul($_, $f) } @{ $inv[$c] } ];
+			for my $r (0 .. $e - 1)
+			{
+				next if $r == $c;
+				my $g = $mat[$r][$c];
+				next unless $g;
+				$mat[$r][$_] ^= gmul($g, $mat[$c][$_]) for 0 .. $e - 1;
+				$inv[$r][$_] ^= gmul($g, $inv[$c][$_]) for 0 .. $e - 1;
+			}
+		}
+		for my $t (0 .. $e - 1)
+		{
+			my $v = "\0" x $len;
+			rs_muladd(\$v, $syn[$_], $inv[$t][$_]) for 0 .. $e - 1;
+			$d->[$lost[$t]] = $v;
+		}
+	}
+	# The rows left over, each made again from the whole group
+	for my $x (@extra)
+	{
+		my $v = "\0" x $len;
+		rs_muladd(\$v, $d->[$_], rs_coef($x, $_)) for 0 .. $n - 1;
+		return 'warn' if $v ne $p->[$x];
+	}
+	return 'ok';
+}
+
+#
+#  The rest of load_group for version 2 (4.1): d DATA blocks and m parity
+#  blocks; the repair of as many bad DATA blocks as there are good rows,
+#  their header parity first, then their payloads; tried again without
+#  each good row in turn when the result does not hold.
+#
+sub load_group2
+{
+	my ($v, $n, $blks, $hdrs, $ok) = @_;
+	my $m = $R{parity};
+	my $first = $v->{firstblk} + $R{curpos};
+	my $d;
+
+	# How many DATA blocks: any good parity block says it, standing at n + its row
+	for my $i (0 .. $n - 1)
+	{
+		my $h = $hdrs->[$i];
+		next unless $ok->[$i];
+		my ($row, $cnt) = ($h->{gindex} >> 8, $h->{gindex} & 0xFF);
+		if ((($h->{typ} == BT_XOR && !$row) || ($h->{typ} == BT_PARITY && $row && $row < $m)) && $cnt && $cnt <= $R{grpsz} && $cnt + $row == $i)
+		{
+			$d = $cnt;
+			last;
+		}
+	}
+	if (!defined($d))
+	{
+		if    ($n == $R{grpsz} + $m)				{ $d = $R{grpsz}; }
+		elsif ($ok->[$n - 1] && $hdrs->[$n - 1]{typ} == $R{dtype}) { $d = $n; }
+		else							{ $d = ($n > $m) ? $n - $m : $n; }
+	}
+	$d = $n if $d > $n;
+
+	my (@pay, @hv, @pok, @ppay, @phv);
+	for my $j (0 .. $m - 1)
+	{
+		my $i = $d + $j;
+		my $h = ($i < $n) ? $hdrs->[$i] : undef;
+		$pok[$j] = ($i < $n && $ok->[$i] && $h->{typ} == ($j ? BT_PARITY : BT_XOR) && $h->{gindex} == ($d | ($j << 8))) ? 1 : 0;
+		$ppay[$j] = $pok[$j] ? substr(${ $blks->[$i] }, HDRSZ) : '';
+		$phv[$j]  = $pok[$j] ? pack('V V', $h->{recoff}, $h->{paylen}) : "\0" x 8;
+	}
+	my $npok = grep { $_ } @pok;
+
+	my @dok;
+	my $nbad = 0;
+	for my $i (0 .. $d - 1)
+	{
+		$ok->[$i] = 0 if $ok->[$i] && ($hdrs->[$i]{typ} != $R{dtype} || $hdrs->[$i]{gindex} != $i);
+		# A good CRC and a wrong TAG: a bad block all the same
+		if ($ok->[$i] && $R{crypt} && !tag_ok($hdrs->[$i], $blks->[$i]))
+		{
+			$ok->[$i] = 0;
+			msg('Block: %d, Volume: %d - is not what was written: its CRC is right, its authentication fails',
+				$hdrs->[$i]{blkno}, $R{curvol});
+		}
+		$dok[$i] = $ok->[$i];
+		$pay[$i] = $dok[$i] ? substr(${ $blks->[$i] }, HDRSZ) : '';
+		$hv[$i]  = $dok[$i] ? pack('V V', $hdrs->[$i]{recoff}, $hdrs->[$i]{paylen}) : "\0" x 8;
+		$nbad++ unless $dok[$i];
+	}
+
+	my ($done, $forged) = (0, 0);
+	for (my $skip = -1; $nbad && $nbad <= $npok && !$done && $skip < $m; $skip++)
+	{
+		next if $skip >= 0 && !$pok[$skip];
+		my @try = @pok;
+		$try[$skip] = 0 if $skip >= 0;
+		next if (grep { $_ } @try) < $nbad;
+		my @thv = @hv;
+		my @tpay = @pay;
+		my $rc = rs_repair($d, $m, \@thv, \@dok, \@phv, \@try);
+		$rc = rs_repair($d, $m, \@tpay, \@dok, \@ppay, \@try) if $rc eq 'ok';
+		$forged = 1 if $rc eq 'warn';
+		next unless $rc eq 'ok';
+
+		my (@nh, @nb);
+		my $allok = 1;
+		for my $i (0 .. $d - 1)
+		{
+			if ($dok[$i])
+			{
+				$nh[$i] = $hdrs->[$i];
+				next;
+			}
+			my ($ro, $pl) = unpack('V V', $thv[$i]);
+			my %h = (version => $R{version}, typ => $R{dtype}, recoff => $ro, paylen => $pl, gindex => $i, blkno => $first + $i,
+				 volno => $R{curvol}, bsize => $R{bsize}, uuid => $R{uuid},
+				 prvrecoff => $i ? $nh[$i - 1]{recoff} : NONE, prvpaylen => $i ? $nh[$i - 1]{paylen} : 0);
+			my $blk = substr(${ $blks->[$i] }, 0, HDRSZ) . $tpay[$i];
+			if ($pl > $R{cap} || ($ro != NONE && $ro >= $pl) || ($R{crypt} && !tag_ok(\%h, \$blk)))
+			{
+				$allok = 0;
+				last;
+			}
+			$nh[$i] = \%h;
+			$nb[$i] = \$blk;
+		}
+		next unless $allok;
+		$done = 1;
+		for my $i (0 .. $d - 1)
+		{
+			next if $dok[$i];
+			($blks->[$i], $hdrs->[$i], $ok->[$i]) = ($nb[$i], $nh[$i], 1);
+			msg('Block: %d, Volume: %d - was bad, rebuilt from its group', $nh[$i]{blkno}, $R{curvol});
+		}
+	}
+	if ($nbad && !$done && $forged)
+	{
+		msg('Block: %d, Volume: %d - the group beginning here does not agree with its parity: nothing of it is rebuilt', $first, $R{curvol});
+		$bad = 1;
+	}
+
+	my (@pays, @recoffs, @bnos);
+	for my $i (0 .. $d - 1)
+	{
+		my $b = $first + $i;
+		if (!$ok->[$i])
+		{
+			msg('Block: %d, Volume: %d - is bad and cannot be rebuilt', $b, $R{curvol});
+			$bad = 1;
+			push @pays, undef;
+			push @recoffs, NONE;
+		}
+		else
+		{
+			push @pays, $R{crypt} ? decrypt($hdrs->[$i], $blks->[$i]) : substr(${ $blks->[$i] }, HDRSZ, $hdrs->[$i]{paylen});
+			push @recoffs, $hdrs->[$i]{recoff};
 		}
 		push @bnos, $b;
 	}
@@ -1524,6 +1817,23 @@ sub selftest
 		. 'f91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc'
 		. '514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d');
 	$try->('ChaCha20 decrypted back', chacha20($key, $nonce, 1, $ct), unpack('H*', $pt));
+
+	# Reed-Solomon of version 2 (4.1): every pattern of at most m = 3 lost of 6 + 3 blocks rebuilt
+	{
+		my @o = map { my $i = $_; join('', map { chr(($i * 131 + $_ * 17 + $i * $_) & 0xFF) } 0 .. 36) } 0 .. 5;
+		my @p = map { my $j = $_; my $v = "\0" x 37; rs_muladd(\$v, $o[$_], rs_coef($j, $_)) for 0 .. 5; $v } 0 .. 2;
+		my $nbad = 0;
+		for my $set (0 .. (1 << 9) - 1)
+		{
+			my @bits = grep { $set & (1 << $_) } 0 .. 8;
+			next if @bits > 3;
+			my @dok = map { ($set & (1 << $_)) ? 0 : 1 } 0 .. 5;
+			my @pok = map { ($set & (1 << (6 + $_))) ? 0 : 1 } 0 .. 2;
+			my @d = map { $dok[$_] ? $o[$_] : 'x' x 37 } 0 .. 5;
+			$nbad++ unless rs_repair(6, 3, \@d, \@dok, \@p, \@pok) eq 'ok' && join('', @d) eq join('', @o);
+		}
+		$try->('Reed-Solomon, every erasure of 6 + 3', $nbad ? 'FAILED' : 'ok', unpack('H*', 'ok'));
+	}
 	if ($failed)
 	{
 		print "selftest: $failed failed\n";

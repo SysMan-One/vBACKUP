@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-11"
-#define	__REV__		"1.11.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -31,6 +31,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		Version 2: groups of GRPSZ + PARITY blocks, S_VBK$LOADGRP2 - up
+**		to as many bad DATA blocks as good parity rows rebuilt by
+**		Reed-Solomon (VBKRS.C), headers too; a row left over checks the
+**		repair, a forged row is passed over; the event PARITY.
 **
 **	X01-11		 5-OCT-2026	RRL
 **		A stream of several volumes: the VHDR of a further one ends the volume
@@ -453,6 +459,10 @@ int		l_fd, l_isreg = 0;
 				a_ctx->grpsz = (uint32_t) vbk$tlv_getu(l_vlen, l_val);
 				break;
 
+			case VBK$K_TAG_PARITY:
+				a_ctx->parity = (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+				break;
+
 			case VBK$K_TAG_CIPHER:
 				a_ctx->crypt	= 1;
 				l_cipher	= (uint32_t) vbk$tlv_getu(l_vlen, l_val);
@@ -491,6 +501,16 @@ int		l_fd, l_isreg = 0;
 		return	STS$K_ERROR;
 		}
 	}
+
+	/* Version 2: parity blocks, as many as the SUMMARY says (format.md 4.1); version 1: the XOR block */
+	a_ctx->version	= l_bhdr.version;
+
+	if ( a_ctx->version == VBK$K_VERSION )
+		a_ctx->parity	= 1;
+	else if ( (a_ctx->parity < 2) || (a_ctx->parity > VBK$K_MAXPAR) || !a_ctx->grpsz )
+		a_ctx->grpsz	= VBK$K_MAXGRP + 1;
+
+	vbk$rs_init();
 
 	if ( a_ctx->grpsz > VBK$K_MAXGRP )
 		{
@@ -562,7 +582,7 @@ int		l_fd, l_isreg = 0;
 
 	a_ctx->recsz	= VBK$K_RECINI;
 
-	if ( !(a_ctx->gbuf = vbk$os_balloc((size_t) (a_ctx->grpsz + 1) * a_ctx->bsize)) || !(a_ctx->rec = malloc(a_ctx->recsz)) )
+	if ( !(a_ctx->gbuf = vbk$os_balloc((size_t) (a_ctx->grpsz + a_ctx->parity) * a_ctx->bsize)) || !(a_ctx->rec = malloc(a_ctx->recsz)) )
 		{
 		a_ctx->err	= ENOMEM;
 
@@ -880,6 +900,242 @@ uint8_t *	l_pay = l_c->gbuf + (size_t) a_i * l_c->bsize + VBK$K_HDRSZ;
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	The rest of S_VBK$LOADGRP for a saveset of version 2: a group of d
+**	DATA blocks and m parity blocks (format.md 4.1) - where its parity
+**	blocks are, the TAGs, the repair of up to as many bad DATA blocks as
+**	there are good parity rows, the payloads and the header parity
+**	alike, the rebuilt headers checked as good ones are.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ctx		The context, the group read into GBUF and judged
+**	a_vol		Its volume
+**	a_n		Blocks of the group read
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- a group is in GBUF, GDATA DATA blocks of it.
+**--
+*/
+static	int	s_vbk$loadgrp2	(
+		VBK$RCTX *	a_ctx,
+		VBK$RVOL *	a_vol,
+		uint32_t	a_n
+			)
+{
+uint32_t	l_m = a_ctx->parity, l_d = (uint32_t) -1, l_bad = 0, l_npok = 0;
+uint8_t *	l_dp [VBK$K_MAXGRP];
+const uint8_t *	l_pp [VBK$K_MAXPAR];
+uint8_t *	l_hdp [VBK$K_MAXGRP];
+const uint8_t *	l_hpp [VBK$K_MAXPAR];
+uint8_t		l_hv [VBK$K_MAXGRP + VBK$K_MAXPAR] [VBK$K_HPARSZ], l_dok [VBK$K_MAXGRP], l_pok [VBK$K_MAXPAR];
+int		l_rc;
+
+	/*
+	**  How many DATA blocks: any good parity block says it (n in GINDEX,
+	**  its row in the high octet, so it stands at n + row).  None good: a
+	**  full group has GRPSZ; a short one - the last of a volume - ends with
+	**  m parity blocks, unless the save was cut short before them and its
+	**  last block is a good DATA block.
+	*/
+	for ( uint32_t i = 0; i < a_n; i++ )
+		{
+		VBK$BHDR *	l_h = &a_ctx->ghdr [i];
+		uint32_t	l_row = l_h->gindex >> 8, l_cnt = l_h->gindex & 0xFF;
+
+		if ( a_ctx->gok [i] && (((l_h->type == VBK$K_BT_XOR) && !l_row) || ((l_h->type == VBK$K_BT_PARITY) && l_row && (l_row < l_m)))
+			&& l_cnt && (l_cnt <= a_ctx->grpsz) && ((l_cnt + l_row) == i) )
+			{
+			l_d	= l_cnt;
+			break;
+			}
+		}
+
+	if ( l_d == (uint32_t) -1 )
+		{
+		if ( a_n == (a_ctx->grpsz + l_m) )
+			l_d	= a_ctx->grpsz;
+		else if ( a_ctx->gok [a_n - 1] && (a_ctx->ghdr [a_n - 1].type == a_ctx->dtype) )
+			l_d	= a_n;
+		else	l_d	= (a_n > l_m) ? (a_n - l_m) : a_n;
+		}
+
+	if ( l_d > a_n )
+		l_d	= a_n;
+
+	/* The parity rows there are, each where its row says */
+	for ( uint32_t j = 0; j < l_m; j++ )
+		{
+		uint32_t	l_i = l_d + j;
+		VBK$BHDR *	l_h = &a_ctx->ghdr [l_i < a_n ? l_i : 0];
+
+		l_pok [j] = (l_i < a_n) && a_ctx->gok [l_i] && (l_h->type == (j ? VBK$K_BT_PARITY : VBK$K_BT_XOR))
+			&& (l_h->gindex == (uint16_t) (l_d | (j << 8)));
+
+		if ( l_i < a_n )
+			a_ctx->gok [l_i] = 0;
+
+		l_pp [j]  = a_ctx->gbuf + (size_t) (l_i < a_n ? l_i : 0) * a_ctx->bsize + VBK$K_HDRSZ;
+		l_hpp [j] = l_hv [a_ctx->grpsz + j];
+
+		vbk$put32(l_hv [a_ctx->grpsz + j], l_pok [j] ? l_h->recoff : 0);
+		vbk$put32(l_hv [a_ctx->grpsz + j] + 4, l_pok [j] ? l_h->paylen : 0);
+
+		l_npok	+= l_pok [j];
+		}
+
+	a_ctx->gdata	= l_d;
+
+	for ( uint32_t i = 0; i < l_d; i++ )
+		if ( a_ctx->gok [i] && ((a_ctx->ghdr [i].type != a_ctx->dtype) || (a_ctx->ghdr [i].gindex != i)) )
+			a_ctx->gok [i] = 0;
+
+	/* A good CRC and a wrong TAG: a bad block all the same (S_VBK$LOADGRP) */
+	if ( a_ctx->crypt )
+		{
+		VBK$GRPJOB	l_job = { a_ctx, 0 };
+
+		vbk$crp_par(l_d, s_vbk$tagjob, &l_job);
+
+		for ( uint32_t i = 0; i < l_d; i++ )
+			if ( a_ctx->gok [i] && !a_ctx->gtag [i] )
+				{
+				a_ctx->gok [i] = 0;
+				s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->curvol, a_ctx->ghdr [i].blkno);
+				}
+		}
+
+	for ( uint32_t i = 0; i < l_d; i++ )
+		{
+		l_dok [i] = a_ctx->gok [i];
+		l_dp [i]  = a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ;
+		l_hdp [i] = l_hv [i];
+
+		vbk$put32(l_hv [i], l_dok [i] ? a_ctx->ghdr [i].recoff : 0);
+		vbk$put32(l_hv [i] + 4, l_dok [i] ? a_ctx->ghdr [i].paylen : 0);
+
+		l_bad	+= !l_dok [i];
+		}
+
+	/*
+	**  The repair: all the good rows first; when the result does not hold
+	**  - a surplus row disagrees, a rebuilt header makes no sense, a TAG
+	**  fails - once more without each good row in turn, so that one
+	**  parity block whose CRC is right and whose bytes are not is passed
+	**  over while enough rows are left.
+	*/
+	for ( int l_skip = -1, l_done = 0, l_forged = 0; l_bad && (l_bad <= l_npok) && !l_done && (l_skip < (int) l_m); l_skip++ )
+		{
+		uint8_t		l_try [VBK$K_MAXPAR];
+		uint32_t	l_nt = 0;
+		int		l_allok = 1;
+
+		if ( (l_skip >= 0) && !l_pok [l_skip] )
+			continue;
+
+		memcpy(l_try, l_pok, sizeof(l_try));
+
+		if ( l_skip >= 0 )
+			l_try [l_skip] = 0;
+
+		for ( uint32_t j = 0; j < l_m; j++ )
+			l_nt	+= l_try [j];
+
+		if ( l_nt >= l_bad )
+			{
+			/* The header parity first: it is small, and a group it cannot give back is not worth the payloads */
+			l_rc	= vbk$rs_repair(l_d, l_m, l_hdp, l_dok, l_hpp, l_try, VBK$K_HPARSZ);
+
+			if ( l_rc == STS$K_SUCCESS )
+				l_rc	= vbk$rs_repair(l_d, l_m, l_dp, l_dok, l_pp, l_try, a_ctx->psize);
+
+			l_forged |= (l_rc == STS$K_WARN);
+			l_allok	= (l_rc == STS$K_SUCCESS);
+
+			for ( uint32_t i = 0; l_allok && (i < l_d); i++ )
+				{
+				VBK$BHDR *	l_h = &a_ctx->ghdr [i];
+				uint8_t *	l_blk = a_ctx->gbuf + (size_t) i * a_ctx->bsize;
+
+				if ( l_dok [i] )
+					continue;
+
+				memset(l_h, 0, sizeof(*l_h));
+
+				l_h->version	= a_ctx->version;
+				l_h->bsize	= a_ctx->bsize;
+				l_h->type	= a_ctx->dtype;
+				l_h->gindex	= (uint16_t) i;
+				l_h->blkno	= a_vol->firstblk + a_ctx->curpos + i;
+				l_h->volno	= a_ctx->curvol;
+				l_h->recoff	= vbk$get32(l_hv [i]);
+				l_h->paylen	= vbk$get32(l_hv [i] + 4);
+				l_h->prvrecoff	= i ? a_ctx->ghdr [i - 1].recoff : VBK$K_NONE;
+				l_h->prvpaylen	= i ? a_ctx->ghdr [i - 1].paylen : 0;
+
+				memcpy(l_h->ssuuid, a_ctx->ssuuid, VBK$K_UUIDSZ);
+
+				if ( (l_h->paylen > a_ctx->cap) || ((l_h->recoff != VBK$K_NONE) && (l_h->recoff >= l_h->paylen))
+					|| (a_ctx->crypt && !vbk$crp_check(&a_ctx->keys, l_h, l_blk + VBK$K_HDRSZ, a_ctx->psize)) )
+					l_allok	= 0;
+				}
+
+			if ( l_allok )
+				{
+				l_done	= 1;
+
+				for ( uint32_t i = 0; i < l_d; i++ )
+					{
+					if ( l_dok [i] )
+						continue;
+
+					vbk$bhdr_put(&a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize);
+
+					a_ctx->gok [i] = 1;
+					a_ctx->nrepaired++;
+					l_bad--;
+
+					s_vbk$event(a_ctx, VBK$K_EV_REPAIRED, a_ctx->curvol, a_ctx->ghdr [i].blkno);
+					}
+				}
+			}
+
+		/* Every way tried, and a surplus row disagreed somewhere: said once for the group */
+		if ( !l_done && l_forged && ((l_skip + 1) == (int) l_m) )
+			{
+			a_ctx->nforged++;
+			s_vbk$event(a_ctx, VBK$K_EV_PARITY, a_ctx->curvol, a_vol->firstblk + a_ctx->curpos);
+			}
+		}
+
+	for ( uint32_t i = 0; l_bad && (i < l_d); i++ )
+		if ( !a_ctx->gok [i] )
+			{
+			a_ctx->nlost++;
+			s_vbk$event(a_ctx, VBK$K_EV_LOST, a_ctx->curvol, a_vol->firstblk + a_ctx->curpos + i);
+			}
+
+	/* Every check done, the repair too: the good blocks decrypted where they lie */
+	if ( a_ctx->crypt )
+		{
+		VBK$GRPJOB	l_job = { a_ctx, 1 };
+
+		vbk$crp_par(l_d, s_vbk$tagjob, &l_job);
+		}
+
+	a_ctx->gvol	= a_ctx->curvol;
+	a_ctx->gpos	= a_ctx->curpos;
+	a_ctx->curpos	+= a_n;
+	a_ctx->gend	= a_ctx->curpos;
+	a_ctx->gnext	= 0;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	Read the group that begins at CURVOL/CURPOS, check every block of
 **	it, rebuild one bad DATA block from the XOR block when that can be
 **	done, and step CURPOS past it.
@@ -935,7 +1191,7 @@ uint8_t *	l_blk;
 		break;
 		}
 
-	l_n	= a_ctx->grpsz ? (a_ctx->grpsz + 1) : 1;
+	l_n	= a_ctx->grpsz ? (a_ctx->grpsz + a_ctx->parity) : 1;
 	l_n	= ((l_end - a_ctx->curpos) < l_n) ? (l_end - a_ctx->curpos) : l_n;
 
 	if ( a_ctx->isstream )
@@ -1027,8 +1283,13 @@ uint8_t *	l_blk;
 		VBK$BHDR *	l_h = &a_ctx->ghdr [i];
 
 		a_ctx->gok [i]	= (1 & vbk$blk_check(a_ctx->gbuf + (size_t) i * a_ctx->bsize, a_ctx->bsize, a_ctx->ssuuid, l_h))
-				&& (l_h->blkno == (l_vol->firstblk + a_ctx->curpos + i)) && (l_h->volno == a_ctx->curvol);
+				&& (l_h->blkno == (l_vol->firstblk + a_ctx->curpos + i)) && (l_h->volno == a_ctx->curvol)
+				&& (l_h->version == a_ctx->version);
 		}
+
+	/* Version 2: groups of several parity blocks, repaired by Reed-Solomon */
+	if ( a_ctx->grpsz && (a_ctx->parity > 1) )
+		return	s_vbk$loadgrp2(a_ctx, l_vol, (uint32_t) l_n);
 
 	/*
 	**  Where the XOR block is.  A full group ends with it; a short one -
@@ -1422,7 +1683,7 @@ int		l_status;
 	if ( l_pos >= s_vbk$volend(a_ctx, a_loc->vol) )
 		return	STS$K_ERROR;
 
-	l_start	= a_ctx->grpsz ? (1 + ((l_pos - 1) / (a_ctx->grpsz + 1)) * (a_ctx->grpsz + 1)) : l_pos;
+	l_start	= a_ctx->grpsz ? (1 + ((l_pos - 1) / (a_ctx->grpsz + a_ctx->parity)) * (a_ctx->grpsz + a_ctx->parity)) : l_pos;
 
 	/*
 	**  The group in hand is taken as it is - the next file of an EXTRACT

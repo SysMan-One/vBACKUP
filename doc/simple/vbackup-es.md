@@ -118,7 +118,16 @@ vbackup /home/ivan /mnt/usb/ivan.bck /VOLUME_SIZE=4G
 Los trozos se llaman `ivan.bck`, `ivan.bck.002`, `ivan.bck.003`…
 Guárdalos siempre juntos, en una sola carpeta.
 
+**Consejo: una caja que aguanta más daños.** Si la memoria USB o el disco
+son viejos, añade `/PARITY=2`: la caja crece un poco (un 20%), pero incluso
+dos trozos rotos juntos se reparan solos.
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /PARITY=2
+```
+
 ---
+
 
 ## 2. Ver qué hay dentro
 

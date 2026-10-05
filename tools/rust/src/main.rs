@@ -84,7 +84,9 @@
 **		VHDR takes the keys from the VHDR of any other volume.
 **
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
-**		rebuilt from the group's XOR block; after a loss the stream
+**		rebuilt from the group's XOR block - with vbackup /PARITY=m
+**		(format.md 4.1, version 2) any m bad blocks of a group, by
+**		Reed-Solomon in GF(2^8), written out here too; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
 **		is kept as far as it got and named: "File: <name> - is
 **		incomplete".  A file whose records were lost entirely is
@@ -114,6 +116,14 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		Savesets of version 2 (/PARITY=m, format.md 4.1): PARITY
+**		blocks, groups of GRPSZ + m blocks, up to m bad blocks of a
+**		group rebuilt with their headers (the header parity in the
+**		RECOFF and PAYLEN of the parity blocks); the rows left over
+**		check the result, one row whose CRC is right and whose bytes
+**		are not is passed over.  Reed-Solomon in selftest.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		The messages in the form of vbkx and VBACKUP: what they are
@@ -163,6 +173,10 @@ const BT_VHDR: u8 = 3;
 const BT_TRAILER: u8 = 4;
 const BT_EDATA: u8 = 5; // DATA of an encrypted saveset: format.md 6.10
 const BT_ETRAILER: u8 = 6; // its TRAILER
+const BT_PARITY: u8 = 7; // a parity row >= 1 of version 2: format.md 4.1
+const TAG_GROUPSIZE: u16 = 71;
+const TAG_PARITY: u16 = 93; // m, the parity blocks of a group (version 2)
+const MAXPAR: u32 = 8;
 
 /* Encryption, format.md 6.10 */
 const TAG_CIPHER: u16 = 88;
@@ -583,6 +597,149 @@ fn decrypt(k: &Keys, h: &Bhdr, pay: &mut [u8]) {
     chacha20(&k.enc, &nonce, 0, &mut pay[..n]);
 }
 
+/*
+** Reed-Solomon of a group, format.md 4.1: GF(2^8) with the polynomial
+** 0x11D; the coefficient of DATA block i in row j is y_i / (j + y_i),
+** y_i = 128 + i - a Cauchy matrix scaled so that row 0 is all ones, the
+** XOR block.  Any n of the n + m blocks give the group back.
+*/
+struct Gf {
+    exp: [u8; 512],
+    log: [u8; 256],
+}
+
+impl Gf {
+    fn new() -> Gf {
+        let mut g = Gf { exp: [0; 512], log: [0; 256] };
+        let mut x: u32 = 1;
+        for i in 0..255usize {
+            g.exp[i] = x as u8;
+            g.exp[i + 255] = x as u8;
+            g.log[x as usize] = i as u8;
+            x <<= 1;
+            if x & 0x100 != 0 {
+                x ^= 0x11D;
+            }
+        }
+        g.exp[510] = g.exp[0];
+        g.exp[511] = g.exp[0];
+        g
+    }
+    fn mul(&self, a: u8, b: u8) -> u8 {
+        if a == 0 || b == 0 {
+            0
+        } else {
+            self.exp[self.log[a as usize] as usize + self.log[b as usize] as usize]
+        }
+    }
+    fn inv(&self, a: u8) -> u8 {
+        self.exp[255 - self.log[a as usize] as usize]
+    }
+    fn coef(&self, row: usize, col: usize) -> u8 {
+        if row == 0 {
+            return 1;
+        }
+        let y = (128 + col) as u8;
+        self.mul(y, self.inv(row as u8 ^ y))
+    }
+    /* dst += c * src */
+    fn muladd(&self, dst: &mut [u8], src: &[u8], c: u8) {
+        if c == 0 {
+            return;
+        }
+        if c == 1 {
+            for (d, s) in dst.iter_mut().zip(src.iter()) {
+                *d ^= *s;
+            }
+            return;
+        }
+        let mut t = [0u8; 256];
+        for (x, v) in t.iter_mut().enumerate().skip(1) {
+            *v = self.exp[self.log[c as usize] as usize + self.log[x] as usize];
+        }
+        for (d, s) in dst.iter_mut().zip(src.iter()) {
+            *d ^= t[*s as usize];
+        }
+    }
+    /* The inverse of an e x e matrix; None - singular */
+    fn invert(&self, mut m: Vec<Vec<u8>>) -> Option<Vec<Vec<u8>>> {
+        let e = m.len();
+        let mut v: Vec<Vec<u8>> = (0..e).map(|r| (0..e).map(|c| (r == c) as u8).collect()).collect();
+        for c in 0..e {
+            let p = (c..e).find(|&r| m[r][c] != 0)?;
+            m.swap(c, p);
+            v.swap(c, p);
+            let f = self.inv(m[c][c]);
+            for k in 0..e {
+                m[c][k] = self.mul(m[c][k], f);
+                v[c][k] = self.mul(v[c][k], f);
+            }
+            for r in 0..e {
+                let f = m[r][c];
+                if r == c || f == 0 {
+                    continue;
+                }
+                for k in 0..e {
+                    let (a, b) = (self.mul(f, m[c][k]), self.mul(f, v[c][k]));
+                    m[r][k] ^= a;
+                    v[r][k] ^= b;
+                }
+            }
+        }
+        Some(v)
+    }
+    /*
+    ** Rebuild the bad DATA vectors (dok false) from the good ones and the
+    ** good parity rows.  0 - rebuilt (or none bad); 1 - more bad than good
+    ** rows, nothing touched; 2 - rebuilt, but a row left over disagrees.
+    */
+    fn repair(&self, data: &mut [Vec<u8>], dok: &[bool], par: &[Vec<u8>], pok: &[bool]) -> u8 {
+        let lost: Vec<usize> = (0..data.len()).filter(|&i| !dok[i]).collect();
+        let good: Vec<usize> = (0..par.len()).filter(|&j| pok[j]).collect();
+        if good.len() < lost.len() {
+            return 1;
+        }
+        let (rows, extra) = good.split_at(lost.len());
+        let len = data.first().map_or(0, |d| d.len());
+        if !lost.is_empty() {
+            let mut syn: Vec<Vec<u8>> = Vec::with_capacity(lost.len());
+            let mut mat: Vec<Vec<u8>> = Vec::with_capacity(lost.len());
+            for &r in rows {
+                let mut sv = par[r].clone();
+                sv.resize(len, 0);
+                for (i, d) in data.iter().enumerate() {
+                    if dok[i] {
+                        self.muladd(&mut sv, d, self.coef(r, i));
+                    }
+                }
+                syn.push(sv);
+                mat.push(lost.iter().map(|&l| self.coef(r, l)).collect());
+            }
+            let inv = match self.invert(mat) {
+                Some(v) => v,
+                None => return 1,
+            };
+            for (t, &l) in lost.iter().enumerate() {
+                let mut out = vec![0u8; len];
+                for (k, sv) in syn.iter().enumerate() {
+                    self.muladd(&mut out, sv, inv[t][k]);
+                }
+                data[l] = out;
+            }
+        }
+        for &x in extra {
+            let mut sv = vec![0u8; len];
+            for (i, d) in data.iter().enumerate() {
+                self.muladd(&mut sv, d, self.coef(x, i));
+            }
+            if sv[..] != par[x][..len.min(par[x].len())] {
+                return 2;
+            }
+        }
+        0
+    }
+}
+
 /* The test vectors of the standards (those of test/units.c): vbkx-rs selftest */
 fn selftest() -> i32 {
     fn hex(b: &[u8]) -> String {
@@ -663,6 +820,33 @@ fn selftest() -> i32 {
         chacha20(&key, &nonce, 1, &mut buf);
         said("ChaCha20 decrypted back", buf == pt);
     }
+    {
+        /* Reed-Solomon: every erasure pattern of 6 DATA vectors and 3 rows; a forged row left over found */
+        let g = Gf::new();
+        let orig: Vec<Vec<u8>> = (0..6).map(|i| (0..29).map(|k| (i * 131 + k * 17 + i * k) as u8 ^ 0x5a).collect()).collect();
+        let mut par: Vec<Vec<u8>> = vec![vec![0u8; 29]; 3];
+        for (j, p) in par.iter_mut().enumerate() {
+            for (i, d) in orig.iter().enumerate() {
+                g.muladd(p, d, g.coef(j, i));
+            }
+        }
+        let mut good = true;
+        for set in 0u32..(1 << 9) {
+            if set.count_ones() > 3 {
+                continue;
+            }
+            let dok: Vec<bool> = (0..6).map(|i| set & (1 << i) == 0).collect();
+            let pok: Vec<bool> = (0..3).map(|j| set & (1 << (6 + j)) == 0).collect();
+            let mut d: Vec<Vec<u8>> = orig.iter().enumerate().map(|(i, v)| if dok[i] { v.clone() } else { vec![0xEE; 29] }).collect();
+            good &= g.repair(&mut d, &dok, &par, &pok) == 0 && d == orig;
+        }
+        let dok = [true, false, true, true, true, true];
+        let mut d = orig.clone();
+        par[2][5] ^= 1;
+        good &= g.repair(&mut d, &dok, &par, &[true, true, true]) == 2;
+        good &= g.coef(0, 7) == 1;
+        said("Reed-Solomon GF(2^8) 0x11D, scaled Cauchy, every pattern of 6 + 3", good);
+    }
     if failed == 0 {
         println!("selftest: all primitives right");
         0
@@ -675,6 +859,7 @@ fn selftest() -> i32 {
 /* The block header, format.md section 3 */
 #[derive(Clone, Copy, Default)]
 struct Bhdr {
+    version: u16,
     typ: u8,
     gindex: u16,
     uuid: [u8; 16],
@@ -692,10 +877,11 @@ struct Bhdr {
 ** field taken as 0) followed by the whole payload area.
 */
 fn check(crc: &Crc, b: &[u8], bsize: u32, uuid: Option<&[u8; 16]>) -> Option<Bhdr> {
-    if b.len() != bsize as usize || b.len() < HDR || &b[0..4] != b"VBKB" || u16_at(b, 4) != HDR as u16 || u16_at(b, 6) != 1 {
+    if b.len() != bsize as usize || b.len() < HDR || &b[0..4] != b"VBKB" || u16_at(b, 4) != HDR as u16 || !(1..=2).contains(&u16_at(b, 6)) {
         return None;
     }
     let mut h = Bhdr {
+        version: u16_at(b, 6),
         typ: b[12],
         gindex: u16_at(b, 14),
         blkno: u64_at(b, 32),
@@ -708,7 +894,14 @@ fn check(crc: &Crc, b: &[u8], bsize: u32, uuid: Option<&[u8; 16]>) -> Option<Bhd
     };
     h.uuid.copy_from_slice(&b[16..32]);
     let psize = bsize - HDR as u32;
-    if u32_at(b, 8) != bsize || h.typ < BT_DATA || h.typ > BT_ETRAILER || h.paylen > psize || (h.recoff != NONE && h.recoff >= psize) {
+    /* The parity blocks of version 2 carry the header parity in RECOFF and PAYLEN (format.md 4.1) */
+    let hpar = h.version == 2 && (h.typ == BT_XOR || h.typ == BT_PARITY);
+    if u32_at(b, 8) != bsize
+        || h.typ < BT_DATA
+        || h.typ > BT_PARITY
+        || (h.typ == BT_PARITY && h.version != 2)
+        || (!hpar && (h.paylen > psize || (h.recoff != NONE && h.recoff >= psize)))
+    {
         return None;
     }
     if let Some(u) = uuid {
@@ -854,6 +1047,9 @@ struct Reader {
     spec: String,
     bsize: u32,
     grpsz: u32,
+    parity: u32,  // parity blocks of a group: 1, or 2 .. 8 in version 2
+    version: u16, // of every block: that of the VHDR
+    gf: Gf,
     uuid: [u8; 16],
     vols: Vec<Volume>,
     trailer: bool,
@@ -901,18 +1097,20 @@ struct Vcrypt {
     check: Vec<u8>,
 }
 
-/* The group size and the encryption tags (CIPHER makes it encrypted), out of the SUMMARY record a VHDR carries */
-fn summary_group(blk: &[u8], h: &Bhdr) -> Option<(u32, Option<Vcrypt>)> {
+/* The group size, the parity count and the encryption tags (CIPHER makes it encrypted), out of the SUMMARY record a VHDR carries */
+fn summary_group(blk: &[u8], h: &Bhdr) -> Option<(u32, u32, Option<Vcrypt>)> {
     let pay = blk.get(HDR..HDR + h.paylen as usize)?;
     if pay.len() < 8 || u16_at(pay, 0) != RT_SUMMARY {
         return None;
     }
     let body = pay.get(8..8usize.saturating_add(u32_at(pay, 4) as usize))?;
     let mut grp = 0u32;
+    let mut par = 0u32;
     let mut has_cipher = false;
     let mut vc = Vcrypt::default();
     tlv_each(body, |tag, v| match tag {
-        71 => grp = getu(v) as u32,
+        TAG_GROUPSIZE => grp = getu(v) as u32,
+        TAG_PARITY => par = getu(v).min(255) as u32,
         TAG_CIPHER => {
             has_cipher = true;
             vc.cipher = getu(v)
@@ -924,7 +1122,7 @@ fn summary_group(blk: &[u8], h: &Bhdr) -> Option<(u32, Option<Vcrypt>)> {
         _ => {}
     });
     if grp <= MAXGRP {
-        Some((grp, if has_cipher { Some(vc) } else { None }))
+        Some((grp, par, if has_cipher { Some(vc) } else { None }))
     } else {
         None
     }
@@ -938,6 +1136,9 @@ impl Reader {
             spec: spec.to_string(),
             bsize: 0,
             grpsz: 0,
+            parity: 1,
+            version: 1,
+            gf: Gf::new(),
             uuid: [0; 16],
             vols: Vec::new(),
             trailer: false,
@@ -971,10 +1172,12 @@ impl Reader {
             let blk = read_block(Some(&f), bs, 0);
             if let Some(h) = check(&r.crc, &blk, bs, None) {
                 if h.typ == BT_VHDR && h.volno == 1 {
-                    if let Some((g, vc)) = summary_group(&blk, &h) {
+                    if let Some((g, m, vc)) = summary_group(&blk, &h) {
                         r.bsize = bs;
                         r.uuid = h.uuid;
                         r.grpsz = g;
+                        r.version = h.version;
+                        r.parity = if h.version == 2 { m } else { 1 };
                         r.vcrypt = vc;
                         found = true;
                     }
@@ -982,6 +1185,10 @@ impl Reader {
             }
         }
         if !found && !r.guess(&f) {
+            return Err(format!("File: {} - is not a saveset", spec));
+        }
+        /* Version 2: as many parity blocks as the SUMMARY says, and groups (format.md 4.1) */
+        if r.version == 2 && (r.parity < 2 || r.parity > MAXPAR || r.grpsz == 0) {
             return Err(format!("File: {} - is not a saveset", spec));
         }
         let n1 = blocks_in(&f, r.bsize);
@@ -1005,8 +1212,11 @@ impl Reader {
                 Some(h) if h.typ == BT_VHDR && h.volno == n => {
                     /* Volume 1 had no good VHDR: the keys are in any other one (the same in all) */
                     if !found && r.vcrypt.is_none() {
-                        if let Some((_, vc)) = summary_group(&read_block(Some(&vf), r.bsize, 0), &h) {
+                        if let Some((_, m, vc)) = summary_group(&read_block(Some(&vf), r.bsize, 0), &h) {
                             r.vcrypt = vc;
+                            if h.version == 2 && h.version == r.version && m >= 2 {
+                                r.parity = m;
+                            }
                         }
                     }
                     first = Some(h.blkno)
@@ -1116,17 +1326,32 @@ impl Reader {
                 self.bsize = bs;
                 self.uuid = h.uuid;
                 self.grpsz = 0;
+                self.version = h.version;
+                self.parity = 1;
                 self.enc_seen = h.typ == BT_EDATA || h.typ == BT_ETRAILER;
                 for p in 1..=(MAXGRP as u64 + 1) {
                     if let Some(x) = check(&self.crc, &read_block(Some(f), bs, p), bs, Some(&self.uuid)) {
                         self.enc_seen |= x.typ == BT_EDATA || x.typ == BT_ETRAILER;
-                        if x.typ == BT_XOR && x.gindex as u64 == p - 1 {
-                            self.grpsz = x.gindex as u32;
+                        if x.typ == BT_XOR && (x.gindex & 0xFF) as u64 == p - 1 && x.version == self.version {
+                            self.grpsz = (x.gindex & 0xFF) as u32;
+                            /* Version 2: the PARITY blocks after it, row by row, are the parity count */
+                            if self.version == 2 {
+                                self.parity = 1;
+                                while self.parity < MAXPAR {
+                                    match check(&self.crc, &read_block(Some(f), bs, p + self.parity as u64), bs, Some(&self.uuid)) {
+                                        Some(y) if y.typ == BT_PARITY && y.gindex == (self.grpsz | (self.parity << 8)) as u16 => self.parity += 1,
+                                        _ => break,
+                                    }
+                                }
+                            }
                             break;
                         }
                     }
                 }
                 msg!("Saveset: {} - its first block is bad: block size {} and group size {} found by trying", self.spec, bs, self.grpsz);
+                if self.version == 2 && self.parity < 2 {
+                    return false;
+                }
                 return true;
             }
             bs += 512;
@@ -1170,7 +1395,7 @@ impl Reader {
             break;
         }
         let firstblk = self.vols[self.curvol - 1].firstblk;
-        let mut n: u64 = if self.grpsz > 0 { self.grpsz as u64 + 1 } else { 1 };
+        let mut n: u64 = if self.grpsz > 0 { self.grpsz as u64 + self.parity as u64 } else { 1 };
         if end - self.curpos < n {
             n = end - self.curpos;
         }
@@ -1183,7 +1408,7 @@ impl Reader {
             let b = read_block(self.vols[self.curvol - 1].f.as_ref(), self.bsize, pos);
             match check(&self.crc, &b, self.bsize, Some(&self.uuid)) {
                 Some(h) => {
-                    ok.push(h.blkno == firstblk.wrapping_add(pos) && h.volno as usize == self.curvol);
+                    ok.push(h.blkno == firstblk.wrapping_add(pos) && h.volno as usize == self.curvol && h.version == self.version);
                     hdrs.push(h);
                 }
                 None => {
@@ -1192,6 +1417,11 @@ impl Reader {
                 }
             }
             blks.push(b);
+        }
+
+        /* Version 2: several parity blocks, Reed-Solomon */
+        if self.parity > 1 {
+            return self.group2(firstblk, blks, hdrs, ok);
         }
 
         /* Where the XOR block is: a full group ends with it; a short one, cut short, may not have one */
@@ -1249,6 +1479,7 @@ impl Reader {
             }
             let s = hdrs[badi + 1];
             let h = Bhdr {
+                version: self.version,
                 typ: self.dtype,
                 gindex: badi as u16,
                 uuid: self.uuid,
@@ -1284,6 +1515,203 @@ impl Reader {
         self.recoffs.clear();
         self.blks.clear();
         for i in 0..gdata {
+            let b = firstblk.wrapping_add(self.curpos + i as u64);
+            if !ok[i] {
+                msg!("Block: {}, Volume: {} - is bad and cannot be rebuilt", b, self.curvol);
+                self.bad = true;
+                self.pays.push(None);
+            } else {
+                self.pays.push(blks[i].get(HDR..HDR + hdrs[i].paylen as usize).map(|p| p.to_vec()));
+            }
+            self.recoffs.push(hdrs[i].recoff);
+            self.blks.push(b);
+        }
+        self.next = 0;
+        self.curpos += n as u64;
+        true
+    }
+
+    /*
+    ** The rest of a group of version 2 (format.md 4.1): d DATA blocks and m
+    ** parity blocks; up to as many bad DATA blocks as there are good rows
+    ** rebuilt, payloads and the header parity alike; the rebuilt headers
+    ** checked as good ones are; when that fails, once more without each
+    ** good row in turn.
+    */
+    fn group2(&mut self, firstblk: u64, mut blks: Vec<Vec<u8>>, mut hdrs: Vec<Bhdr>, mut ok: Vec<bool>) -> bool {
+        let n = blks.len();
+        let m = self.parity as usize;
+        let grpsz = self.grpsz as usize;
+
+        /* How many DATA blocks: a good parity block says it (n in GINDEX, its row in the high octet) */
+        let mut d: Option<usize> = None;
+        for i in 0..n {
+            let (row, cnt) = ((hdrs[i].gindex >> 8) as usize, (hdrs[i].gindex & 0xFF) as usize);
+            if ok[i]
+                && ((hdrs[i].typ == BT_XOR && row == 0) || (hdrs[i].typ == BT_PARITY && row >= 1 && row < m))
+                && cnt >= 1
+                && cnt <= grpsz
+                && cnt + row == i
+            {
+                d = Some(cnt);
+                break;
+            }
+        }
+        let d = match d {
+            Some(d) => d,
+            None if n == grpsz + m => grpsz,
+            None if ok[n - 1] && hdrs[n - 1].typ == self.dtype => n,
+            None if n > m => n - m,
+            None => n,
+        }
+        .min(n);
+
+        /* The parity rows there are, each where its row says */
+        let mut pok = vec![false; m];
+        let mut par: Vec<Vec<u8>> = Vec::with_capacity(m);
+        let mut hpar: Vec<Vec<u8>> = Vec::with_capacity(m);
+        for (j, pk) in pok.iter_mut().enumerate() {
+            let i = d + j;
+            let mut hv = vec![0u8; 8];
+            if i < n {
+                let h = &hdrs[i];
+                *pk = ok[i] && h.typ == if j == 0 { BT_XOR } else { BT_PARITY } && h.gindex as usize == (d | (j << 8));
+                if *pk {
+                    hv[0..4].copy_from_slice(&h.recoff.to_le_bytes());
+                    hv[4..8].copy_from_slice(&h.paylen.to_le_bytes());
+                }
+                par.push(blks[i][HDR..].to_vec());
+            } else {
+                par.push(Vec::new());
+            }
+            hpar.push(hv);
+        }
+
+        for i in 0..d {
+            if ok[i] && (hdrs[i].typ != self.dtype || hdrs[i].gindex as usize != i) {
+                ok[i] = false;
+            }
+            /* A good CRC and a wrong TAG: a bad block all the same */
+            if ok[i] {
+                if let Some(k) = &self.keys {
+                    if !tag_ok(k, self.bsize, &hdrs[i], &blks[i][HDR..]) {
+                        ok[i] = false;
+                        msg!(
+                            "Block: {}, Volume: {} - is not what was written: its CRC is right, its authentication fails",
+                            hdrs[i].blkno,
+                            self.curvol
+                        );
+                    }
+                }
+            }
+        }
+
+        let dok: Vec<bool> = ok[..d].to_vec();
+        let nbad = dok.iter().filter(|&&x| !x).count();
+        let npok = pok.iter().filter(|&&x| x).count();
+        if nbad > 0 && nbad <= npok {
+            let mut forged = false;
+            let mut done = false;
+            let mut skip: isize = -1;
+            while !done && skip < m as isize {
+                let mut tryok = pok.clone();
+                if skip >= 0 {
+                    let s = skip as usize;
+                    if !pok[s] {
+                        skip += 1;
+                        continue;
+                    }
+                    tryok[s] = false;
+                }
+                skip += 1;
+                if tryok.iter().filter(|&&x| x).count() < nbad {
+                    continue;
+                }
+                /* The header parity first, then the payloads */
+                let mut hv: Vec<Vec<u8>> = (0..d)
+                    .map(|i| {
+                        let mut v = vec![0u8; 8];
+                        if dok[i] {
+                            v[0..4].copy_from_slice(&hdrs[i].recoff.to_le_bytes());
+                            v[4..8].copy_from_slice(&hdrs[i].paylen.to_le_bytes());
+                        }
+                        v
+                    })
+                    .collect();
+                let mut rc = self.gf.repair(&mut hv, &dok, &hpar, &tryok);
+                let mut pv: Vec<Vec<u8>> = Vec::new();
+                if rc == 0 {
+                    pv = (0..d).map(|i| blks[i][HDR..].to_vec()).collect();
+                    rc = self.gf.repair(&mut pv, &dok, &par, &tryok);
+                }
+                forged |= rc == 2;
+                if rc != 0 {
+                    continue;
+                }
+                let mut newh: Vec<Bhdr> = hdrs[..d].to_vec();
+                let mut allok = true;
+                for i in 0..d {
+                    if dok[i] {
+                        continue;
+                    }
+                    let (prvrecoff, prvpaylen) = if i > 0 { (newh[i - 1].recoff, newh[i - 1].paylen) } else { (NONE, 0) };
+                    let h = Bhdr {
+                        version: self.version,
+                        typ: self.dtype,
+                        gindex: i as u16,
+                        uuid: self.uuid,
+                        blkno: firstblk.wrapping_add(self.curpos + i as u64),
+                        volno: self.curvol as u32,
+                        recoff: u32_at(&hv[i], 0),
+                        paylen: u32_at(&hv[i], 4),
+                        prvrecoff,
+                        prvpaylen,
+                    };
+                    if h.paylen > self.cap
+                        || (h.recoff != NONE && h.recoff >= h.paylen)
+                        || !self.keys.as_ref().map_or(true, |k| tag_ok(k, self.bsize, &h, &pv[i]))
+                    {
+                        allok = false;
+                        break;
+                    }
+                    newh[i] = h;
+                }
+                if allok {
+                    done = true;
+                    for i in 0..d {
+                        if dok[i] {
+                            continue;
+                        }
+                        blks[i][HDR..].copy_from_slice(&pv[i]);
+                        hdrs[i] = newh[i];
+                        ok[i] = true;
+                        msg!("Block: {}, Volume: {} - was bad, rebuilt from its group", hdrs[i].blkno, self.curvol);
+                    }
+                }
+            }
+            if !done && forged {
+                msg!(
+                    "Block: {}, Volume: {} - the group beginning here does not agree with its parity: nothing of it is rebuilt",
+                    firstblk.wrapping_add(self.curpos),
+                    self.curvol
+                );
+                self.bad = true;
+            }
+        }
+
+        /* Every check done, the repair too: the good blocks decrypted where they lie */
+        if let Some(k) = &self.keys {
+            for i in 0..d {
+                if ok[i] {
+                    decrypt(k, &hdrs[i], &mut blks[i][HDR..]);
+                }
+            }
+        }
+
+        self.pays.clear();
+        self.recoffs.clear();
+        self.blks.clear();
+        for i in 0..d {
             let b = firstblk.wrapping_add(self.curpos + i as u64);
             if !ok[i] {
                 msg!("Block: {}, Volume: {} - is bad and cannot be rebuilt", b, self.curvol);

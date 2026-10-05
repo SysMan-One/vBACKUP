@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-13"
-#define	__REV__		"1.13.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -19,6 +19,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		PARITYERR: the parity of a group disagrees, nothing of it rebuilt.
 **
 **	X01-13		 5-OCT-2026	RRL
 **		VMSSAVESET, VMSNOCRC, VMSRAW: the savesets of OpenVMS BACKUP.
@@ -174,7 +177,8 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_REMOTEERR,	"REMOTEERR, Node: !AZ, Exit: !UL - VBACKUP there did not complete: see its messages above"),
 	$VBKREC(VBACKUP$_VMSSAVESET,	"VMSSAVESET, Saveset: !AZ, Block size: !UL, Group size: !UL - an OpenVMS BACKUP saveset"),
 	$VBKREC(VBACKUP$_VMSNOCRC,	"VMSNOCRC, Saveset: !AZ - written /NOCRC: its blocks carry no CRC, damage in them cannot be seen"),
-	$VBKREC(VBACKUP$_VMSRAW,	"VMSRAW, File: !AZ, Organization: !AZ, Record format: !AZ - restored as it is on the VMS disk: its records are not converted")
+	$VBKREC(VBACKUP$_VMSRAW,	"VMSRAW, File: !AZ, Organization: !AZ, Record format: !AZ - restored as it is on the VMS disk: its records are not converted"),
+	$VBKREC(VBACKUP$_PARITYERR,	"PARITYERR, Block: !UQ, Volume: !UL - the group beginning here does not agree with its parity: a block of it with a right CRC holds other bytes, nothing of it is rebuilt")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {
@@ -634,6 +638,10 @@ const char *	l_spec = (const char *) a_arg;
 
 		case	VBK$K_EV_BADTAG:
 			$VBKMSG(VBACKUP$_BLKFORGED, a_blk, a_vol);
+			break;
+
+		case	VBK$K_EV_PARITY:
+			$VBKMSG(VBACKUP$_PARITYERR, a_blk, a_vol);
 			break;
 		}
 }

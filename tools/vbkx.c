@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-13"
-#define	__REV__		"1.13.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -70,14 +70,14 @@
 **		Build on Linux: with the product (CMake), or by hand -
 **
 **		    gcc -O2 -D_GNU_SOURCE -Ilib -I/usr/local/include \
-**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c \
+**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c \
 **			/usr/local/lib/libstarlet.a -static -o vbkx
 **
 **		Build on Windows / cross, from the top of the source tree -
 **		no StarLet, no CMake, one command:
 **
 **		    x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
+**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
 **
 **		(make -f tools/Makefile.win does the same; on Windows itself
 **		gcc of MinGW-w64 or MSYS2 takes the same line.)
@@ -87,6 +87,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		Savesets of version 2 (/PARITY) through VBKRD.C and VBKRS.C; the
+**		event PARITY said.
 **
 **	X01-13		 5-OCT-2026	RRL
 **		The savesets of OpenVMS BACKUP: l, x, p, t (LIB/VBKVMS.C).
@@ -250,6 +254,12 @@ static	void	s_vbkx$event	(
 		case	VBK$K_EV_BADTAG:
 			s_vbkx$msg("Block: %llu, Volume: %u - is not what was written: its CRC is right, its authentication fails",
 				(unsigned long long) a_blk, a_vol);
+			break;
+
+		case	VBK$K_EV_PARITY:
+			s_vbkx$msg("Block: %llu, Volume: %u - the group beginning here does not agree with its parity: nothing of it is rebuilt",
+				(unsigned long long) a_blk, a_vol);
+			s_bad	= 1;
 			break;
 		}
 }

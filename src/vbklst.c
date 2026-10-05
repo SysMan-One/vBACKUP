@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -23,6 +23,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		The heading says the parity of a saveset of version 2.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		A pipe is listed as it is read, without NOTRAILER or NOCATALOG.
@@ -269,6 +272,7 @@ VBK$TIME	l_t;
 			case	VBK$K_TAG_MOUNTOPTS:	$VBKFAOP(a_lst->out, "Mounted with:      !AD\n", l_vlen, l_val);			break;
 			case	VBK$K_TAG_BLOCKSIZE:	$VBKFAOP(a_lst->out, "Block size:        !UQ\n", vbk$tlv_getu(l_vlen, l_val));	break;
 			case	VBK$K_TAG_GROUPSIZE:	$VBKFAOP(a_lst->out, "Group size:        !UQ\n", vbk$tlv_getu(l_vlen, l_val));	break;
+			case	VBK$K_TAG_PARITY:	$VBKFAOP(a_lst->out, "Parity:            !UQ blocks a group\n", vbk$tlv_getu(l_vlen, l_val)); break;
 
 			case	VBK$K_TAG_VOLSIZE:
 				if ( vbk$tlv_getu(l_vlen, l_val) )

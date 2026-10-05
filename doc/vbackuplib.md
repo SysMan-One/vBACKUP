@@ -152,6 +152,33 @@ saveset is read. You see %VBACKUP-I-BLKFIXED and nothing is lost.
 The default is 10: the saveset is 10% bigger. n may be 0 to 100;
 /GROUP_SIZE=0 writes no XOR blocks and nothing can be repaired.
 
+## /PARITY -- more than one bad block of a group repaired
+
+```
+/PARITY=m
+```
+
+Every group gets m parity blocks instead of the one XOR block: any m
+bad blocks of a group - one next to another too, data or parity - are
+rebuilt when the saveset is read (Reed-Solomon). /PARITY=1 is the
+default, the XOR block alone. m may be 1 to 8; it needs groups, not
+/GROUP_SIZE=0.
+
+```
+$ vbackup /home /mnt/usb/home.bck /PARITY=2
+$ vbackup /home /mnt/tape/home.bck /GROUP_SIZE=20 /PARITY=4
+```
+
+The saveset grows by m/n: /GROUP_SIZE=10 /PARITY=2 makes it 20%
+bigger, /GROUP_SIZE=20 /PARITY=4 too, and the second survives four bad
+blocks in a row instead of two. Take it for media that fail in bursts:
+old disks, USB sticks, optical discs, tapes.
+
+A saveset with /PARITY=2 or more is of format version 2. VBACKUP and
+vbkx before X01-14 do not read it: they say it is not a saveset.
+VBACKUP X01-14 reads both. Encrypted savesets repair without the
+passphrase, as always.
+
 ## /VOLUME_SIZE -- cut the saveset into volumes
 
 ```
@@ -932,8 +959,20 @@ copy the saveset to another one.
 **%VBACKUP-E-BLKLOST and %VBACKUP-E-FILDAMAGED.** Blocks were lost and
 could not be repaired. The files named by FILDAMAGED are incomplete;
 the files named by FILLOST were not restored at all; all other files
-are fine. Next time give a smaller /GROUP_SIZE (more XOR blocks), or
-keep two copies of important savesets.
+are fine. Next time give /PARITY=2 or more (several bad blocks of a
+group repaired), a smaller /GROUP_SIZE, or keep two copies of important
+savesets.
+
+**%VBACKUP-W-PARITYERR.** A saveset made with /PARITY: blocks of a group
+were bad, and its parity blocks did not agree with what was rebuilt -
+some block of the group with a right checksum holds other bytes (written
+wrong, or changed on purpose). Nothing of that group is restored from
+the parity; its files are named by FILDAMAGED. Keep the saveset: the
+other groups are fine.
+
+**%VBACKUP-E-NOTSAVESET for a saveset made with /PARITY.** It is of
+format version 2: VBACKUP or vbkx before X01-14 cannot read it. Use
+X01-14 or later.
 
 **%VBACKUP-W-UNNAMED.** Blocks were lost, and the saveset has no
 catalog, or its catalog was damaged too. Some files may be missing
@@ -1111,6 +1150,7 @@ that were in the cache stay there.
 %VBACKUP-I-VMSSAVESET   the input is a saveset of OpenVMS BACKUP: its block and group size
 %VBACKUP-I-VMSNOCRC     ... written /NOCRC: damage in its blocks cannot be seen
 %VBACKUP-I-VMSRAW       ... an indexed or relative file restored as its RMS image
+%VBACKUP-W-PARITYERR    /PARITY: the parity of a group disagrees, nothing of it rebuilt
 ```
 
 A message goes to the standard error. It begins with the date, the

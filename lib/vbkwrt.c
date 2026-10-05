@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWRT"
-#define	__IDENT__	"X01-11"
-#define	__REV__		"1.11.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -48,6 +48,11 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-14		 5-OCT-2026	RRL
+**		PARITY: m - 1 PARITY blocks after the XOR block of a group, and
+**		the header parity of every row (format.md 4.1); in the pipeline
+**		the rows are folded over the ciphertext, as the XOR.
+**
 **	X01-11		 5-OCT-2026	RRL
 **		The standard output carries volumes back to back.  SPIPE, the
 **		pipeline of an encrypted save: sealers seal the EDATA blocks of
@@ -84,6 +89,7 @@
 #include	<sys/stat.h>
 
 #include	"vbkwrt.h"
+#include	"vbkrs.h"
 #include	"vbkos.h"
 
 
@@ -206,14 +212,28 @@ static	void	s_vbk$final	(
 			)
 {
 uint64_t *	l_x = (uint64_t *) a_ctx->xor, *l_p = (uint64_t *) (a_buf + VBK$K_HDRSZ);
+uint32_t	l_gi = vbk$get16(a_buf + 14);
 
 	if ( a_ctx->grpsz && (a_buf [12] == VBK$K_BT_EDATA) )
+		{
 		for ( uint32_t i = 0; i < (a_ctx->psize / sizeof(uint64_t)); i++ )
 			l_x [i] ^= l_p [i];
+
+		/* The rows of version 2 over the ciphertext too: the repair needs no key */
+		for ( uint32_t j = 1; j < a_ctx->parity; j++ )
+			vbk$rs_muladd(a_ctx->par + (size_t) (j - 1) * a_ctx->psize, (uint8_t *) l_p, a_ctx->psize, vbk$rs_coef(j, l_gi));
+		}
 	else if ( a_ctx->grpsz && (a_buf [12] == VBK$K_BT_XOR) )
 		{
 		memcpy(l_p, l_x, a_ctx->psize);
 		memset(l_x, 0, a_ctx->psize);
+		}
+	else if ( a_ctx->grpsz && (a_buf [12] == VBK$K_BT_PARITY) && ((l_gi >> 8) >= 1) && ((l_gi >> 8) < a_ctx->parity) )
+		{
+		uint8_t *	l_r = a_ctx->par + (size_t) ((l_gi >> 8) - 1) * a_ctx->psize;
+
+		memcpy(l_p, l_r, a_ctx->psize);
+		memset(l_r, 0, a_ctx->psize);
 		}
 
 	vbk$blk_seal(a_buf, a_ctx->bsize);
@@ -501,6 +521,7 @@ static	void	s_vbk$hdrini	(
 {
 	memset(a_hdr, 0, sizeof(*a_hdr));
 
+	a_hdr->version	= a_ctx->version;
 	a_hdr->bsize	= a_ctx->bsize;
 	a_hdr->type	= a_type;
 	a_hdr->blkno	= a_ctx->blkno++;
@@ -550,7 +571,8 @@ int		l_seal = a_ctx->keys && (a_type == VBK$K_BT_TRAILER);
 
 
 /*
-**  Close the current group with its XOR block
+**  Close the current group with its XOR block, and - version 2 - its
+**  PARITY blocks, rows 1 .. parity - 1 (format.md 4.1)
 */
 static	int	s_vbk$xor	(
 		VBK$WCTX *	a_ctx
@@ -562,27 +584,40 @@ int		l_status;
 	if ( !a_ctx->grpsz || !a_ctx->gcnt )
 		return	STS$K_SUCCESS;
 
-	s_vbk$hdrini(a_ctx, &l_hdr, VBK$K_BT_XOR);
-	l_hdr.gindex	= (uint16_t) a_ctx->gcnt;
-	l_hdr.recoff	= VBK$K_NONE;
-	l_hdr.paylen	= a_ctx->psize;
-	l_hdr.prvrecoff	= a_ctx->prvrecoff;
-	l_hdr.prvpaylen	= a_ctx->prvpaylen;
-
-	vbk$bhdr_put(&l_hdr, a_ctx->aux);
-
-	/* The pipeline fills the payload of the XOR block when it gets there: the ciphertext is made there */
-	if ( !a_ctx->spipe )
+	for ( uint32_t j = 0; j < ((a_ctx->parity > 1) ? a_ctx->parity : 1); j++ )
 		{
-		memcpy(a_ctx->aux + VBK$K_HDRSZ, a_ctx->xor, a_ctx->psize);
-		vbk$blk_seal(a_ctx->aux, a_ctx->bsize);
+		uint8_t *	l_row = j ? (a_ctx->par + (size_t) (j - 1) * a_ctx->psize) : a_ctx->xor;
+
+		s_vbk$hdrini(a_ctx, &l_hdr, j ? VBK$K_BT_PARITY : VBK$K_BT_XOR);
+		l_hdr.gindex	= (uint16_t) (a_ctx->gcnt | (j << 8));
+		l_hdr.prvrecoff	= a_ctx->prvrecoff;
+		l_hdr.prvpaylen	= a_ctx->prvpaylen;
+
+		/* Version 2: RECOFF and PAYLEN carry the header parity of the row */
+		if ( a_ctx->parity > 1 )
+			{
+			l_hdr.recoff	= vbk$get32(a_ctx->hpar [j]);
+			l_hdr.paylen	= vbk$get32(a_ctx->hpar [j] + 4);
+			memset(a_ctx->hpar [j], 0, sizeof(a_ctx->hpar [j]));
+			}
+		else	{
+			l_hdr.recoff	= VBK$K_NONE;
+			l_hdr.paylen	= a_ctx->psize;
+			}
+
+		vbk$bhdr_put(&l_hdr, a_ctx->aux);
+
+		/* The pipeline fills the payload of a parity block when it gets there: the ciphertext is made there */
+		if ( !a_ctx->spipe )
+			{
+			memcpy(a_ctx->aux + VBK$K_HDRSZ, l_row, a_ctx->psize);
+			vbk$blk_seal(a_ctx->aux, a_ctx->bsize);
+			memset(l_row, 0, a_ctx->psize);
+			}
+
+		if ( !(1 & (l_status = s_vbk$emit(a_ctx, &a_ctx->aux))) )
+			return	l_status;
 		}
-
-	if ( !(1 & (l_status = s_vbk$emit(a_ctx, &a_ctx->aux))) )
-		return	l_status;
-
-	if ( !a_ctx->spipe )
-		memset(a_ctx->xor, 0, a_ctx->psize);
 
 	a_ctx->gcnt	= 0;
 	a_ctx->prvrecoff = VBK$K_NONE;
@@ -678,7 +713,7 @@ static	int	s_vbk$need	(
 
 
 /*
-**  Begin a new DATA block: it and the XOR block of its group must fit
+**  Begin a new DATA block: it and the parity blocks of its group must fit
 */
 static	int	s_vbk$opendata	(
 		VBK$WCTX *	a_ctx
@@ -686,7 +721,7 @@ static	int	s_vbk$opendata	(
 {
 int	l_status;
 
-	if ( !(1 & (l_status = s_vbk$need(a_ctx, a_ctx->grpsz ? 2 : 1))) )
+	if ( !(1 & (l_status = s_vbk$need(a_ctx, a_ctx->grpsz ? (1 + ((a_ctx->parity > 1) ? a_ctx->parity : 1)) : 1))) )
 		return	l_status;
 
 	memset(a_ctx->cur, 0, a_ctx->bsize);
@@ -739,6 +774,23 @@ int		l_status;
 
 		for ( uint32_t i = 0; !a_ctx->spipe && (i < (a_ctx->psize / sizeof(uint64_t))); i++ )
 			l_x [i] ^= l_p [i];
+
+		/* Version 2: the rows >= 1 of the payload (the pipeline folds the ciphertext), and every row of the header */
+		if ( a_ctx->parity > 1 )
+			{
+			uint8_t	l_hv [8];
+
+			vbk$put32(l_hv, a_ctx->recoff);
+			vbk$put32(l_hv + 4, a_ctx->fill);
+
+			for ( uint32_t j = 0; j < a_ctx->parity; j++ )
+				{
+				vbk$rs_muladd(a_ctx->hpar [j], l_hv, sizeof(l_hv), vbk$rs_coef(j, a_ctx->gcnt));
+
+				if ( j && !a_ctx->spipe )
+					vbk$rs_muladd(a_ctx->par + (size_t) (j - 1) * a_ctx->psize, (uint8_t *) l_p, a_ctx->psize, vbk$rs_coef(j, a_ctx->gcnt));
+				}
+			}
 
 		a_ctx->prvrecoff = a_ctx->recoff;
 		a_ctx->prvpaylen = a_ctx->fill;
@@ -805,7 +857,11 @@ int	l_status;
 	a_ctx->psize	= a_bsize - VBK$K_HDRSZ;
 	a_ctx->cap	= a_ctx->keys ? (a_ctx->psize - VBK$K_TAGSZ) : a_ctx->psize;
 	a_ctx->grpsz	= a_grpsz;
+	a_ctx->parity	= (a_grpsz && (a_ctx->parity > 1)) ? ((a_ctx->parity > VBK$K_MAXPAR) ? VBK$K_MAXPAR : a_ctx->parity) : 1;
+	a_ctx->version	= (a_ctx->parity > 1) ? VBK$K_VERSION2 : VBK$K_VERSION;
 	a_ctx->maxvolblk = a_volsize / a_bsize;
+
+	vbk$rs_init();
 	a_ctx->volno	= 1;
 	a_ctx->prvrecoff = VBK$K_NONE;
 
@@ -829,13 +885,15 @@ int	l_status;
 	a_ctx->freel	= calloc(a_ctx->nbufs, sizeof(uint8_t *));
 	a_ctx->ring	= calloc(a_ctx->nbufs, sizeof(uint8_t *));
 	a_ctx->xor	= aligned_alloc(64, a_bsize);
+	a_ctx->par	= (a_ctx->parity > 1) ? aligned_alloc(64, (size_t) (a_ctx->parity - 1) * a_bsize) : NULL;
 	a_ctx->vhdr	= malloc(VBK$K_RECHDR + a_sumlen);
 
 	for ( uint32_t i = 0; a_ctx->bufs && a_ctx->freel && (i < a_ctx->nbufs); i++ )
 		if ( (a_ctx->bufs [i] = aligned_alloc(64, a_bsize)) )
 			a_ctx->freel [a_ctx->nfree++] = a_ctx->bufs [i];
 
-	if ( !a_ctx->bufs || !a_ctx->freel || !a_ctx->ring || !a_ctx->xor || !a_ctx->vhdr || (a_ctx->nfree != a_ctx->nbufs) )
+	if ( !a_ctx->bufs || !a_ctx->freel || !a_ctx->ring || !a_ctx->xor || !a_ctx->vhdr || (a_ctx->nfree != a_ctx->nbufs)
+		|| ((a_ctx->parity > 1) && !a_ctx->par) )
 		{
 		a_ctx->err	= ENOMEM;
 		vbk$wrt_abort(a_ctx);
@@ -877,6 +935,10 @@ int	l_status;
 		}
 
 	memset(a_ctx->xor, 0, a_bsize);
+	memset(a_ctx->hpar, 0, sizeof(a_ctx->hpar));
+
+	if ( a_ctx->par )
+		memset(a_ctx->par, 0, (size_t) (a_ctx->parity - 1) * a_bsize);
 
 	/* The VHDR payload is one complete SUMMARY record */
 	vbk$put16(a_ctx->vhdr, VBK$K_RT_SUMMARY);
@@ -1185,6 +1247,8 @@ void	vbk$wrt_abort	(
 	a_ctx->rstate	= NULL;
 	a_ctx->spipe	= 0;
 	free(a_ctx->xor);
+	free(a_ctx->par);
+	a_ctx->par	= NULL;
 	free(a_ctx->vhdr);
 
 	a_ctx->bufs = a_ctx->freel = a_ctx->ring = NULL;

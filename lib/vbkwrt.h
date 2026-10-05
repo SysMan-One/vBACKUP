@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-11"
+#define	__IDENT__	"X01-14"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.11.0"
+#define	__REV__		"1.14.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 5-OCT-2026	RRL
+**		PARITY, VERSION, PAR, HPAR.
 **
 **	X01-11		 5-OCT-2026	RRL
 **		SPIPE, RSTATE, the sealers.
@@ -84,6 +87,11 @@ typedef struct vbk_wctx_t
 	const VBK$KEYS *keys;			/* Set by the caller before VBK$WRT_OPEN: the	*/
 						/* saveset is encrypted (format.md 6.10)	*/
 	uint32_t	grpsz;			/* DATA blocks under one XOR, 0 - no XOR	*/
+	uint32_t	parity;			/* Set by the caller before VBK$WRT_OPEN: the	*/
+						/* parity blocks of a group, 0 or 1 - the XOR	*/
+						/* block alone (version 1); 2 .. VBK$K_MAXPAR -	*/
+						/* version 2 (format.md 4.1)			*/
+	uint16_t	version;		/* Of every block: 1, or 2 with PARITY blocks	*/
 	uint64_t	maxvolblk;		/* Blocks in a volume, 0 - one volume		*/
 
 	uint8_t		ssuuid [VBK$K_UUIDSZ];
@@ -127,6 +135,8 @@ typedef struct vbk_wctx_t
 	uint8_t *	aux;			/* XOR, VHDR and TRAILER blocks are built here	*/
 
 	uint8_t *	xor;			/* XOR of the payloads of the current group	*/
+	uint8_t *	par;			/* Rows 1 .. parity - 1 of it, psize each	*/
+	uint8_t		hpar [8] [8];		/* The header parity of every row (4.1)		*/
 	uint32_t	gcnt;			/* DATA blocks in the current group		*/
 	uint32_t	prvrecoff, prvpaylen;	/* Of the previous DATA block of the group	*/
 

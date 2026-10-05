@@ -29,6 +29,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-14 : /PARITY: three bad blocks of a group rebuilt, four
+#					lost, version 2, /TRANSFER, the refusals; vbkx.
+#
 #		 5-OCT-2026	RRL	X-13 : /LIST/FULL glued, a listing.
 #
 #		 5-OCT-2026	RRL	X-11 : Volumes through a pipe; a saveset copied block for
@@ -756,6 +759,37 @@ if [ -n "$VBKX" ]; then
 	check '[ $? = 2 ] && grep -q "does not open" exb.log' "vbkx with a wrong passphrase: $(head -1 exb.log)"
 	VBACKUP_KEY_FILE=$S/key $VBKX t e2.bck > ext.log 2>&1
 	check '[ $? = 0 ] && grep -q "Block: .* - is not what was written" ext.log' "vbkx t of the forged saveset: $(head -2 ext.log)"
+fi
+
+#
+#	16. /PARITY (format.md 4.1): three parity blocks a group - three bad blocks of
+#	one group rebuilt, four lost; version 2, refused by name where it is not meant
+#
+$VB src/tree par3.bck /BLOCK_SIZE=8192 /GROUP_SIZE=4 /PARITY=3 > par3.log 2>&1
+check '[ $? = 0 ] && [ "$(od -An -tu2 -j6 -N2 par3.bck | tr -d " ")" = 2 ]' "/PARITY=3: no saveset of version 2: $(head -2 par3.log)"
+$VB par3.bck /LIST > par3.lst 2>&1
+check 'grep -q "^Parity:            3 blocks a group" par3.lst' "/PARITY=3: the listing does not say it"
+python3 -c "
+import sys; d=bytearray(open('par3.bck','rb').read())
+for k in (8, 9, 10): d[k*8192+100]^=0x55
+open('par3z.bck','wb').write(d)
+d[11*8192+100]^=0x55
+open('par4z.bck','wb').write(d)"
+rm -rf par3r; $VB par3z.bck par3r > par3r.log 2>&1
+check '[ $? = 0 ] && [ "$(grep -c BLKFIXED par3r.log)" = 3 ] && [ "$(state src/tree)" = "$(state par3r/tree)" ]' "/PARITY=3, three bad in a group: not rebuilt: $(grep -v BLKFIXED par3r.log | head -2)"
+rm -rf par4r; $VB par4z.bck par4r > par4r.log 2>&1
+check '[ $? != 0 ] && [ "$(grep -c BLKLOST par4r.log)" = 4 ]' "/PARITY=3, four bad in a group: not said lost"
+$VB par3.bck par3t.bck > par3t.log 2>&1
+check '[ $? = 0 ] && cmp -s par3.bck par3t.bck' "/PARITY=3: /TRANSFER is not byte for byte"
+$VB src/tree par1.bck /PARITY=1 > par1.log 2>&1
+check '[ "$(od -An -tu2 -j6 -N2 par1.bck | tr -d " ")" = 1 ]' "/PARITY=1 is not a saveset of version 1"
+$VB src/tree parx.bck /GROUP_SIZE=0 /PARITY=2 > parx.log 2>&1
+check '[ $? = 2 ] && grep -q "QUALUSE, Qualifier: /PARITY" parx.log && [ ! -e parx.bck ]' "/PARITY=2 /GROUP_SIZE=0 not refused"
+$VB src/tree parx.bck /PARITY=9 > parx.log 2>&1
+check '[ $? = 2 ] && grep -q "IVQUAL, Value: 9, Qualifier: /PARITY" parx.log' "/PARITY=9 not refused"
+if [ -n "$VBKX" ]; then
+	rm -rf par3x; $VBKX x par3z.bck -C par3x > par3x.log 2>&1
+	check '[ $? = 0 ] && cmp -s src/tree/big.bin par3x/tree/big.bin && cmp -s src/tree/sub/rand.bin par3x/tree/sub/rand.bin' "vbkx, /PARITY=3, three bad in a group: $(head -2 par3x.log)"
 fi
 
 

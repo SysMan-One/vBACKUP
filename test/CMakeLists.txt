@@ -8,6 +8,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-14 : damage.sh and smoke.sh with /PARITY.
+#
 #		 5-OCT-2026	RRL	X-13 : VMS, the savesets of OpenVMS BACKUP.
 #
 #		 4-OCT-2026	RRL	X-05 : WCX, the WCX plugin natively; WCXWIN, its Windows
