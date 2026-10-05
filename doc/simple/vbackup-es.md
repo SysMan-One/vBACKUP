@@ -58,7 +58,7 @@ Reglas importantes:
 - Un calificador pegado al nombre también funciona: `box.sav/sav/log`. Entonces VBACKUP dice `GLUED`.
 - Los espacios entre las partes de la orden son necesarios. No los quites.
 - Las mayúsculas y las minúsculas importan: `/home/ivan` y `/Home/Ivan` son distintos.
-- Si no aparece nada como respuesta, está bien. Quiere decir que funcionó.
+- Al final VBACKUP escribe `completed`. Está bien. Quiere decir que funcionó.
 
 En los ejemplos:
 
@@ -81,30 +81,33 @@ vbackup /home/ivan /mnt/usb/ivan.bck /LOG /VERIFY
 ```
 
 `/LOG` muestra cada archivo. `/VERIFY` revisa la caja enseguida.
-Puedes no ponerlos; entonces VBACKUP trabaja en silencio.
+Puedes no ponerlos; entonces VBACKUP muestra solo el principio, el total y el final.
 
 **Qué verás:**
 
 ```
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-CREATED, /mnt/usb/ivan.bck created
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, ivan saved
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, ivan/letters saved
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, ivan/letters/anna.txt saved
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, ivan/photos saved
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, ivan/photos/cat.jpg saved
-04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, ivan/photos/dog.jpg saved
-04-10-2026 12:59:32.288 2278116 %VBACKUP-I-SAVESUMM, 6 files, 50010 bytes saved in 4 blocks and 1 volume
-04-10-2026 12:59:32.288 2278116 %VBACKUP-I-VERIFYING, verifying /mnt/usb/ivan.bck
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-STARTED, Operation: save, Input: /home/ivan, Output: /mnt/usb/ivan.bck - started
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-CREATED, Volume: /mnt/usb/ivan.bck - created
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, File: ivan - saved
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, File: ivan/letters - saved
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, File: ivan/letters/anna.txt - saved
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, File: ivan/photos - saved
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, File: ivan/photos/cat.jpg - saved
+04-10-2026 12:59:32.284 2278116 %VBACKUP-I-SAVED, File: ivan/photos/dog.jpg - saved
+04-10-2026 12:59:32.288 2278116 %VBACKUP-I-SAVESUMM, Files: 6, Bytes: 50010, Blocks: 4, Volumes: 1 - saved
+04-10-2026 12:59:32.288 2278116 %VBACKUP-I-VERIFYING, Saveset: /mnt/usb/ivan.bck - verifying
 ...
-04-10-2026 12:59:32.292 2278116 %VBACKUP-I-CMPSUMM, 6 files compared, 0 differences
+04-10-2026 12:59:32.292 2278116 %VBACKUP-I-CMPSUMM, Files: 6, Differences: 0 - compared
+04-10-2026 12:59:32.292 2278116 %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.01 - completed
 ```
 
 **Qué quiere decir:**
 
 - El principio de cada línea es la fecha, la hora y un número. Puedes no mirarlo.
+- `started` y `completed` — el trabajo empezó y terminó. `completed` quiere decir que todo salió bien.
 - `saved` — el archivo está en la caja.
-- `6 files ... saved` — en total se guardaron 6 cosas.
-- `0 differences` — la caja está revisada y todo coincide. ¡Muy bien!
+- `Files: 6 ... saved` — en total se guardaron 6 cosas.
+- `Differences: 0` — la caja está revisada y todo coincide. ¡Muy bien!
 
 **¿Memoria USB pequeña o vieja (FAT32)?** Corta la caja en trozos de 4 GB:
 
@@ -162,13 +165,15 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored /LOG
 **Qué verás:**
 
 ```
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, /home/ivan/restored/ivan restored
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, /home/ivan/restored/ivan/letters restored
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, /home/ivan/restored/ivan/letters/anna.txt restored
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, /home/ivan/restored/ivan/photos restored
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, /home/ivan/restored/ivan/photos/cat.jpg restored
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, /home/ivan/restored/ivan/photos/dog.jpg restored
-04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTSUMM, 6 files, 50010 bytes restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/ivan.bck, Output: /home/ivan/restored - started
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, File: /home/ivan/restored/ivan - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, File: /home/ivan/restored/ivan/letters - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, File: /home/ivan/restored/ivan/letters/anna.txt - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, File: /home/ivan/restored/ivan/photos - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, File: /home/ivan/restored/ivan/photos/cat.jpg - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTORED, File: /home/ivan/restored/ivan/photos/dog.jpg - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-RESTSUMM, Files: 6, Bytes: 50010 - restored
+04-10-2026 12:59:40.265 2279186 %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.00 - completed
 ```
 
 **Qué quiere decir:**
@@ -194,7 +199,14 @@ Por ejemplo: `ivan/letters/anna.txt`.
 vbackup /mnt/usb/ivan.bck /EXTRACT=ivan/letters/anna.txt /home/ivan/anna.txt
 ```
 
-**Qué verás:** nada. Está bien. El archivo ya está en `/home/ivan/anna.txt`.
+**Qué verás:**
+
+```
+04-10-2026 12:59:45.611 2281302 %VBACKUP-I-STARTED, Operation: extract, Input: /mnt/usb/ivan.bck, Output: /home/ivan/anna.txt - started
+04-10-2026 12:59:45.611 2281302 %VBACKUP-I-COMPLETED, Operation: extract, Seconds: 0.00 - completed
+```
+
+Está bien. El archivo ya está en `/home/ivan/anna.txt`.
 
 También puedes ver el archivo en la pantalla, sin guardarlo:
 
@@ -203,13 +215,15 @@ vbackup /mnt/usb/ivan.bck /EXTRACT=ivan/letters/anna.txt
 ```
 
 ```
+04-10-2026 12:59:47.204 2281449 %VBACKUP-I-STARTED, Operation: extract, Input: /mnt/usb/ivan.bck - started
 Dear Anna
+04-10-2026 12:59:47.204 2281449 %VBACKUP-I-COMPLETED, Operation: extract, Seconds: 0.00 - completed
 ```
 
 Si el nombre está mal, verás:
 
 ```
-04-10-2026 12:59:49.082 2281596 %VBACKUP-E-NOTFOUND, ivan/letters/nope.txt is not in the saveset
+04-10-2026 12:59:49.082 2281596 %VBACKUP-E-NOTFOUND, File: ivan/letters/nope.txt - is not in the saveset
 ```
 
 Quiere decir: ese archivo no está en la caja. Revisa el nombre en la lista (parte 2).
@@ -227,7 +241,10 @@ vbackup /home/ivan /mnt/usb/full.bck /RECORD
 ```
 
 ```
-04-10-2026 13:00:01.552 2284063 %VBACKUP-I-RECORDED, 3 files recorded in the journal /var/lib/vbackup/vbackup.jnl
+04-10-2026 13:00:01.548 2284063 %VBACKUP-I-STARTED, Operation: save, Input: /home/ivan, Output: /mnt/usb/full.bck - started
+04-10-2026 13:00:01.552 2284063 %VBACKUP-I-SAVESUMM, Files: 4, Bytes: 1842, Blocks: 4, Volumes: 1 - saved
+04-10-2026 13:00:01.552 2284063 %VBACKUP-I-RECORDED, Files: 3, Journal: /var/lib/vbackup/vbackup.jnl - recorded
+04-10-2026 13:00:01.552 2284063 %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.01 - completed
 ```
 
 `/RECORD` quiere decir: recuerda lo que está guardado. VBACKUP tiene un cuaderno para esto: el «diario».
@@ -239,7 +256,11 @@ vbackup /home/ivan /mnt/usb/mon.bck /SINCE=BACKUP /RECORD
 ```
 
 ```
-04-10-2026 13:00:03.289 2284360 %VBACKUP-I-RECORDED, 1 file recorded in the journal /var/lib/vbackup/vbackup.jnl
+04-10-2026 13:00:03.285 2284360 %VBACKUP-I-STARTED, Operation: save, Input: /home/ivan, Output: /mnt/usb/mon.bck - started
+04-10-2026 13:00:03.289 2284360 %VBACKUP-I-SAVESUMM, Files: 2, Bytes: 120, Blocks: 4, Volumes: 1 - saved
+04-10-2026 13:00:03.289 2284360 %VBACKUP-I-INCRSUMM, Files: 2 - unchanged, listed as present, not saved
+04-10-2026 13:00:03.289 2284360 %VBACKUP-I-RECORDED, Files: 1, Journal: /var/lib/vbackup/vbackup.jnl - recorded
+04-10-2026 13:00:03.289 2284360 %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.01 - completed
 ```
 
 El diario es un cuaderno donde VBACKUP recuerda lo que ya guardó.
@@ -258,8 +279,9 @@ vbackup /mnt/usb/full.bck,/mnt/usb/mon.bck,/mnt/usb/tue.bck /home/ivan/restored 
 **Qué verás (el final):**
 
 ```
-04-10-2026 13:00:05.792 2284835 %VBACKUP-I-DELETED, /home/ivan/restored/ivan/photos/dog.jpg deleted: it is not in the incremental saveset
-04-10-2026 13:00:05.792 2284835 %VBACKUP-I-RESTSUMM, 13 files, 50021 bytes restored
+04-10-2026 13:00:05.792 2284835 %VBACKUP-I-DELETED, File: /home/ivan/restored/ivan/photos/dog.jpg - deleted: it is not in the incremental saveset
+04-10-2026 13:00:05.792 2284835 %VBACKUP-I-RESTSUMM, Files: 13, Bytes: 50021 - restored
+04-10-2026 13:00:05.792 2284835 %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.02 - completed
 ```
 
 **Qué quiere decir:**
@@ -281,13 +303,23 @@ Recuerda: sin espacios después de las comas.
 vbackup /home/ivan /mnt/disk2 /VERIFY
 ```
 
-**Qué verás:** nada. Está bien. La carpeta ahora también está aquí: `/mnt/disk2/ivan`.
+**Qué verás:**
+
+```
+04-10-2026 13:00:12.410 2285890 %VBACKUP-I-STARTED, Operation: copy, Input: /home/ivan, Output: /mnt/disk2 - started
+04-10-2026 13:00:12.418 2285890 %VBACKUP-I-CPYSUMM, Files: 6, Bytes: 20021 - copied
+04-10-2026 13:00:12.418 2285890 %VBACKUP-I-COMPLETED, Operation: copy, Seconds: 0.01 - completed
+```
+
+Está bien. La carpeta ahora también está aquí: `/mnt/disk2/ivan`.
 
 Con `/LOG`, VBACKUP muestra cada archivo:
 
 ```
-04-10-2026 13:00:14.232 2286104 %VBACKUP-I-COPIED, /mnt/disk2/ivan/photos/cat.jpg copied
-04-10-2026 13:00:14.232 2286104 %VBACKUP-I-CPYSUMM, 6 files, 20021 bytes copied
+...
+04-10-2026 13:00:14.232 2286104 %VBACKUP-I-COPIED, File: /mnt/disk2/ivan/photos/cat.jpg - copied
+04-10-2026 13:00:14.232 2286104 %VBACKUP-I-CPYSUMM, Files: 6, Bytes: 20021 - copied
+04-10-2026 13:00:14.232 2286104 %VBACKUP-I-COMPLETED, Operation: copy, Seconds: 0.01 - completed
 ```
 
 `copied` — el archivo está copiado.
@@ -304,7 +336,7 @@ Con `/LOG`, VBACKUP muestra cada archivo:
 vbackup /home/ivan /mnt/usb/ivan.bck /DATA_FORMAT=COMPRESSED
 ```
 
-**Qué verás:** nada. Eso es bueno. La caja está lista, y es más pequeña.
+**Qué verás:** el principio, el total y `completed`, como en la parte 1. La caja está lista, y es más pequeña.
 
 Compara la misma carpeta sin y con compresión:
 
@@ -453,7 +485,10 @@ vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL
 **Qué verás:**
 
 ```
-%VBACKUP-I-PHYSSUMM, /dev/sdb1: 67108864 bytes, 1507328 of them data, the rest zeros
+%VBACKUP-I-STARTED, Operation: save, Input: /dev/sdb1, Output: /mnt/usb/sdb1.bck - started
+%VBACKUP-I-PHYSSUMM, Device: /dev/sdb1, Bytes: 67108864, Data: 1507328 - the rest zeros
+%VBACKUP-I-SAVESUMM, Files: 1, Bytes: 1507328, Blocks: 29, Volumes: 1 - saved
+%VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.35 - completed
 ```
 
 **Qué significa:** se guardó un disco de 64 MB. Tenía 1,5 MB de datos de
@@ -469,6 +504,7 @@ vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
 VBACKUP pregunta:
 
 ```
+%VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/sdb1.bck, Output: /dev/sdc1 - started
 Everything on /dev/sdc1 (134217728 bytes) is to be overwritten with the device saved in /mnt/usb/sdb1.bck.
 Type YES to go on:
 ```
@@ -478,9 +514,10 @@ Escribe `YES` en mayúsculas y pulsa Enter. Cualquier otra respuesta es «no».
 **Qué verás:**
 
 ```
-%VBACKUP-I-PHYSLARGER, /dev/sdc1 holds 134217728 bytes, the device saved held 67108864: the rest stays as it is, the file system keeps its old size
-%VBACKUP-I-PHYSUUID, /dev/sdc1 now carries the labels and UUIDs of the device saved: never mount it beside the original
-%VBACKUP-I-PHYSSUMM, /dev/sdc1: 67108864 bytes, 1507328 of them data, the rest zeros
+%VBACKUP-I-PHYSLARGER, Device: /dev/sdc1, Bytes: 134217728, Saved: 67108864 - larger: the rest stays as it is, the file system keeps its old size
+%VBACKUP-I-PHYSUUID, Device: /dev/sdc1 - now carries the labels and UUIDs of the device saved: never mount it beside the original
+%VBACKUP-I-PHYSSUMM, Device: /dev/sdc1, Bytes: 67108864, Data: 1507328 - the rest zeros
+%VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.41 - completed
 ```
 
 **Qué significa:**
@@ -512,7 +549,13 @@ Esto también lo hace solo **root**.
 vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
 ```
 
-**Qué verás:** nada. Eso es bueno.
+**Qué verás:**
+
+```
+%VBACKUP-I-STARTED, Operation: save, Input: /mnt/photos, Output: /mnt/usb/photos.bck - started
+%VBACKUP-I-SAVESUMM, Files: 11, Bytes: 760000, Blocks: 16, Volumes: 1 - saved
+%VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.09 - completed
+```
 
 **Crear el disco de nuevo en `/dev/sdc1`.** ¡Esto **borra todo** en `/dev/sdc1`!
 
@@ -523,8 +566,10 @@ vbackup /mnt/usb/photos.bck /dev/sdc1 /IMAGE /REPLACE
 **Qué verás:**
 
 ```
-%VBACKUP-I-PHYSUUID, /dev/sdc1 now carries the labels and UUIDs of the device saved: never mount it beside the original
-%VBACKUP-I-IMGSUMM, /dev/sdc1: a ext4 file system made, 11 files, 760000 bytes restored
+%VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/photos.bck, Output: /dev/sdc1 - started
+%VBACKUP-I-PHYSUUID, Device: /dev/sdc1 - now carries the labels and UUIDs of the device saved: never mount it beside the original
+%VBACKUP-I-IMGSUMM, Device: /dev/sdc1, Type: ext4, Files: 11, Bytes: 760000 - file system made, files restored
+%VBACKUP-I-COMPLETED, Operation: restore, Seconds: 1.27 - completed
 ```
 
 **Qué significa:** en `/dev/sdc1` se hizo un disco nuevo del mismo tipo (ext4)
@@ -610,19 +655,23 @@ Para reemplazarlo, añade `-f`.
 
 ## 12. Si algo salió mal
 
-Un mensaje se ve así: `%VBACKUP-E-NOMBRE, texto`.
+Un mensaje se ve así: `%VBACKUP-E-NOMBRE, File: nombre - texto`.
+Primero dice de qué se trata (un archivo, una caja, un disco), luego qué pasó.
 La letra después de `VBACKUP-` te dice lo grave que es:
 
 - `I` — solo informa. Todo va bien.
 - `W` — un aviso. Mira con atención.
 - `E` o `F` — un error. Algo no se hizo.
 
+La última línea, `COMPLETED`, dice cómo fue todo: `completed` — todo va bien;
+`completed with warnings` — mira con atención; `completed with errors` — algo no se hizo.
+
 ### FILEEXISTS
 
 **Qué ves:**
 
 ```
-%VBACKUP-W-FILEEXISTS, /home/ivan/restored/ivan/letters/anna.txt already exists, not restored
+%VBACKUP-W-FILEEXISTS, File: /home/ivan/restored/ivan/letters/anna.txt - already exists, not restored
 ```
 
 **Qué pasó:** ese archivo ya está ahí. VBACKUP lo cuida y no lo toca.
@@ -639,12 +688,12 @@ o reemplaza los archivos viejos (¡con cuidado!):
 vbackup /mnt/usb/ivan.bck /home/ivan/restored /REPLACE
 ```
 
-### OPENOUT … errno=17 (File exists)
+### OPENOUT … errno: 17 (File exists)
 
 **Qué ves:**
 
 ```
-%VBACKUP-E-OPENOUT, error creating /mnt/usb/ivan.bck as output, errno=17 (File exists)
+%VBACKUP-E-OPENOUT, File: /mnt/usb/ivan.bck, errno: 17 - cannot be created as output (File exists)
 ```
 
 **Qué pasó:** ya hay una caja con ese nombre.
@@ -666,7 +715,7 @@ vbackup /home/ivan /mnt/usb/ivan.bck /REPLACE
 **Qué ves:**
 
 ```
-%VBACKUP-E-NOTSAVESET, /mnt/usb/fake.bck is not a saveset
+%VBACKUP-E-NOTSAVESET, File: /mnt/usb/fake.bck - is not a saveset
 ```
 
 **Qué pasó:** este archivo no es una caja de VBACKUP.
@@ -677,22 +726,27 @@ vbackup /home/ivan /mnt/usb/ivan.bck /REPLACE
 ls /mnt/usb
 ```
 
+### OPENIN … errno: 2 (No such file or directory)
+
+**Qué ves:**
+
+```
+%VBACKUP-E-OPENIN, File: /mnt/usb/nosuch.bck, errno: 2 - cannot be opened as input (No such file or directory)
+```
+
+**Qué pasó:** ese archivo no existe (una errata en el nombre).
+
+**Qué hacer:** revisa el nombre con `ls /mnt/usb`.
+
 ### NOPARAM
 
 **Qué ves:**
 
 ```
-%VBACKUP-E-NOPARAM, missing parameter: input specification - it does not exist
+%VBACKUP-E-NOPARAM, Parameter: output specification - is missing
 ```
 
-o
-
-```
-%VBACKUP-E-NOPARAM, missing parameter: output specification
-```
-
-**Qué pasó:** en el primer caso, ese archivo no existe (una errata en el nombre).
-En el segundo, pediste `/LIST`, pero el archivo no es una caja; VBACKUP pensó
+**Qué pasó:** pediste `/LIST`, pero el archivo no es una caja; VBACKUP pensó
 que querías guardar algo y no dijiste dónde.
 
 **Qué hacer:** revisa el nombre con `ls /mnt/usb`.
@@ -702,7 +756,7 @@ que querías guardar algo y no dijiste dónde.
 **Qué ves:**
 
 ```
-%VBACKUP-E-IVOP, cannot tell what to do: the input does not exist
+%VBACKUP-E-IVOP, cannot tell what to do: the input does not exist - and for a save the output must be named .bck or .sav, or /SAVE_SET given
 ```
 
 **Qué pasó:** lo primero que escribiste no existe. Seguramente es una errata.
@@ -721,7 +775,7 @@ O añade `/SAVE_SET`.
 **Qué ves:**
 
 ```
-%VBACKUP-E-MAXPARM, too many parameters: .log - only an input and an output are taken; a qualifier begins with /
+%VBACKUP-E-MAXPARM, Parameter: .log - one too many: only an input and an output are taken; a qualifier begins with /
 ```
 
 **Qué pasó:** demasiadas palabras. Seguramente escribiste `.log` en vez de `/LOG`.
@@ -737,7 +791,7 @@ vbackup /home/ivan /mnt/usb/ivan.bck /LOG
 **Qué ves:**
 
 ```
-%VBACKUP-I-GLUED, box.sav/sav: the qualifiers glued to it are taken as qualifiers
+%VBACKUP-I-GLUED, Parameter: box.sav/sav - the qualifiers glued to it are taken as qualifiers
 ```
 
 **Qué pasó:** solo informa. `box.sav/sav` se entendió como `box.sav /SAVE_SET`.
@@ -749,7 +803,7 @@ vbackup /home/ivan /mnt/usb/ivan.bck /LOG
 **Qué ves:**
 
 ```
-%VBACKUP-I-BLKFIXED, block 3 of volume 1 was bad and has been rebuilt from its group
+%VBACKUP-I-BLKFIXED, Block: 3, Volume: 1 - was bad, rebuilt from its group
 ```
 
 **Qué pasó:** un trocito de la caja estaba roto, pero VBACKUP lo arregló solo.
@@ -763,7 +817,7 @@ Pronto haz una caja nueva en otra memoria USB.
 **Qué ves:**
 
 ```
-%VBACKUP-W-BLKFORGED, block 3 of volume 1 is not what was written: its CRC is right, its authentication fails
+%VBACKUP-W-BLKFORGED, Block: 3, Volume: 1 - is not what was written: its CRC is right, its authentication fails
 ```
 
 **Qué pasó:** alguien cambió un trocito de una caja cerrada **a propósito**.
@@ -779,9 +833,9 @@ Guarda tus cajas donde nadie más pueda cambiarlas.
 **Qué ves:**
 
 ```
-%VBACKUP-E-BLKLOST, block 3 of volume 1 is bad and cannot be rebuilt
-%VBACKUP-E-BLKLOST, block 4 of volume 1 is bad and cannot be rebuilt
-%VBACKUP-E-FILDAMAGED, /home/ivan/restored/ivan/photo1.jpg is incomplete: its data was lost in bad blocks
+%VBACKUP-E-BLKLOST, Block: 3, Volume: 1 - is bad and cannot be rebuilt
+%VBACKUP-E-BLKLOST, Block: 4, Volume: 1 - is bad and cannot be rebuilt
+%VBACKUP-E-FILDAMAGED, File: /home/ivan/restored/ivan/photo1.jpg - is incomplete: its data was lost in bad blocks
 ```
 
 **Qué pasó:** una parte de la caja está rota y no se pudo arreglar.
@@ -795,7 +849,7 @@ La próxima vez haz dos cajas en dos memorias USB distintas.
 **Qué ves:**
 
 ```
-%VBACKUP-E-FILLOST, /home/ivan/restored/ivan/photo10.jpg was not restored: its records were lost in bad blocks
+%VBACKUP-E-FILLOST, File: /home/ivan/restored/ivan/photo10.jpg - not restored: its records were lost in bad blocks
 ```
 
 **Qué pasó:** este archivo se perdió con el trozo roto. No está en absoluto.
@@ -811,7 +865,7 @@ vbackup /mnt/usb/old.bck /LIST
 **Qué ves:**
 
 ```
-%VBACKUP-W-UNNAMED, /mnt/usb/ivan.bck: blocks were lost and it has no catalog - files missing from the restore cannot all be named
+%VBACKUP-W-UNNAMED, Saveset: /mnt/usb/ivan.bck - blocks were lost and it has no catalog: files missing from the restore cannot all be named
 ```
 
 **Qué pasó:** la caja está rota y su «índice» también se perdió.
@@ -828,7 +882,7 @@ vbackup /mnt/usb/old.bck /LIST
 **Qué ves:**
 
 ```
-%VBACKUP-E-MISSVOL, volume 2 of /mnt/usb/ivan.bck is missing
+%VBACKUP-E-MISSVOL, Volume: 2, Saveset: /mnt/usb/ivan.bck - is missing
 ```
 
 **Qué pasó:** la caja se cortó en trozos y falta uno
@@ -846,7 +900,7 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 **Qué ves:**
 
 ```
-%VBACKUP-W-NOTRAILER, /mnt/usb/ivan.bck has no trailer: the save did not complete, or its last volume is missing
+%VBACKUP-W-NOTRAILER, Saveset: /mnt/usb/ivan.bck - has no trailer: the save did not complete, or its last volume is missing
 ```
 
 **Qué pasó:** el guardado no terminó (se fue la luz, el disco se llenó)
@@ -860,7 +914,7 @@ Después haz la caja otra vez.
 **Qué ves:**
 
 ```
-%VBACKUP-E-NOTINCR, /mnt/usb/ivan.bck: it has no catalog, nothing restored with /INCREMENTAL
+%VBACKUP-E-NOTINCR, Saveset: /mnt/usb/ivan.bck - it has no catalog: nothing restored with /INCREMENTAL
 ```
 
 **Qué pasó:** `/INCREMENTAL` necesita una caja entera con «índice». Esta no lo tiene.
@@ -876,7 +930,7 @@ vbackup /mnt/usb/ivan.bck /home/ivan/restored
 **Qué ves:**
 
 ```
-%VBACKUP-E-WRONGKEY, the passphrase does not open /mnt/usb/ivan.bck
+%VBACKUP-E-WRONGKEY, Saveset: /mnt/usb/ivan.bck - the passphrase does not open it
 ```
 
 **Qué pasó:** la contraseña no es la correcta. No se escribió nada.
@@ -893,7 +947,7 @@ head -1 /root/backup.key
 **Qué ves:**
 
 ```
-%VBACKUP-E-NOKEY, /mnt/usb/ivan.bck needs a passphrase and there is no terminal to ask it on: give /KEY_FILE=file or VBACKUP_KEY_FILE
+%VBACKUP-E-NOKEY, Saveset: /mnt/usb/ivan.bck - needs a passphrase, and there is no terminal to ask it on: give /KEY_FILE=file or VBACKUP_KEY_FILE
 ```
 
 **Qué pasó:** la caja está cerrada y no hay dónde pedir la contraseña
@@ -916,7 +970,7 @@ export VBACKUP_KEY_FILE=/root/backup.key
 **Qué ves:**
 
 ```
-%VBACKUP-E-KEYFILE, passphrase from /root/backup.key: others may read or change it - chmod 600 it
+%VBACKUP-E-KEYFILE, Key file: /root/backup.key - others may read or change it - chmod 600 it
 ```
 
 **Qué pasó:** otras personas pueden leer el archivo de clave. VBACKUP no se fía de él.
@@ -947,7 +1001,7 @@ Entonces escribe la contraseña en él otra vez (sección 8).
 **Qué ves:**
 
 ```
-%VBACKUP-E-PHYSMOUNTED, /dev/sdb1 is mounted read-write on /mnt/photos: unmount it, mount it read-only, or save a snapshot
+%VBACKUP-E-PHYSMOUNTED, Device: /dev/sdb1 - is mounted read-write on /mnt/photos: unmount it, mount it read-only, or save a snapshot
 ```
 
 **Qué pasó:** el disco está conectado y se puede escribir en él. La copia saldría rota.
@@ -967,7 +1021,7 @@ disco conectado. Desconéctalo.
 **Qué ves:**
 
 ```
-%VBACKUP-E-PHYSHELD, /dev/sdb2 is in use (swap): free it first, or save what uses it
+%VBACKUP-E-PHYSHELD, Device: /dev/sdb2 - is in use (swap): free it first, or save what uses it
 ```
 
 **Qué pasó:** el propio sistema usa este disco (swap, LVM, RAID, cifrado).
@@ -979,7 +1033,7 @@ disco conectado. Desconéctalo.
 **Qué ves:**
 
 ```
-%VBACKUP-E-PHYSREPLACE, /dev/sdc1 is a device: everything on it is overwritten - give /REPLACE to do so
+%VBACKUP-E-PHYSREPLACE, Device: /dev/sdc1 - everything on it would be overwritten: give /REPLACE to do so
 ```
 
 **Qué pasó:** VBACKUP protege el disco: sin `/REPLACE` no lo borra.
@@ -991,7 +1045,7 @@ disco conectado. Desconéctalo.
 **Qué ves:**
 
 ```
-%VBACKUP-E-PHYSSMALL, /dev/sdc1 holds 33554432 bytes, the device saved held 67108864: nothing written
+%VBACKUP-E-PHYSSMALL, Device: /dev/sdc1, Bytes: 33554432, Saved: 67108864 - too small, nothing written
 ```
 
 **Qué pasó:** el disco nuevo es más pequeño que el guardado. No cabe todo.
@@ -1003,7 +1057,7 @@ disco conectado. Desconéctalo.
 **Qué ves:**
 
 ```
-%VBACKUP-E-PHYSABORT, /dev/sdc1 not overwritten: the answer was not YES
+%VBACKUP-E-PHYSABORT, Device: /dev/sdc1 - not overwritten: the answer was not YES
 ```
 
 **Qué pasó:** no contestaste `YES`. No se borró nada.
@@ -1015,7 +1069,7 @@ disco conectado. Desconéctalo.
 **Qué ves:**
 
 ```
-%VBACKUP-E-IMGNOTVOL, /home/ivan is neither the mount point of a file system nor a device: /IMAGE saves a whole volume
+%VBACKUP-E-IMGNOTVOL, File: /home/ivan - is neither the mount point of a file system nor a device: /IMAGE saves a whole volume
 ```
 
 **Qué pasó:** `/IMAGE` guarda un disco entero, y tú diste una carpeta normal.
@@ -1028,7 +1082,7 @@ o guarda la carpeta de la forma normal (sección 1).
 **Qué ves:**
 
 ```
-%VBACKUP-E-IMGNOTMNT, /dev/sdb1 is not mounted: mount it (read-only is enough) and give the mount point or the device
+%VBACKUP-E-IMGNOTMNT, Device: /dev/sdb1 - is not mounted: mount it (read-only is enough) and give the mount point or the device
 ```
 
 **Qué pasó:** el disco no está conectado: VBACKUP no puede leer sus archivos.
@@ -1045,7 +1099,7 @@ vbackup /mnt/photos /mnt/usb/photos.bck /IMAGE
 **Qué ves:**
 
 ```
-%VBACKUP-E-IMGUNSUPP, /mnt/usb/old.bck: VBACKUP does not make a file system of type minix - use /PHYSICAL for it
+%VBACKUP-E-IMGUNSUPP, Saveset: /mnt/usb/old.bck, Type: minix - VBACKUP does not make such a file system: use /PHYSICAL for it
 ```
 
 **Qué pasó:** VBACKUP no sabe crear un disco de ese tipo.
@@ -1058,7 +1112,7 @@ O saca de la caja solo los archivos (sección 3).
 **Qué ves** (por ejemplo):
 
 ```
-%VBACKUP-E-IMGMKFS, mkfs.xfs -f -q -L PHOTOS /dev/sdc1 failed: the program is not installed
+%VBACKUP-E-IMGMKFS, Command: mkfs.xfs -f -q -L PHOTOS /dev/sdc1 - failed: the program is not installed
 ```
 
 **Qué pasó:** no se pudo crear el disco nuevo. Casi siempre falta el programa.
@@ -1070,7 +1124,7 @@ O saca de la caja solo los archivos (sección 3).
 **Qué ves:**
 
 ```
-%VBACKUP-E-IMGSMALL, /dev/sdc1 holds 8388608 bytes, the files need about 17596518: nothing written
+%VBACKUP-E-IMGSMALL, Device: /dev/sdc1, Bytes: 8388608, Needed: 17596518 - too small, nothing written
 ```
 
 **Qué pasó:** los archivos no caben en este disco.

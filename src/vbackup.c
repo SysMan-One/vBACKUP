@@ -1014,6 +1014,10 @@ size_t		l_cmdlen = 0;
 	else if ( l_opts.output [0] && (l_status != STS$K_ERROR) )
 		l_opts.op	= VBACKUP$K_OP_COPY;
 
+	/* /LIST of a file that is no saveset, and no output: that is what it is, not a missing output */
+	if ( (l_opts.op == VBACKUP$K_OP_NONE) && l_list && !l_opts.output [0] && (l_status == STS$K_WARN) )
+		l_opts.op	= VBACKUP$K_OP_LIST;
+
 	if ( (l_opts.op == VBACKUP$K_OP_EXTRACT) || (l_opts.op == VBACKUP$K_OP_COMPARE) || (l_opts.op == VBACKUP$K_OP_LIST) )
 		if ( (l_status != STS$K_SUCCESS) || (l_opts.ninput != 1) )
 			{
