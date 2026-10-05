@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKIMG"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -43,6 +43,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		Every text made by FAO; the UUID of an ext superblock by !%U.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
@@ -184,7 +187,7 @@ struct dirent *	l_de;
 struct stat	l_st;
 int		l_found = 0;
 
-	snprintf(l_dir, sizeof(l_dir), "/dev/disk/%s", a_kind);
+	$VBKFAOB(l_dir, sizeof(l_dir), "/dev/disk/!AZ", a_kind);
 
 	if ( !(l_d = opendir(l_dir)) )
 		return	0;
@@ -194,7 +197,7 @@ int		l_found = 0;
 		if ( l_de->d_name [0] == '.' )
 			continue;
 
-		if ( (snprintf(l_path, sizeof(l_path), "%s/%s", l_dir, l_de->d_name) < (int) sizeof(l_path))
+		if ( ($VBKFAOB(l_path, sizeof(l_path), "!AZ/!AZ", l_dir, l_de->d_name) < (int) sizeof(l_path))
 			&& !stat(l_path, &l_st) && S_ISBLK(l_st.st_mode) && (l_st.st_rdev == a_dev) )
 			{
 			vbk$strcpy(a_outsz, a_out, l_de->d_name);
@@ -231,11 +234,10 @@ int	l_fd;
 		const uint8_t *	u = l_sb + 0x68;
 
 		if ( !a_uuid [0] )
-			snprintf(a_uuid, a_usz, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-				u [0], u [1], u [2], u [3], u [4], u [5], u [6], u [7], u [8], u [9], u [10], u [11], u [12], u [13], u [14], u [15]);
+			$VBKFAOB(a_uuid, a_usz, "!%U", u);
 
 		if ( !a_label [0] )
-			snprintf(a_label, a_lsz, "%.*s", (int) strnlen((const char *) l_sb + 0x78, 16), (const char *) l_sb + 0x78);
+			$VBKFAOB(a_label, a_lsz, "!AD", strnlen((const char *) l_sb + 0x78, 16), l_sb + 0x78);
 		}
 
 	close(l_fd);
@@ -286,12 +288,12 @@ int		l_status;
 
 	vbk$strcpy(sizeof(a_opts->imgmnt), a_opts->imgmnt, l_mnt.point);
 	vbk$strcpy(sizeof(a_opts->imgfstype), a_opts->imgfstype, l_mnt.fstype);
-	snprintf(a_opts->imgopts, sizeof(a_opts->imgopts), "%s", l_mnt.opts);
+	$VBKFAOB(a_opts->imgopts, sizeof(a_opts->imgopts), "!AZ", l_mnt.opts);
 
 	/* The device node: the source when it is one, else the kernel's own name for the numbers */
 	if ( !stat(l_mnt.source, &l_st) && S_ISBLK(l_st.st_mode) && (l_st.st_rdev == l_mnt.dev) )
 		vbk$strcpy(sizeof(a_opts->imgdev), a_opts->imgdev, l_mnt.source);
-	else	snprintf(a_opts->imgdev, sizeof(a_opts->imgdev), "/dev/block/%u:%u", major(l_mnt.dev), minor(l_mnt.dev));
+	else	$VBKFAOB(a_opts->imgdev, sizeof(a_opts->imgdev), "/dev/block/!UL:!UL", major(l_mnt.dev), minor(l_mnt.dev));
 
 	s_vbk$byname("by-uuid", l_mnt.dev, a_opts->imguuid, sizeof(a_opts->imguuid));
 	s_vbk$byname("by-label", l_mnt.dev, a_opts->imglabel, sizeof(a_opts->imglabel));
@@ -320,7 +322,7 @@ int		l_status;
 	vbk$tlv_free(&l_xbuf);
 
 	/* Everything of this file system and of nothing else, under names of their own */
-	snprintf(s_input, sizeof(s_input), "%s%s.", a_opts->imgmnt, strcmp(a_opts->imgmnt, "/") ? "/" : "");
+	$VBKFAOB(s_input, sizeof(s_input), "!AZ!AZ.", a_opts->imgmnt, strcmp(a_opts->imgmnt, "/") ? "/" : "");
 	a_opts->input [0] = s_input;
 	a_opts->crossdev  = 0;
 	a_opts->nobackup  = 1;
@@ -344,7 +346,7 @@ static	int	s_vbk$mkfsargs	(
 {
 int	n = 0, b = 0;
 
-	snprintf(a_buf [b], VBACKUP$K_SZ_PATH, "mkfs.%s", a_fstype);
+	$VBKFAOB(a_buf [b], VBACKUP$K_SZ_PATH, "mkfs.!AZ", a_fstype);
 	a_argv [n++] = a_buf [b++];
 
 	if ( !strcmp(a_fstype, "ext2") || !strcmp(a_fstype, "ext3") || !strcmp(a_fstype, "ext4") )
@@ -368,7 +370,7 @@ int	n = 0, b = 0;
 
 		if ( a_uuid [0] )
 			{
-			snprintf(a_buf [b], VBACKUP$K_SZ_PATH, "uuid=%s", a_uuid);
+			$VBKFAOB(a_buf [b], VBACKUP$K_SZ_PATH, "uuid=!AZ", a_uuid);
 			a_argv [n++] = (char *) "-m", a_argv [n++] = a_buf [b++];
 			}
 		}
@@ -386,7 +388,7 @@ int	n = 0, b = 0;
 	else if ( !strcmp(a_fstype, "vfat") || !strcmp(a_fstype, "msdos") )
 		{
 		/* A FAT label is 11 characters, upper case; its "UUID" is the volume serial XXXX-XXXX */
-		snprintf(a_buf [0], VBACKUP$K_SZ_PATH, "mkfs.vfat");
+		$VBKFAOB(a_buf [0], VBACKUP$K_SZ_PATH, "mkfs.vfat");
 
 		if ( a_label [0] )
 			{
@@ -401,7 +403,7 @@ int	n = 0, b = 0;
 
 		if ( (strlen(a_uuid) == 9) && (a_uuid [4] == '-') )
 			{
-			snprintf(a_buf [b], VBACKUP$K_SZ_PATH, "%.4s%.4s", a_uuid, a_uuid + 5);
+			$VBKFAOB(a_buf [b], VBACKUP$K_SZ_PATH, "!AD!AD", strnlen(a_uuid, 4), a_uuid, strnlen(a_uuid + 5, 4), a_uuid + 5);
 			a_argv [n++] = (char *) "-i", a_argv [n++] = a_buf [b++];
 			}
 		}
@@ -432,7 +434,7 @@ ssize_t	l_n;
 		{
 		size_t	l_c = strlen(l_cmd);
 
-		snprintf(l_cmd + l_c, sizeof(l_cmd) - l_c, "%s%s", i ? " " : "", a_argv [i]);
+		$VBKFAOB(l_cmd + l_c, sizeof(l_cmd) - l_c, "!AZ!AZ", i ? " " : "", a_argv [i]);
 		}
 
 	if ( a_opts->log )
@@ -449,7 +451,7 @@ ssize_t	l_n;
 		const char *	l_path = getenv("PATH");
 		char		l_np [8192];
 
-		snprintf(l_np, sizeof(l_np), "%s:/sbin:/usr/sbin", l_path ? l_path : "/bin:/usr/bin");
+		$VBKFAOB(l_np, sizeof(l_np), "!AZ:/sbin:/usr/sbin", l_path ? l_path : "/bin:/usr/bin");
 		setenv("PATH", l_np, 1);
 
 		dup2(l_pipe [1], STDOUT_FILENO);
@@ -538,9 +540,9 @@ int		l_image = 0, l_status, l_fd;
 		switch ( l_tag )
 			{
 			case	VBK$K_TAG_IMAGE:	l_image = 1;								break;
-			case	VBK$K_TAG_FSTYPE:	snprintf(l_fstype, sizeof(l_fstype), "%.*s", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_FSLABEL:	snprintf(l_label, sizeof(l_label), "%.*s", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_FSUUID:	snprintf(l_uuid, sizeof(l_uuid), "%.*s", (int) l_vlen, l_val);		break;
+			case	VBK$K_TAG_FSTYPE:	$VBKFAOB(l_fstype, sizeof(l_fstype), "!AD", l_vlen, l_val);		break;
+			case	VBK$K_TAG_FSLABEL:	$VBKFAOB(l_label, sizeof(l_label), "!AD", l_vlen, l_val);		break;
+			case	VBK$K_TAG_FSUUID:	$VBKFAOB(l_uuid, sizeof(l_uuid), "!AD", l_vlen, l_val);		break;
 			case	VBK$K_TAG_FSUSED:	l_used = vbk$tlv_getu(l_vlen, l_val);					break;
 			case	VBK$K_TAG_ROOTATTR:
 				if ( !l_rootb && (l_rootb = malloc(l_vlen ? l_vlen : 1)) )

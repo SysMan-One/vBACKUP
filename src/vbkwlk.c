@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWLK"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -36,6 +36,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		Names made by FAO.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		"dir/." is the contents of dir under their own names (/IMAGE).
@@ -163,7 +166,7 @@ char *	l_slash;
 		if ( !l_wp )
 			return	vbk$strcpy(a_basesz, a_base, "."), STS$K_INFO;
 
-		snprintf(l_tmp, sizeof(l_tmp), "%.*s", (int) ((l_wp > 1) ? (l_wp - 1) : 1), a_spec);
+		$VBKFAOB(l_tmp, sizeof(l_tmp), "!AD", (l_wp > 1) ? (l_wp - 1) : 1, a_spec);
 		vbk$strcpy(a_basesz, a_base, l_tmp);
 
 		return	STS$K_INFO;
@@ -299,7 +302,7 @@ const VBK$OPTS *l_o = a_w->opts;
 char		l_abs [VBACKUP$K_SZ_PATH];
 VBK$ENT		l_ent = { .path = a_path, .name = a_rel, .abspath = l_abs, .baseidx = a_w->baseidx };
 
-	if ( snprintf(l_abs, sizeof(l_abs), "%s%s%s", a_w->absbase, strcmp(a_w->absbase, "/") ? "/" : "", a_rel) >= (int) sizeof(l_abs) )
+	if ( $VBKFAOB(l_abs, sizeof(l_abs), "!AZ!AZ!AZ", a_w->absbase, strcmp(a_w->absbase, "/") ? "/" : "", a_rel) >= (int) sizeof(l_abs) )
 		return	$VBKMSG(VBACKUP$_OPENIN, a_path, ENAMETOOLONG, strerror(ENAMETOOLONG)), STS$K_SUCCESS;
 
 	if ( !S_ISDIR(a_st->st_mode) )

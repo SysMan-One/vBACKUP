@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -40,6 +40,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		STARTED and COMPLETED (how it went, how long): a command that has
+**		worked says so without /LOG too.  The text of the usage, the
+**		filter and the command line made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Stage 6: encrypted savesets - /ENCRYPT, /KEY_FILE (format.md 6.10).
@@ -354,7 +359,7 @@ ASC	l_val = {0};
 	if ( !(1 & __cli$get_value(a_clictx, &s_quals [a_qual], &l_val)) || !$ASCLEN(&l_val) )
 		return	STS$K_WARN;
 
-	snprintf(a_buf, a_bufsz, "%.*s", (int) $ASCLEN(&l_val), (char *) $ASCPTR(&l_val));
+	$VBKFAOB(a_buf, a_bufsz, "!AD", $ASCLEN(&l_val), $ASCPTR(&l_val));
 
 	return	STS$K_SUCCESS;
 }
@@ -521,7 +526,11 @@ ASC		l_val;
 			return	$VBKMSG(VBACKUP$_IVTIME, l_str, "SINCE");
 		else	a_opts->hassince = 1;
 
-		snprintf(a_opts->filter, sizeof(a_opts->filter), "/SINCE=%.200s", a_opts->sincebackup ? "BACKUP" : l_str);
+		{
+		const char *	l_s = a_opts->sincebackup ? "BACKUP" : l_str;
+
+		$VBKFAOB(a_opts->filter, sizeof(a_opts->filter), "/SINCE=!AD", (strlen(l_s) > 200) ? 200 : strlen(l_s), l_s);
+		}
 		}
 
 	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_BEFORE, l_str, sizeof(l_str)) )
@@ -532,7 +541,8 @@ ASC		l_val;
 			return	$VBKMSG(VBACKUP$_IVTIME, l_str, "BEFORE");
 
 		a_opts->hasbefore = 1;
-		snprintf(a_opts->filter + l_len, sizeof(a_opts->filter) - l_len, "%s/BEFORE=%.200s", l_len ? " " : "", l_str);
+		$VBKFAOB(a_opts->filter + l_len, sizeof(a_opts->filter) - l_len, "!AZ/BEFORE=!AD", l_len ? " " : "",
+			(strlen(l_str) > 200) ? 200 : strlen(l_str), l_str);
 		}
 
 	a_opts->timefilter = a_opts->hassince || a_opts->hasbefore || a_opts->sincebackup;
@@ -798,8 +808,9 @@ int	main	(
 static	VBK$OPTS	l_opts;
 CLI_CTX *	l_clictx = NULL;
 char *		l_argv [1 + 64], *l_words [2 + VBACKUP$K_MAXSPEC];
-const char *	l_glued [8];
-int		l_nglued = 0;
+const char *	l_glued [8], *l_opname = "";
+int		l_nglued = 0, l_announce = 0;
+struct timespec	l_t0;
 int		l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
 size_t		l_cmdlen = 0;
 
@@ -814,7 +825,7 @@ size_t		l_cmdlen = 0;
 	/* The command as it was given, for the SUMMARY; cut at VBK$K_MAXCMD */
 	for ( int i = 0; (i < a_argc) && (l_cmdlen < (sizeof(l_opts.cmdline) - 1)); i++ )
 		{
-		int	l_n = snprintf(l_opts.cmdline + l_cmdlen, sizeof(l_opts.cmdline) - l_cmdlen, "%s%s", i ? " " : "", a_argv [i]);
+		int	l_n = $VBKFAOB(l_opts.cmdline + l_cmdlen, sizeof(l_opts.cmdline) - l_cmdlen, "!AZ!AZ", i ? " " : "", a_argv [i]);
 
 		l_cmdlen += (l_n > 0) ? (size_t) l_n : 0;
 		}
@@ -907,7 +918,7 @@ size_t		l_cmdlen = 0;
 		l_status = l_usage ? vbk$help(l_wordcnt, l_words, isatty(STDOUT_FILENO)) : STS$K_WARN;
 
 		if ( l_status == STS$K_WARN )
-			fputs(s_usage, stdout);
+			$VBKFAOP(stdout, "!AZ", s_usage);
 
 		return	(l_status == STS$K_ERROR) ? VBACKUP$K_EXIT_ERROR : VBACKUP$K_EXIT_OK;
 		}
@@ -1011,6 +1022,23 @@ size_t		l_cmdlen = 0;
 		return	VBACKUP$K_EXIT_ERROR;
 		}
 
+	/*
+	**  The beginning said, and at the end how it went and how long it took
+	**  - a command that has worked says so, without /LOG too.  A listing
+	**  is its own answer and is left as it is.
+	*/
+	{
+	static const char *	l_what [] = { "?", "save", "restore", "listing", "compare", "extract", "copy", "rebuild of the journal", "listing" };
+
+	l_opname = l_what [(l_opts.op < (int) $ARRSZ(l_what)) ? l_opts.op : 0];
+	l_announce = (l_opts.op != VBACKUP$K_OP_LIST) && (l_opts.op != VBACKUP$K_OP_NONE) && (l_opts.op != VBACKUP$K_OP_JNLLIST);
+	clock_gettime(CLOCK_MONOTONIC, &l_t0);
+
+	if ( l_announce )
+		$VBKMSG(VBACKUP$_STARTED, l_opname, l_words [0], l_opts.output [0] ? " to " : "", l_opts.output [0] ? l_opts.output :
+			(l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? " to where its files came from" : "");
+	}
+
 	switch ( l_opts.op )
 		{
 		case	VBACKUP$K_OP_SAVE:
@@ -1088,6 +1116,18 @@ size_t		l_cmdlen = 0;
 			if ( !l_opts.output [0] )
 				$VBKMSG(VBACKUP$_NOPARAM, (l_status == STS$K_ERROR) ? "input specification - it does not exist" : "output specification");
 			else	$VBKMSG(VBACKUP$_IVOP, "the input does not exist - and for a save the output must be named .bck or .sav, or /SAVE_SET given");
+		}
+
+	if ( l_announce )
+		{
+		struct timespec	l_t1;
+		uint64_t	l_cs;
+
+		clock_gettime(CLOCK_MONOTONIC, &l_t1);
+		l_cs	= (uint64_t) ((l_t1.tv_sec - l_t0.tv_sec) * 100 + (l_t1.tv_nsec - l_t0.tv_nsec) / 10000000);
+
+		$VBKMSG(VBACKUP$_COMPLETED, l_opname, vbk$errors() ? "completed with errors" : vbk$warnings() ? "completed with warnings"
+			: "completed", (uint32_t) (l_cs / 100), (uint32_t) (l_cs % 100));
 		}
 
 	__cli$cleanup(l_clictx);

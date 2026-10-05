@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -23,6 +23,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		The listing made by FAO, byte for byte the one of printf: the widths
+**		of the columns by # (a wide number or name is never cut nor
+**		starred), the newline as LF (!/ is CR LF).
 **
 **	X01-06		 5-OCT-2026	RRL
 **		The heading says how a saveset is encrypted.
@@ -142,7 +147,8 @@ const char *	l_ft = (a_attr->ftype < $ARRSZ(s_ftname)) ? s_ftname [a_attr->ftype
 		case	VBACKUP$K_LST_LS:
 			/* What the extfs of MC and MultiArc of Far read: MM-DD-YYYY hh:mm:ss */
 			localtime_r(&l_t, &l_tm);
-			strftime(l_tim, sizeof(l_tim), "%m-%d-%Y %H:%M:%S", &l_tm);
+			$VBKFAOB(l_tim, sizeof(l_tim), "!2ZL-!2ZL-!4ZL !2ZL:!2ZL:!2ZL", l_tm.tm_mon + 1, l_tm.tm_mday, l_tm.tm_year + 1900,
+				l_tm.tm_hour, l_tm.tm_min, l_tm.tm_sec);
 
 			s_vbk$perms(a_attr, l_perm);
 
@@ -150,29 +156,39 @@ const char *	l_ft = (a_attr->ftype < $ARRSZ(s_ftname)) ? s_ftname [a_attr->ftype
 			if ( a_attr->ftype == VBK$K_FT_HARDLINK )
 				l_perm [0] = '-';
 
-			fprintf(a_lst->out, "%s %3u %-8s %-8s %10llu %s %.*s", l_perm, a_attr->nlink ? a_attr->nlink : 1,
-				a_attr->uname ? a_attr->uname : "?", a_attr->gname ? a_attr->gname : "?",
-				(unsigned long long) a_attr->size, l_tim, (int) a_attr->pathlen, a_attr->path);
+			{
+			uint32_t	l_nl = a_attr->nlink ? a_attr->nlink : 1;
+			const char *	l_un = a_attr->uname ? a_attr->uname : "?", *l_gn = a_attr->gname ? a_attr->gname : "?";
+
+			$VBKFAOP(a_lst->out, "!AZ !#UL !AZ!#*  !AZ!#*  !#UQ !AZ !AD", l_perm, VBK$NUMW(3, l_nl), l_nl,
+				l_un, VBK$PADW(8, strlen(l_un)), l_gn, VBK$PADW(8, strlen(l_gn)),
+				VBK$NUMW(10, a_attr->size), a_attr->size, l_tim, a_attr->pathlen, a_attr->path);
+			}
 
 			if ( a_attr->link )
-				fprintf(a_lst->out, " -> %.*s", (int) a_attr->linklen, a_attr->link);
+				$VBKFAOP(a_lst->out, " -> !AD", a_attr->linklen, a_attr->link);
 
-			fputc('\n', a_lst->out);
+			$VBKFAOP(a_lst->out, "\n");
 			break;
 
 		case	VBACKUP$K_LST_FULL:
 			s_vbk$fmttim(a_attr->mtime.sec, l_tim, sizeof(l_tim));
 			s_vbk$perms(a_attr, l_perm);
 
-			fprintf(a_lst->out, "%.*s\n", (int) a_attr->pathlen, a_attr->path);
-			fprintf(a_lst->out, "    Type: %-12s Size: %-14llu Owner: %s:%s (%u,%u)  Protection: %s\n",
-				l_ft, (unsigned long long) a_attr->size, a_attr->uname ? a_attr->uname : "?",
+			{
+			char	l_size [32];
+			int	l_sl = $VBKFAOB(l_size, sizeof(l_size), "!UQ", a_attr->size);
+
+			$VBKFAOP(a_lst->out, "!AD\n", a_attr->pathlen, a_attr->path);
+			$VBKFAOP(a_lst->out, "    Type: !AZ!#*  Size: !AZ!#*  Owner: !AZ:!AZ (!UL,!UL)  Protection: !AZ\n",
+				l_ft, VBK$PADW(12, strlen(l_ft)), l_size, VBK$PADW(14, l_sl), a_attr->uname ? a_attr->uname : "?",
 				a_attr->gname ? a_attr->gname : "?", a_attr->uid, a_attr->gid, l_perm);
-			fprintf(a_lst->out, "    Modified: %s  Checksum: %08X  Status: %s\n", l_tim, a_attr->crc,
+			$VBKFAOP(a_lst->out, "    Modified: !AZ  Checksum: !XL  Status: !AZ\n", l_tim, a_attr->crc,
 				(a_attr->status < $ARRSZ(s_fsname)) ? s_fsname [a_attr->status] : "?");
+			}
 
 			if ( a_attr->link )
-				fprintf(a_lst->out, "    Link to: %.*s\n", (int) a_attr->linklen, a_attr->link);
+				$VBKFAOP(a_lst->out, "    Link to: !AD\n", a_attr->linklen, a_attr->link);
 
 			break;
 
@@ -184,9 +200,9 @@ const char *	l_ft = (a_attr->ftype < $ARRSZ(s_ftname)) ? s_ftname [a_attr->ftype
 				l_tim [strlen(l_tim) - 6] = '\0';
 
 			if ( a_attr->ftype == VBK$K_FT_DIR )
-				fprintf(a_lst->out, "%.*s/\n", (int) a_attr->pathlen, a_attr->path);
-			else	fprintf(a_lst->out, "%-46.*s %12llu  %s\n", (int) a_attr->pathlen, a_attr->path,
-					(unsigned long long) a_attr->size, l_tim);
+				$VBKFAOP(a_lst->out, "!AD/\n", a_attr->pathlen, a_attr->path);
+			else	$VBKFAOP(a_lst->out, "!AD!#*  !#UQ  !AZ\n", a_attr->pathlen, a_attr->path, VBK$PADW(46, a_attr->pathlen),
+					VBK$NUMW(12, a_attr->size), a_attr->size, l_tim);
 		}
 }
 
@@ -205,52 +221,52 @@ const uint8_t *	l_val;
 char		l_tim [64];
 VBK$TIME	l_t;
 
-	fprintf(a_lst->out, "Listing of save set(s)\n\n");
-	fprintf(a_lst->out, "Save set:          %s\n", a_rctx->spec);
-	fprintf(a_lst->out, "Volumes:           %u\n", a_rctx->nvols);
+	$VBKFAOP(a_lst->out, "Listing of save set(s)\n\n");
+	$VBKFAOP(a_lst->out, "Save set:          !AZ\n", a_rctx->spec);
+	$VBKFAOP(a_lst->out, "Volumes:           !UL\n", a_rctx->nvols);
 
 	while ( 1 & vbk$tlv_next(a_rctx->summary, a_rctx->sumlen, &l_pos, &l_tag, &l_vlen, &l_val) )
 		{
 		switch ( l_tag )
 			{
-			case	VBK$K_TAG_USER:		fprintf(a_lst->out, "Written by:        %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_CMDLINE:	fprintf(a_lst->out, "Command:           %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_SYSTEM:	fprintf(a_lst->out, "Operating system:  %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_PRODUCT:	fprintf(a_lst->out, "Written with:      %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_HOST:		fprintf(a_lst->out, "Node name:         %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_BASE:		fprintf(a_lst->out, "Base:              %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_COMMENT:	fprintf(a_lst->out, "Comment:           %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_FILTER:	fprintf(a_lst->out, "Filter:            %.*s\n", (int) l_vlen, l_val);	break;
-			case	VBK$K_TAG_KIND:		fprintf(a_lst->out, "Kind:              %s\n", vbk$tlv_getu(l_vlen, l_val) ? "incremental" : "full"); break;
-			case	VBK$K_TAG_PHYSICAL:	fprintf(a_lst->out, "Physical:          a device, block by block (/PHYSICAL)\n");	break;
-			case	VBK$K_TAG_DEVSIZE:	fprintf(a_lst->out, "Device size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
-			case	VBK$K_TAG_SECTORSIZE:	fprintf(a_lst->out, "Sector size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
-			case	VBK$K_TAG_COMPRESS:	fprintf(a_lst->out, "Data format:       compressed (LZ4)\n");				break;
-			case	VBK$K_TAG_KDFITER:	fprintf(a_lst->out, "Encryption:        ChaCha20, HMAC-SHA256; PBKDF2-HMAC-SHA256, %llu iterations\n",
-							(unsigned long long) vbk$tlv_getu(l_vlen, l_val));					break;
-			case	VBK$K_TAG_IMAGE:	fprintf(a_lst->out, "Image:             a whole file system (/IMAGE)\n");			break;
-			case	VBK$K_TAG_FSTYPE:	fprintf(a_lst->out, "File system:       %.*s\n", (int) l_vlen, l_val);			break;
-			case	VBK$K_TAG_FSLABEL:	fprintf(a_lst->out, "Label:             %.*s\n", (int) l_vlen, l_val);			break;
-			case	VBK$K_TAG_FSUUID:	fprintf(a_lst->out, "UUID:              %.*s\n", (int) l_vlen, l_val);			break;
-			case	VBK$K_TAG_FSUSED:	fprintf(a_lst->out, "In use:            %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
-			case	VBK$K_TAG_MOUNTOPTS:	fprintf(a_lst->out, "Mounted with:      %.*s\n", (int) l_vlen, l_val);			break;
-			case	VBK$K_TAG_BLOCKSIZE:	fprintf(a_lst->out, "Block size:        %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));	break;
-			case	VBK$K_TAG_GROUPSIZE:	fprintf(a_lst->out, "Group size:        %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));	break;
+			case	VBK$K_TAG_USER:		$VBKFAOP(a_lst->out, "Written by:        !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_CMDLINE:	$VBKFAOP(a_lst->out, "Command:           !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_SYSTEM:	$VBKFAOP(a_lst->out, "Operating system:  !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_PRODUCT:	$VBKFAOP(a_lst->out, "Written with:      !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_HOST:		$VBKFAOP(a_lst->out, "Node name:         !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_BASE:		$VBKFAOP(a_lst->out, "Base:              !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_COMMENT:	$VBKFAOP(a_lst->out, "Comment:           !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_FILTER:	$VBKFAOP(a_lst->out, "Filter:            !AD\n", l_vlen, l_val);	break;
+			case	VBK$K_TAG_KIND:		$VBKFAOP(a_lst->out, "Kind:              !AZ\n", vbk$tlv_getu(l_vlen, l_val) ? "incremental" : "full"); break;
+			case	VBK$K_TAG_PHYSICAL:	$VBKFAOP(a_lst->out, "Physical:          a device, block by block (/PHYSICAL)\n");	break;
+			case	VBK$K_TAG_DEVSIZE:	$VBKFAOP(a_lst->out, "Device size:       !UQ bytes\n", vbk$tlv_getu(l_vlen, l_val)); break;
+			case	VBK$K_TAG_SECTORSIZE:	$VBKFAOP(a_lst->out, "Sector size:       !UQ bytes\n", vbk$tlv_getu(l_vlen, l_val)); break;
+			case	VBK$K_TAG_COMPRESS:	$VBKFAOP(a_lst->out, "Data format:       compressed (LZ4)\n");				break;
+			case	VBK$K_TAG_KDFITER:	$VBKFAOP(a_lst->out, "Encryption:        ChaCha20, HMAC-SHA256; PBKDF2-HMAC-SHA256, !UQ iterations\n",
+							vbk$tlv_getu(l_vlen, l_val));					break;
+			case	VBK$K_TAG_IMAGE:	$VBKFAOP(a_lst->out, "Image:             a whole file system (/IMAGE)\n");			break;
+			case	VBK$K_TAG_FSTYPE:	$VBKFAOP(a_lst->out, "File system:       !AD\n", l_vlen, l_val);			break;
+			case	VBK$K_TAG_FSLABEL:	$VBKFAOP(a_lst->out, "Label:             !AD\n", l_vlen, l_val);			break;
+			case	VBK$K_TAG_FSUUID:	$VBKFAOP(a_lst->out, "UUID:              !AD\n", l_vlen, l_val);			break;
+			case	VBK$K_TAG_FSUSED:	$VBKFAOP(a_lst->out, "In use:            !UQ bytes\n", vbk$tlv_getu(l_vlen, l_val)); break;
+			case	VBK$K_TAG_MOUNTOPTS:	$VBKFAOP(a_lst->out, "Mounted with:      !AD\n", l_vlen, l_val);			break;
+			case	VBK$K_TAG_BLOCKSIZE:	$VBKFAOP(a_lst->out, "Block size:        !UQ\n", vbk$tlv_getu(l_vlen, l_val));	break;
+			case	VBK$K_TAG_GROUPSIZE:	$VBKFAOP(a_lst->out, "Group size:        !UQ\n", vbk$tlv_getu(l_vlen, l_val));	break;
 
 			case	VBK$K_TAG_VOLSIZE:
 				if ( vbk$tlv_getu(l_vlen, l_val) )
-					fprintf(a_lst->out, "Volume size:       %llu\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val));
+					$VBKFAOP(a_lst->out, "Volume size:       !UQ\n", vbk$tlv_getu(l_vlen, l_val));
 				break;
 
 			case	VBK$K_TAG_CREATED:
 				vbk$tlv_gettime(l_vlen, l_val, &l_t);
 				s_vbk$fmttim(l_t.sec, l_tim, sizeof(l_tim));
-				fprintf(a_lst->out, "Date:              %s\n", l_tim);
+				$VBKFAOP(a_lst->out, "Date:              !AZ\n", l_tim);
 				break;
 			}
 		}
 
-	fputc('\n', a_lst->out);
+	$VBKFAOP(a_lst->out, "\n");
 }
 
 
@@ -432,13 +448,12 @@ int		l_status;
 
 	if ( a_opts->lstfmt != VBACKUP$K_LST_LS )
 		{
-		fprintf(l_lst.out, "\nTotal of %llu file%s, %llu byte%s\n", (unsigned long long) l_lst.nfiles, (l_lst.nfiles == 1) ? "" : "s",
-			(unsigned long long) l_lst.nbytes, (l_lst.nbytes == 1) ? "" : "s");
+		$VBKFAOP(l_lst.out, "\nTotal of !UQ file!%S, !UQ byte!%S\n", l_lst.nfiles, l_lst.nbytes);
 
 		if ( l_lst.npresent )
-			fprintf(l_lst.out, "and %llu unchanged file%s present, not saved here\n", (unsigned long long) l_lst.npresent,
-				(l_lst.npresent == 1) ? "" : "s");
-		fprintf(l_lst.out, "End of save set\n");
+			$VBKFAOP(l_lst.out, "and !UQ unchanged file!%S present, not saved here\n", l_lst.npresent);
+
+		$VBKFAOP(l_lst.out, "End of save set\n");
 		}
 
 	if ( (l_lst.out != stdout) && fclose(l_lst.out) )
