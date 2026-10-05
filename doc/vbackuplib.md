@@ -728,7 +728,7 @@ with VBACKUP when you need them.
 
 Damaged savesets are repaired as far as the XOR blocks allow. vbkx
 names every file that is incomplete ("is incomplete") and every file it
-could not reach ("was not extracted"). Completion code: 0 -- done;
+could not reach ("not extracted"). Completion code: 0 -- done;
 1 -- something was damaged or not done; 2 -- the command or the
 saveset cannot be used.
 

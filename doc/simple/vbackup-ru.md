@@ -646,7 +646,7 @@ vbkx t /mnt/usb/ivan.bck
 Если файл уже есть, `vbkx` его не трогает и говорит:
 
 ```
-vbkx: ivan/letters/anna.txt exists, not extracted (-f to overwrite)
+vbkx: File: ivan/letters/anna.txt - already exists, not extracted (-f to overwrite)
 ```
 
 Хочешь заменить — добавь `-f`.

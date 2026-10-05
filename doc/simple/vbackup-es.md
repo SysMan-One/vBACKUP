@@ -646,7 +646,7 @@ Quiere decir: la caja está entera.
 Si un archivo ya existe, `vbkx` no lo toca y dice:
 
 ```
-vbkx: ivan/letters/anna.txt exists, not extracted (-f to overwrite)
+vbkx: File: ivan/letters/anna.txt - already exists, not extracted (-f to overwrite)
 ```
 
 Para reemplazarlo, añade `-f`.

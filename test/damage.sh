@@ -40,8 +40,8 @@
 #
 #	MODIFICATION HISTORY:
 #
-#		 5-OCT-2026	RRL	X-08 : The judge reads the messages in their new form,
-#					"File: name - text".
+#		 5-OCT-2026	RRL	X-08 : The judge reads the messages of VBACKUP and vbkx in
+#					their new form, "File: name - text".
 #
 #		 5-OCT-2026	RRL	X-06 : Every fourth round damages the tree saved
 #					/ENCRYPT and seals the spoilt blocks again:
@@ -175,9 +175,9 @@ def judge(src, out, log):
 	# A damaged file is named as it lies in the output directory (VBACKUP) or by its stored name (VBKX)
 	relo = lambda n: os.path.relpath(n, out) if n.startswith(out + "/") else n
 	named = set(relo(n) for n in re.findall(r"FILDAMAGED, File: (.+?) - is incomplete", text))
-	named |= set(relo(n) for n in re.findall(r"vbkx: (.+?) is incomplete", text))
+	named |= set(relo(n) for n in re.findall(r"vbkx: File: (.+?) - is incomplete", text))
 	lost = set(relo(n) for n in re.findall(r"FILLOST, File: (.+?) - not restored", text))
-	lost |= set(relo(n) for n in re.findall(r"vbkx: (.+?) was not extracted", text))
+	lost |= set(relo(n) for n in re.findall(r"vbkx: File: (.+?) - not extracted", text))
 	bad = []
 	for root, ds, fs in os.walk(src):
 		for f in fs:
@@ -212,10 +212,10 @@ def judgen(src, out, log, names):
 				bad.append("made, not asked for: " + rel)
 	for n in names:
 		o = os.path.join(out, n)
-		if "vbkx: " + n + " is incomplete" in text:
+		if "vbkx: File: " + n + " - is incomplete" in text:
 			continue
 		if not os.path.exists(o):
-			if ("vbkx: " + n + " was not extracted") not in text and not re.search(r"cannot all be named|names cannot be looked up|is not a saveset", text):
+			if ("vbkx: File: " + n + " - not extracted") not in text and not re.search(r"cannot all be named|names cannot be looked up|is not a saveset", text):
 				bad.append("missing, not named: " + n)
 			continue
 		if open(os.path.join(os.path.dirname(src), n), "rb").read() != open(o, "rb").read():
@@ -348,7 +348,7 @@ while [ $r -le "$ROUNDS" ]; do
 
 		if crashed $RC vp.log; then
 			fail "round $r $MODE seed $RS: vbkx p crashed or hung, completion code $RC"
-		elif [ -s vp.out ] && ! cmp -s vp.out src/$ONE && ! grep -q "$ONE is incomplete" vp.log; then
+		elif [ -s vp.out ] && ! cmp -s vp.out src/$ONE && ! grep -q "File: $ONE - is incomplete" vp.log; then
 			fail "round $r $MODE seed $RS: vbkx p wrote other data, unnamed: $(head -2 vp.log)"
 		elif [ $RC = 0 ] && ! cmp -s vp.out src/$ONE; then
 			fail "round $r $MODE seed $RS: vbkx p completed with the wrong data"

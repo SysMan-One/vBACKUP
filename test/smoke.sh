@@ -597,7 +597,7 @@ if [ -n "$VX" ]; then
 		dd if=/dev/zero of=tinyd.bck bs=8192 seek=$B count=1 conv=notrunc 2>/dev/null
 		for I in $(seq 100 199); do
 			$VX p tinyd.bck t/f$I > tp.out 2> tp.log
-			if [ -s tp.out ] && ! cmp -s tp.out tiny/t/f$I && ! grep -q "f$I is incomplete" tp.log; then
+			if [ -s tp.out ] && ! cmp -s tp.out tiny/t/f$I && ! grep -q "f$I - is incomplete" tp.log; then
 				WRONG=$((WRONG + 1))
 			fi
 		done
@@ -720,7 +720,7 @@ if [ -n "$VBKX" ]; then
 	chmod 600 bad; $VBKX t e2.bck -k bad > exb.log 2>&1
 	check '[ $? = 2 ] && grep -q "does not open" exb.log' "vbkx with a wrong passphrase: $(head -1 exb.log)"
 	VBACKUP_KEY_FILE=$S/key $VBKX t e2.bck > ext.log 2>&1
-	check '[ $? = 0 ] && grep -q "block .* not what was written" ext.log' "vbkx t of the forged saveset: $(head -2 ext.log)"
+	check '[ $? = 0 ] && grep -q "Block: .* - is not what was written" ext.log' "vbkx t of the forged saveset: $(head -2 ext.log)"
 fi
 
 

@@ -23,6 +23,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-03 : The messages of vbkx in their new form, "File: name - text".
+#
 #		 4-OCT-2026	RRL	X-02 : TAP=1 - the Test Anything Protocol (test/tap.sh).
 #
 #		 4-OCT-2026	RRL	X-01 : Initial version.
@@ -82,11 +84,11 @@ for root, ds, fs in os.walk(src):
 		if not winok(rel):
 			if os.path.exists(o):
 				bad.append("made, though Windows cannot hold the name: " + rel)
-			elif (rel + ": not a valid name on Windows") not in text and (rel + " was not extracted") not in text \
+			elif ("File: " + rel + " - not a valid name on Windows") not in text and ("File: " + rel + " - not extracted") not in text \
 					and not re.search(r"cannot all be named|names cannot be looked up", text):
 				bad.append("refused without a word: " + rel)
 			continue
-		if (rel + " is incomplete") in text or (rel + " was not extracted") in text:
+		if ("File: " + rel + " - is incomplete") in text or ("File: " + rel + " - not extracted") in text:
 			continue
 		if not os.path.exists(o):
 			if not re.search(r"cannot all be named|names cannot be looked up", text):
@@ -143,7 +145,7 @@ for B in plain packed vols; do
 	check '[ "$(stat -c %Y $B.out/tree/a.txt)" = "$(stat -c %Y src/tree/a.txt)" ]' "$B: the time of a file"
 	check '[ "$(stat -c %Y $B.out/tree/sub)" = "$(stat -c %Y src/tree/sub)" ]' "$B: the time of a directory"
 	check '[ ! -w $B.out/tree/readonly.txt ] || [ "$(id -u)" = 0 -a "$(stat -c %a $B.out/tree/readonly.txt)" = 444 ]' "$B: read-only not set"
-	check 'grep -q "fifo: a FIFO, not made on Windows" $B.xw' "$B: the FIFO not said"
+	check 'grep -q "fifo - a FIFO, not made on Windows" $B.xw' "$B: the FIFO not said"
 
 	vw t $B.bck > $B.tw 2>&1
 	check '[ $? = 0 ] && grep -q "all checksums match" $B.tw' "$B: t, $(cat $B.tw)"
@@ -161,7 +163,7 @@ check '[ $? = 0 ] && cmp -s "named/tree/sub/deep/имя с пробелом" "sr
 
 #	Over what is there: kept, 1; with -f: replaced
 vw x plain.bck -C named tree/text.txt > again.log 2>&1
-check '[ $? = 1 ] && grep -q "exists, not extracted" again.log' "x over a file that is there: $(cat again.log)"
+check '[ $? = 1 ] && grep -q "already exists, not extracted" again.log' "x over a file that is there: $(cat again.log)"
 echo changed > named/tree/text.txt
 vw x plain.bck -C named -f tree/text.txt > force.log 2>&1
 check '[ $? = 0 ] && cmp -s named/tree/text.txt src/tree/text.txt' "x -f: $(cat force.log)"
@@ -195,7 +197,7 @@ for MODE in fix lose; do
 		RC=$?
 		check '[ $RC -le 2 ]' "$MODE $SEED: x crashed or hung, completion code $RC"
 		check 'python3 judge.py src/tree d.out d.log' "$MODE $SEED: silent damage"
-		[ $MODE = fix ] && check '! grep -q "cannot be repaired" d.log && grep -q "has been repaired" d.log' "fix $SEED: not all repaired: $(grep -v repaired d.log | head -3)"
+		[ $MODE = fix ] && check '! grep -q "cannot be rebuilt" d.log && grep -q "rebuilt from its group" d.log' "fix $SEED: not all repaired: $(grep -v rebuilt d.log | head -3)"
 		rm -rf d.out
 	done
 done
@@ -231,7 +233,7 @@ RC=$?
 check '[ $RC = 1 ]' "forged: completion code $RC, $(cat evil.log)"
 check '[ ! -e evil/evil ] && [ ! -e evil/evil2 ] && [ ! -e evil/evil3 ] && [ ! -e evil/evil4 ] && [ ! -e evil/inside ] && [ ! -e /tmp/vbackup-evil ]' \
 	"forged: written outside the output directory"
-check 'grep -q "evil2: not a valid name on Windows" evil.log && grep -q "evil3: not a valid name on Windows" evil.log' "forged: the Windows names not refused, $(cat evil.log)"
+check 'grep -q "evil2 - not a valid name on Windows" evil.log && grep -q "evil3 - not a valid name on Windows" evil.log' "forged: the Windows names not refused, $(cat evil.log)"
 
 #
 #	4. The command line

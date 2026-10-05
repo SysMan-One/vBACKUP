@@ -92,7 +92,8 @@
 **		Encrypted savesets (format.md 6.10): -k keyfile, VBACKUP_KEY_FILE,
 **		or the passphrase asked on the terminal (the console on Windows,
 **		taken as UTF-8), -n never; a block whose authentication fails
-**		is said.  A stream that ends before its catalog (a saveset cut
+**		is said.  Every message in the form of VBACKUP's: "File: name,
+**		errno: n - words".  A stream that ends before its catalog (a saveset cut
 **		down to its VHDR) is no longer "all files read": said, code 1.
 **
 **	X01-04		 4-OCT-2026	RRL
@@ -202,7 +203,7 @@ static	void	s_vbkx$attrerr	(
 	const	char *		a_what
 			)
 {
-	s_vbkx$msg("%s: the %s cannot be set: %s", a_name, a_what, strerror(errno));
+	s_vbkx$msg("File: %s, errno: %d - the %s cannot be set (%s)", a_name, errno, a_what, strerror(errno));
 }
 
 
@@ -216,30 +217,30 @@ static	void	s_vbkx$event	(
 	switch ( a_ev )
 		{
 		case	VBK$K_EV_REPAIRED:
-			s_vbkx$msg("block %llu of volume %u was bad and has been repaired", (unsigned long long) a_blk, a_vol);
+			s_vbkx$msg("Block: %llu, Volume: %u - was bad, rebuilt from its group", (unsigned long long) a_blk, a_vol);
 			break;
 
 		case	VBK$K_EV_LOST:
-			s_vbkx$msg("block %llu of volume %u is bad and cannot be repaired", (unsigned long long) a_blk, a_vol);
+			s_vbkx$msg("Block: %llu, Volume: %u - is bad and cannot be rebuilt", (unsigned long long) a_blk, a_vol);
 			s_bad	= 1;
 			break;
 
 		case	VBK$K_EV_MISSVOL:
-			s_vbkx$msg("volume %u is missing", a_vol);
+			s_vbkx$msg("Volume: %u - is missing", a_vol);
 			s_bad	= 1;
 			break;
 
 		case	VBK$K_EV_WRONGVOL:
-			s_vbkx$msg("volume %u belongs to another saveset, or is none", a_vol);
+			s_vbkx$msg("Volume: %u - belongs to another saveset, or is none", a_vol);
 			break;
 
 		case	VBK$K_EV_BADREC:
-			s_vbkx$msg("a bad record in block %llu of volume %u", (unsigned long long) a_blk, a_vol);
+			s_vbkx$msg("Block: %llu, Volume: %u - an invalid record, skipped", (unsigned long long) a_blk, a_vol);
 			s_bad	= 1;
 			break;
 
 		case	VBK$K_EV_BADTAG:
-			s_vbkx$msg("block %llu of volume %u is not what was written: its CRC is right, its authentication fails",
+			s_vbkx$msg("Block: %llu, Volume: %u - is not what was written: its CRC is right, its authentication fails",
 				(unsigned long long) a_blk, a_vol);
 			break;
 		}
@@ -665,7 +666,7 @@ DWORD	l_flags = 0x2, l_attr;		/* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE */
 		&& (l_attr & FILE_ATTRIBUTE_REPARSE_POINT) )
 		return	0;
 
-	s_vbkx$msg("%s: symbolic link not made on this system", a_name);
+	s_vbkx$msg("File: %s - a symbolic link, not made on this system", a_name);
 	s_bad	= 1;
 
 	return	1;
@@ -697,7 +698,7 @@ static	int	s_vbkx$os_special	(
 	const	char *		a_name
 			)
 {
-	s_vbkx$msg("%s: %s, not made on Windows", a_name, (a_e->ftype == VBK$K_FT_FIFO) ? "a FIFO" : "a device file");
+	s_vbkx$msg("File: %s - %s, not made on Windows", a_name, (a_e->ftype == VBK$K_FT_FIFO) ? "a FIFO" : "a device file");
 	s_bad	= 1;
 
 	return	1;
@@ -775,7 +776,7 @@ FILETIME	l_at = s_vbkx$os_ft(&a_e->atime), l_mt = s_vbkx$os_ft(&a_e->mtime);
 int		l_rc;
 
 	if ( _chsize_s(a_fd, (__int64) a_size) )
-		s_vbkx$msg("%s: %s", a_name, strerror(errno));
+		s_vbkx$msg("File: %s, errno: %d - its size cannot be set (%s)", a_name, errno, strerror(errno));
 
 	if ( !SetFileTime((HANDLE) _get_osfhandle(a_fd), NULL, &l_at, &l_mt) )
 		s_vbkx$os_errno(), s_vbkx$attrerr(a_name, "times");
@@ -976,7 +977,7 @@ static	int	s_vbkx$os_special	(
 
 	if ( !s_root )
 		{
-		s_vbkx$msg("%s: a device file, made by root only", a_name);
+		s_vbkx$msg("File: %s - a device file, made by root only", a_name);
 
 		return	1;
 		}
@@ -1031,7 +1032,7 @@ static	int	s_vbkx$os_fdend	(
 struct timespec	l_ts [2] = { { a_e->atime.sec, a_e->atime.nsec }, { a_e->mtime.sec, a_e->mtime.nsec } };
 
 	if ( ftruncate(a_fd, (off_t) a_size) )
-		s_vbkx$msg("%s: %s", a_name, strerror(errno));
+		s_vbkx$msg("File: %s, errno: %d - its size cannot be set (%s)", a_name, errno, strerror(errno));
 
 	if ( s_root && fchown(a_fd, a_e->uid, a_e->gid) )
 		s_vbkx$attrerr(a_name, "owner");
@@ -1218,7 +1219,7 @@ int		l_rc = 0;
 
 	if ( !(1 & s_vbkx$parse(a_out->body, a_len, l_e)) )
 		{
-		s_vbkx$msg("a FILE record that makes no sense is skipped");
+		s_vbkx$msg("Record: FILE - makes no sense, skipped");
 		s_bad	= 1;
 
 		return;
@@ -1259,7 +1260,7 @@ int		l_rc = 0;
 
 	if ( !s_vbkx$nameok(a_out->name, strlen(a_out->name)) )
 		{
-		s_vbkx$msg("%s: a name that leads out of the output directory, not extracted", a_out->name);
+		s_vbkx$msg("File: %s - its name leads out of the output directory, not extracted", a_out->name);
 		a_out->active	= 0;
 		s_bad		= 1;
 
@@ -1269,7 +1270,7 @@ int		l_rc = 0;
 #ifdef	_WIN32
 	if ( !s_vbkx$winname(a_out->name) )
 		{
-		s_vbkx$msg("%s: not a valid name on Windows, not extracted", a_out->name);
+		s_vbkx$msg("File: %s - not a valid name on Windows, not extracted", a_out->name);
 		a_out->active	= 0;
 		s_bad		= 1;
 
@@ -1281,7 +1282,7 @@ int		l_rc = 0;
 
 	if ( s_vbkx$os_parent(l_name, 1, &l_last, &l_par) )
 		{
-		s_vbkx$msg("%s: %s (a directory on the way cannot be made, or is a link)", a_out->name, strerror(errno));
+		s_vbkx$msg("File: %s, errno: %d - a directory on the way cannot be made, or is a link (%s)", a_out->name, errno, strerror(errno));
 		a_out->active	= 0;
 		s_bad		= 1;
 
@@ -1301,7 +1302,7 @@ int		l_rc = 0;
 		{
 		if ( !s_force )
 			{
-			s_vbkx$msg("%s exists, not extracted (-f to overwrite)", a_out->name);
+			s_vbkx$msg("File: %s - already exists, not extracted (-f to overwrite)", a_out->name);
 			a_out->active	= 0;
 			s_bad		= 1;
 			s_vbkx$os_pclose(l_par);
@@ -1359,7 +1360,7 @@ int		l_rc = 0;
 l_done:
 	if ( l_rc < 0 )
 		{
-		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
+		s_vbkx$msg("File: %s, errno: %d - cannot be made (%s)", a_out->name, errno, strerror(errno));
 		a_out->active	= 0;
 		s_bad		= 1;
 		}
@@ -1416,7 +1417,7 @@ uint32_t	l_n, l_fileno;
 
 	if ( STS$K_SUCCESS != vbk$data_get(a_type, a_body, a_len, s_zbuf, &l_fileno, &l_off, &l_data, &l_n) )
 		{
-		s_vbkx$msg("%s: a data record that makes no sense", a_out->name);
+		s_vbkx$msg("File: %s - a data record that makes no sense", a_out->name);
 		a_out->damaged	= 1;
 
 		return;
@@ -1436,7 +1437,7 @@ uint32_t	l_n, l_fileno;
 		}
 	else if ( (a_out->fd >= 0) && s_vbkx$os_pwrite(a_out->fd, l_data, l_n, l_off) )
 		{
-		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
+		s_vbkx$msg("File: %s, errno: %d - cannot be written (%s)", a_out->name, errno, strerror(errno));
 		a_out->damaged	= 1;
 		}
 }
@@ -1480,19 +1481,19 @@ int		l_hascrc = 0;
 		a_out->damaged	= 1;
 	else if ( l_hascrc && (l_crc != a_out->crc) )
 		{
-		s_vbkx$msg("%s: the checksum does not match", a_out->name);
+		s_vbkx$msg("File: %s - checksum mismatch: the data differ from what was saved", a_out->name);
 		a_out->damaged	= 1;
 		}
 
 	if ( a_out->damaged )
 		{
-		s_vbkx$msg("%s is incomplete: its data was lost in bad blocks", a_out->name);
+		s_vbkx$msg("File: %s - is incomplete: its data was lost in bad blocks", a_out->name);
 		s_bad	= 1;
 		}
 	else if ( l_status == VBK$K_FS_CHANGED )
-		s_vbkx$msg("%s changed while it was saved: the copy may be a mix", a_out->name);
+		s_vbkx$msg("File: %s - changed while it was saved: the copy may be a mix", a_out->name);
 	else if ( l_status == VBK$K_FS_READERR )
-		s_vbkx$msg("%s could not be read whole when it was saved", a_out->name);
+		s_vbkx$msg("File: %s - could not be read whole when it was saved", a_out->name);
 
 	if ( a_out->tostd )
 		{
@@ -1510,7 +1511,7 @@ int		l_hascrc = 0;
 	if ( s_vbkx$os_fdend(a_out->fd, NULL, l_e, l_size, a_out->name) )
 #endif
 		{
-		s_vbkx$msg("%s: %s", a_out->name, strerror(errno));
+		s_vbkx$msg("File: %s, errno: %d - cannot be written (%s)", a_out->name, errno, strerror(errno));
 		s_bad	= 1;
 		}
 
@@ -1594,7 +1595,7 @@ int		l_files = 0, l_ended = 0;
 	/* The whole stream read, and no CATALOG or END at its end: what follows is not there - never "all done" */
 	if ( !a_one && !l_ended )
 		{
-		s_vbkx$msg("%s ends before its catalog: the save did not complete, or its last volumes are missing", s_spec);
+		s_vbkx$msg("Saveset: %s - ends before its catalog: the save did not complete, or its last volumes are missing", s_spec);
 		s_bad	= 1;
 		}
 }
@@ -1783,7 +1784,7 @@ int		l_hole;
 			else	s_vbkx$line(&l_ents [i]);
 
 		if ( l_npres )
-			fprintf(stderr, "vbkx: and %llu unchanged files listed as present, not saved here\n", (unsigned long long) l_npres);
+			s_vbkx$msg("Files: %llu - unchanged, listed as present, not saved here", (unsigned long long) l_npres);
 
 		s_vbkx$freecat(l_ents, l_n);
 
@@ -1793,7 +1794,7 @@ int		l_hole;
 	if ( !a_rctx->isstream )
 		{
 		s_vbkx$freecat(l_ents, l_n);
-		s_vbkx$msg("%s: %s - the whole saveset is read", s_spec, a_rctx->trailer ? "the catalog is damaged" : "no catalog");
+		s_vbkx$msg("Saveset: %s - %s: the whole saveset is read", s_spec, a_rctx->trailer ? "the catalog is damaged" : "no catalog");
 		vbk$rd_rewind(a_rctx);
 		}
 
@@ -1811,7 +1812,7 @@ int		l_hole;
 		return	0;
 
 	if ( a_rctx->isstream && !a_rctx->trailer && !a_rctx->trlraw )
-		s_vbkx$msg("%s ends before its catalog: the save did not complete", s_spec);
+		s_vbkx$msg("Saveset: %s - ends before its catalog: the save did not complete", s_spec);
 
 	return	1;
 }
@@ -1834,10 +1835,10 @@ int		l_hole;
 
 	for ( size_t i = 0; i < l_n; i++ )
 		if ( (l_ents [i].status != VBK$K_FS_PRESENT) && !s_vbkx$isseen(l_ents [i].fileno) && s_vbkx$wanted(&l_ents [i], a_names, a_nnames) )
-			s_vbkx$msg("%.*s was not extracted: its records were lost in bad blocks", (int) l_ents [i].pathlen, l_ents [i].path);
+			s_vbkx$msg("File: %.*s - not extracted: its records were lost in bad blocks", (int) l_ents [i].pathlen, l_ents [i].path);
 
 	if ( !l_ents || l_hole )
-		s_vbkx$msg("%s: %s - files missing from the output cannot all be named", s_spec,
+		s_vbkx$msg("Saveset: %s - %s: files missing from the output cannot all be named", s_spec,
 			a_rctx->trailer ? "the catalog is damaged" : "there is no catalog");
 
 	s_vbkx$freecat(l_ents, l_n);
@@ -1871,7 +1872,7 @@ int		l_hole, l_found = 0;
 	else	{
 		if ( a_rctx->isstream )
 			{
-			s_vbkx$msg("%s: a pipe has its catalog at its end - names cannot be looked up; give no names to extract it all,"
+			s_vbkx$msg("Saveset: %s - a pipe has its catalog at its end: names cannot be looked up; give no names to extract it all,"
 				" or keep the stream in a file", s_spec);
 
 			return	2;
@@ -1879,7 +1880,7 @@ int		l_hole, l_found = 0;
 
 		if ( !(l_ents = s_vbkx$catalog(a_rctx, &l_n, &l_hole)) )
 			{
-			s_vbkx$msg("%s: %s - names cannot be looked up; give no names to extract it all", s_spec,
+			s_vbkx$msg("Saveset: %s - %s: names cannot be looked up; give no names to extract it all", s_spec,
 				a_rctx->trailer ? "the catalog cannot be read" : "there is no catalog");
 
 			return	2;
@@ -1914,7 +1915,7 @@ int		l_hole, l_found = 0;
 
 			if ( a_tostd && (l_e->ftype != VBK$K_FT_REG) )
 				{
-				s_vbkx$msg("%.*s is not a regular file", (int) l_e->pathlen, l_e->path);
+				s_vbkx$msg("File: %.*s - is not a regular file", (int) l_e->pathlen, l_e->path);
 				s_vbkx$freecat(l_ents, l_n);
 
 				return	2;
@@ -1922,7 +1923,7 @@ int		l_hole, l_found = 0;
 
 			if ( STS$K_ERROR == vbk$rd_seek(a_rctx, &l_e->loc) )
 				{
-				s_vbkx$msg("%.*s was not extracted: its records cannot be reached", (int) l_e->pathlen, l_e->path);
+				s_vbkx$msg("File: %.*s - not extracted: its records cannot be reached", (int) l_e->pathlen, l_e->path);
 				s_bad	= 1;
 				continue;
 				}
@@ -1931,7 +1932,7 @@ int		l_hole, l_found = 0;
 
 			if ( !s_vbkx$isseen(l_e->fileno) )
 				{
-				s_vbkx$msg("%.*s was not extracted: its records were lost in bad blocks", (int) l_e->pathlen, l_e->path);
+				s_vbkx$msg("File: %.*s - not extracted: its records were lost in bad blocks", (int) l_e->pathlen, l_e->path);
 				s_bad	= 1;
 				}
 
@@ -1943,7 +1944,7 @@ int		l_hole, l_found = 0;
 
 		if ( !l_found )
 			{
-			s_vbkx$msg("no such file in the saveset");
+			s_vbkx$msg("Saveset: %s - no such file in it", s_spec);
 
 			return	2;
 			}
@@ -1983,13 +1984,13 @@ size_t		l_n = 0;
 		int		l_c;
 
 		if ( !(l_fp = fopen(l_kf, "rb")) )
-			return	s_vbkx$msg("%s: %s", l_kf, strerror(errno)), -1;
+			return	s_vbkx$msg("Key file: %s, errno: %d - cannot be read (%s)", l_kf, errno, strerror(errno)), -1;
 #ifndef	_WIN32
 		if ( fstat(fileno(l_fp), &l_st) || !S_ISREG(l_st.st_mode) || (l_st.st_mode & (S_IRWXG | S_IRWXO)) )
 			{
 			fclose(l_fp);
 
-			return	s_vbkx$msg("%s: not a regular file, or others may read it - chmod 600 it", l_kf), -1;
+			return	s_vbkx$msg("Key file: %s - not a regular file, or others may read it: chmod 600 it", l_kf), -1;
 			}
 #else
 		(void) l_st;
@@ -2001,7 +2002,7 @@ size_t		l_n = 0;
 		fclose(l_fp);
 		}
 	else if ( s_noprompt )
-		return	s_vbkx$msg("%s is encrypted: give -k file or VBACKUP_KEY_FILE (no questions asked: -n)", a_spec), -1;
+		return	s_vbkx$msg("Saveset: %s - is encrypted: give -k file or VBACKUP_KEY_FILE (no questions asked: -n)", a_spec), -1;
 	else	{
 #ifdef	_WIN32
 		/* The console, UTF-16 without echo, made UTF-8 - the bytes Linux would have taken */
@@ -2011,7 +2012,7 @@ size_t		l_n = 0;
 		int	l_u;
 
 		if ( l_in == INVALID_HANDLE_VALUE || !GetConsoleMode(l_in, &l_mode) )
-			return	s_vbkx$msg("%s is encrypted: no console to ask the passphrase on - give -k file", a_spec), -1;
+			return	s_vbkx$msg("Saveset: %s - is encrypted, and there is no console to ask the passphrase on: give -k file", a_spec), -1;
 
 		fprintf(stderr, "Passphrase for %s: ", a_spec);
 		SetConsoleMode(l_in, (l_mode & ~ENABLE_ECHO_INPUT) | ENABLE_LINE_INPUT);
@@ -2036,7 +2037,7 @@ size_t		l_n = 0;
 			if ( l_tty )
 				fclose(l_tty);
 
-			return	s_vbkx$msg("%s is encrypted: no terminal to ask the passphrase on - give -k file", a_spec), -1;
+			return	s_vbkx$msg("Saveset: %s - is encrypted, and there is no terminal to ask the passphrase on: give -k file", a_spec), -1;
 			}
 
 		fprintf(l_tty, "Passphrase for %s: ", a_spec);
@@ -2059,7 +2060,7 @@ size_t		l_n = 0;
 		l_n--;
 
 	if ( !l_n || (l_n >= a_size) )
-		return	s_vbkx$msg("no passphrase, or one longer than %u bytes", (unsigned) (a_size - 1)), -1;
+		return	s_vbkx$msg("Passphrase: none - empty, or longer than %u bytes", (unsigned) (a_size - 1)), -1;
 
 	return	(int) l_n;
 }
@@ -2159,8 +2160,8 @@ const char *	l_keyfile = NULL;
 	if ( !(1 & (l_status = vbk$rd_open(&l_rctx, s_spec, s_vbkx$event, NULL))) )
 		{
 		if ( l_status == STS$K_WARN )
-			s_vbkx$msg("%s is not a saveset", s_spec);
-		else	s_vbkx$msg("%s: %s", s_spec, strerror(l_rctx.err ? l_rctx.err : errno));
+			s_vbkx$msg("File: %s - is not a saveset", s_spec);
+		else	s_vbkx$msg("File: %s, errno: %d - cannot be opened (%s)", s_spec, l_rctx.err ? l_rctx.err : errno, strerror(l_rctx.err ? l_rctx.err : errno));
 
 		return	2;
 		}
@@ -2178,7 +2179,7 @@ const char *	l_keyfile = NULL;
 		vbk$crp_wipe(l_pass, sizeof(l_pass));
 
 		if ( (l_plen > 0) && (l_status == STS$K_ERROR) )
-			s_vbkx$msg("the passphrase does not open %s", s_spec);
+			s_vbkx$msg("Saveset: %s - the passphrase does not open it", s_spec);
 
 		if ( l_status == STS$K_ERROR )
 			{
@@ -2189,7 +2190,7 @@ const char *	l_keyfile = NULL;
 
 		if ( l_status == STS$K_WARN )
 			{
-			s_vbkx$msg("%s: its trailer fails its authentication - read as a saveset without a catalog", s_spec);
+			s_vbkx$msg("Saveset: %s - its trailer fails its authentication: read as a saveset without a catalog", s_spec);
 			s_bad	= 1;
 			}
 		}
@@ -2203,7 +2204,7 @@ const char *	l_keyfile = NULL;
 		case	'x':
 			if ( s_vbkx$os_outdir(s_outdir) )
 				{
-				s_vbkx$msg("%s: %s", s_outdir, strerror(errno));
+				s_vbkx$msg("Directory: %s, errno: %d - cannot be made or entered (%s)", s_outdir, errno, strerror(errno));
 				l_rc	= 2;
 				break;
 				}
