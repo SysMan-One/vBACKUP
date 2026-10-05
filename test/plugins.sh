@@ -33,6 +33,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-03 : far2l's question to revive an instance is known by
+#					its prompt too: with many instances left over the
+#					first line of it is scrolled off the screen.
+#
 #		 5-OCT-2026	RRL	X-02 : An encrypted saveset through VBACKUP_KEY_FILE; without
 #					it the commands fail at once.
 #
@@ -218,7 +222,7 @@ if command -v tmux > /dev/null 2>&1 && command -v far2l > /dev/null 2>&1; then
 	while [ $i -lt 8 ]; do
 		SCR=$(tmux capture-pane -t $TMUXSESS -p 2>/dev/null)
 		case "$SCR" in
-			*"lost in space"*)		tmux send-keys -t $TMUXSESS Enter ;;
+			*"lost in space"*|*"instance index to revive"*)	tmux send-keys -t $TMUXSESS Enter ;;
 			*OSC52*|*"Getting Started"*)	tmux send-keys -t $TMUXSESS Escape ;;
 			*x.bck*)			break ;;
 		esac
