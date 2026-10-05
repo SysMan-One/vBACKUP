@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		A pipe: no NOTRAILER at the start - its TRAILER comes at its end;
+**		NOTRAILER when it ended without one.
 **
 **	X01-07		 5-OCT-2026	RRL
 **		RESTSUMM always; names made by FAO.
@@ -1347,7 +1351,7 @@ unsigned	l_nbases = 0;
 		}
 
 
-	if ( !l_rctx.trailer && !a_opts->incremental )
+	if ( !l_rctx.trailer && !a_opts->incremental && !l_rctx.isstream )
 		$VBKMSG(VBACKUP$_NOTRAILER, a_spec);
 
 	/* /ORIGINAL: the absolute bases of the SUMMARY (X01-02 and later) are the output */
@@ -1437,6 +1441,11 @@ unsigned	l_nbases = 0;
 
 	vbk$rst_finish(l_rst, &l_nf, &l_nb);
 	vbk$hash_free(&l_names, 0);
+
+	/* A stream: its TRAILER is known only at its end - a stream that ended without one was cut */
+	if ( l_rctx.isstream && l_rctx.eof && !l_rctx.trailer && !l_rctx.trlraw )
+		$VBKMSG(VBACKUP$_NOTRAILER, a_spec);
+
 	vbk$rd_close(&l_rctx);
 
 	*a_nfiles += l_nf;
@@ -1630,8 +1639,9 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 
 	if ( !l_rctx.trailer )
 		{
-		/* No catalog: the stream is searched for the FILE record */
-		$VBKMSG(VBACKUP$_NOTRAILER, l_spec);
+		/* No catalog: the stream is searched for the FILE record (a pipe has its catalog at its end) */
+		if ( !l_rctx.isstream )
+			$VBKMSG(VBACKUP$_NOTRAILER, l_spec);
 		vbk$rd_rewind(&l_rctx);
 		l_found	= 2;
 		}
@@ -1763,6 +1773,10 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 
 	if ( (l_fd >= 0) && !l_tostd && close(l_fd) )
 		l_status = $VBKMSG(VBACKUP$_WRITERR, a_opts->output, errno, strerror(errno));
+
+	/* A stream: its TRAILER is known only at its end - a stream that ended without one was cut */
+	if ( l_rctx.isstream && l_rctx.eof && !l_rctx.trailer && !l_rctx.trlraw )
+		$VBKMSG(VBACKUP$_NOTRAILER, l_spec);
 
 	vbk$rd_close(&l_rctx);
 	free(l_zbuf);

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		/VOLUME_SIZE refused with the standard output: one stream, one
+**		volume.
 **
 **	X01-07		 5-OCT-2026	RRL
 **		STARTED and COMPLETED (how it went, how long): a command that has
@@ -1017,6 +1021,15 @@ size_t		l_cmdlen = 0;
 	if ( l_opts.encrypt && (l_opts.op != VBACKUP$K_OP_SAVE) )
 		{
 		$VBKMSG(VBACKUP$_QUALUSE, "ENCRYPT", "a saveset is made encrypted by a save; one that is, is known by itself - give /KEY_FILE or nothing");
+		__cli$cleanup(l_clictx);
+
+		return	VBACKUP$K_EXIT_ERROR;
+		}
+
+	/* The standard output is one stream: one volume */
+	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && !strcmp(l_opts.output, "-") && l_opts.volsize )
+		{
+		$VBKMSG(VBACKUP$_QUALUSE, "VOLUME_SIZE", "a saveset written to the standard output is one volume");
 		__cli$cleanup(l_clictx);
 
 		return	VBACKUP$K_EXIT_ERROR;

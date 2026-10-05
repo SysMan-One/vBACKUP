@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -83,6 +83,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		"-": a saveset from a pipe - listed and extracted as it is read;
+**		names refused (its catalog is at its end).
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets (format.md 6.10): -k keyfile, VBACKUP_KEY_FILE,
@@ -1770,7 +1774,8 @@ uint32_t	l_len;
 uint16_t	l_type;
 int		l_hole;
 
-	if ( (l_ents = s_vbkx$catalog(a_rctx, &l_n, &l_hole)) && !l_hole )
+	/* A pipe ("-"): its catalog is at its end - it is listed as it is read, and that is no fault */
+	if ( !a_rctx->isstream && (l_ents = s_vbkx$catalog(a_rctx, &l_n, &l_hole)) && !l_hole )
 		{
 		for ( size_t i = 0; i < l_n; i++ )
 			if ( l_ents [i].status == VBK$K_FS_PRESENT )
@@ -1785,10 +1790,12 @@ int		l_hole;
 		return	s_bad ? 1 : 0;
 		}
 
-	s_vbkx$freecat(l_ents, l_n);
-	s_vbkx$msg("%s: %s - the whole saveset is read", s_spec, a_rctx->trailer ? "the catalog is damaged" : "no catalog");
-
-	vbk$rd_rewind(a_rctx);
+	if ( !a_rctx->isstream )
+		{
+		s_vbkx$freecat(l_ents, l_n);
+		s_vbkx$msg("%s: %s - the whole saveset is read", s_spec, a_rctx->trailer ? "the catalog is damaged" : "no catalog");
+		vbk$rd_rewind(a_rctx);
+		}
 
 	while ( 1 & vbk$rd_next(a_rctx, &l_type, &l_body, &l_len, NULL) )
 		{
@@ -1798,6 +1805,13 @@ int		l_hole;
 		if ( (l_type == VBK$K_RT_FILE) && (1 & s_vbkx$parse(l_body, l_len, &l_e)) )
 			s_vbkx$line(&l_e);
 		}
+
+	/* A pipe read through to its TRAILER is whole; one that stopped short, or a saveset without its catalog, is not */
+	if ( a_rctx->isstream && !s_bad && (a_rctx->trailer || a_rctx->trlraw) )
+		return	0;
+
+	if ( a_rctx->isstream && !a_rctx->trailer && !a_rctx->trlraw )
+		s_vbkx$msg("%s ends before its catalog: the save did not complete", s_spec);
 
 	return	1;
 }
@@ -1855,6 +1869,14 @@ int		l_hole, l_found = 0;
 			s_vbkx$lost(a_rctx, NULL, 0);
 		}
 	else	{
+		if ( a_rctx->isstream )
+			{
+			s_vbkx$msg("%s: a pipe has its catalog at its end - names cannot be looked up; give no names to extract it all,"
+				" or keep the stream in a file", s_spec);
+
+			return	2;
+			}
+
 		if ( !(l_ents = s_vbkx$catalog(a_rctx, &l_n, &l_hole)) )
 			{
 			s_vbkx$msg("%s: %s - names cannot be looked up; give no names to extract it all", s_spec,

@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-05"
+#define	__IDENT__	"X01-08"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.5.0"
+#define	__REV__		"1.8.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		VBK$OS_STDIN, VBK$OS_READ: a saveset read from a pipe.
 **
 **	X01-05		 4-OCT-2026	RRL
 **		VBK_NOSTARLET: the status values and the CRC of its own on
@@ -204,6 +207,25 @@ static inline int	vbk$os_close (
 }
 
 /*
+**  The standard input, as a saveset: binary, or ^Z and CR LF are lost
+*/
+static inline int	vbk$os_stdin (void)
+{
+	_setmode(0, _O_BINARY);
+
+	return	0;
+}
+
+static inline int64_t	vbk$os_read (
+		int		a_fd,
+		void *		a_buf,
+		size_t		a_len
+			)
+{
+	return	_read(a_fd, a_buf, (unsigned) ((a_len > 0x40000000U) ? 0x40000000U : a_len));
+}
+
+/*
 **  Read at an offset: one thread reads a volume, so seek and read will do
 */
 static inline int64_t	vbk$os_pread (
@@ -364,6 +386,20 @@ static inline int64_t	vbk$os_pread (
 			)
 {
 	return	(int64_t) pread(a_fd, a_buf, a_len, (off_t) a_off);
+}
+
+static inline int	vbk$os_stdin (void)
+{
+	return	STDIN_FILENO;
+}
+
+static inline int64_t	vbk$os_read (
+		int		a_fd,
+		void *		a_buf,
+		size_t		a_len
+			)
+{
+	return	(int64_t) read(a_fd, a_buf, a_len);
 }
 
 /*
