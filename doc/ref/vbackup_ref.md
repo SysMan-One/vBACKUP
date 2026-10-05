@@ -10,9 +10,10 @@ parameters and qualifiers, the saveset and the journal, the stand-alone
 extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
-**Revision/Update Information:** This is a new manual.
+**Revision/Update Information:** This manual supersedes the edition for
+VBACKUP X01-08.
 
-**Software Version:** VBACKUP X01-08
+**Software Version:** VBACKUP X01-11
 
 **Operating System:** Linux (x86_64, aarch64); Windows for vbkx.exe and
 the WCX plugin
@@ -21,7 +22,7 @@ the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-08 as built from
+The information in this document reflects VBACKUP X01-11 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -59,8 +60,8 @@ This manual consists of the following chapters and appendixes:
 - Chapter 1 describes the saveset, the operations of VBACKUP and the
   mechanisms behind them: the structure of a saveset, file
   specifications, incremental backup and the journal, `/PHYSICAL` and
-  `/IMAGE` operations, compression, encryption, pipes, the page cache,
-  threads, the extractors and the plugins.
+  `/IMAGE` operations, compression, encryption, pipes, savesets on other
+  nodes, the page cache, threads, the extractors and the plugins.
 - Chapter 2 gives the format of the VBACKUP command, its parameters,
   how the operation is determined, the exit status and the
   restrictions.
@@ -116,7 +117,7 @@ process number:
 In the examples of this manual the date, time and process number are
 omitted, and long directory names of the system on which the examples
 were made are shortened to names such as `/home`, `/backup` and
-`/mnt/usb`. Numbers and texts are as VBACKUP X01-08 prints them.
+`/mnt/usb`. Numbers and texts are as VBACKUP X01-11 prints them.
 
 Numbers are decimal unless otherwise stated. Sizes with the suffixes K,
 M, G and T are binary: 1K is 1024 bytes.
@@ -161,7 +162,8 @@ catalog of its files.
 VBACKUP recognizes a saveset on the input side by its contents, never by
 its name. On the output side of a save, a saveset is recognized by its
 name (it ends in `.bck` or `.sav`), by the `/SAVE_SET` qualifier, or by
-the name `-` (the standard output).
+the name `-` (the standard output). A saveset on another node,
+*node*`::`*file*, is a saveset on either side (Section 1.10).
 
 ### 1.2 Operations
 
@@ -179,10 +181,15 @@ The operation is determined by the parameters and by a few qualifiers
 | files | directory (no saveset) | **Copy**: the files are copied from disk to disk. |
 | saveset[,...] | -- (with `/RECORD`) | **Journal rebuild**: the journal is made again from the catalogs. |
 | -- | -- (with `/JOURNAL /LIST`) | **Journal listing**: the savesets and files the journal knows. |
+| saveset | saveset | **Copy of a saveset**: the blocks are copied as they are, volume for volume (`/TRANSFER`). |
 
 A save may also verify the new saveset (`/VERIFY`), list it (`/LIST`),
 record it in the journal (`/RECORD`) and delete the files it saved and
 verified (`/DELETE`).
+
+The saveset of a save, a restore, a listing, a compare, an extraction or
+a copy of a saveset may also be `-`, a pipe (Section 1.9), or
+*node*`::`*file*, a saveset on another node (Section 1.10).
 
 ### 1.3 Saveset Structure
 
@@ -243,6 +250,11 @@ volume; VBACKUP finds the others beside it. A missing volume is reported
 (MISSVOL); the files that lie wholly in the other volumes are still
 restored. A file with a volume's name that belongs to another saveset is
 ignored (WRONGVOL).
+
+A saveset written to a pipe carries its volumes back to back, each
+beginning with its VHDR, the block numbers running on through them
+(Section 1.9); a copy of the saveset into files splits it into volume
+files of the names above.
 
 #### The Catalog
 
@@ -403,7 +415,7 @@ it is smaller than the DATA record would be. Checksums and repair work as
 for uncompressed data: the file CRC is that of the raw bytes, the block
 CRC that of the bytes as they lie in the stream.
 
-Compression runs on several threads (see Section 1.11); the saveset is
+Compression runs on several threads (see Section 1.12); the saveset is
 the same, byte for byte, as with one thread. A restore, `/LIST`,
 `/COMPARE`, `/EXTRACT` and all extractors recognize compressed data by
 themselves.
@@ -486,18 +498,29 @@ report all blocks lost and write nothing.
 
 ### 1.9 Pipes
 
-The name `-` is the standard output as the output of a save, and the
-standard input as the input of a restore, `/LIST`, `/COMPARE` and
-`/EXTRACT`:
+The name `-` is the standard output as the output of a save or of a
+copy of a saveset, and the standard input as the input of a restore,
+`/LIST`, `/COMPARE`, `/EXTRACT` and a copy of a saveset:
 
 ```
-$ vbackup /home - | ssh host 'cat > /backup/home.bck'
+$ vbackup /home - | ssh host 'vbackup - /backup/home.bck'
 $ ssh host 'vbackup /home -' | vbackup - /restore
 ```
 
-A saveset written to `-` is one volume and is gone once written:
-`/VOLUME_SIZE`, `/VERIFY` (hence `/DELETE`) and `/LIST` are refused with
-it (QUALUSE).
+#### Streams of Several Volumes
+
+Since X01-11 a saveset written to `-` may have several volumes
+(`/VOLUME_SIZE`): they go to the standard output back to back, each
+beginning with its VHDR, and the block numbers run on through them as
+through volume files. Every volume after the first is reported (CREATED,
+`Volume: (standard output)`). A reader of the stream takes the VHDR of
+the next volume as the end of the volume in hand; a volume missing from
+the stream is reported (MISSVOL), and the files that lie wholly in the
+other volumes are still restored.
+
+A saveset written to `-` is gone once written: `/VERIFY` (hence
+`/DELETE`) and `/LIST` are refused with it (QUALUSE: `a saveset written to
+the standard output is gone once written: it cannot be read back here`).
 
 A saveset read from `-` is read once, forward only. The catalog at its
 end is of no use there: `/LIST` lists the FILE records as they come,
@@ -505,7 +528,102 @@ end is of no use there: `/LIST` lists the FILE records as they come,
 are repaired as from a file. A pipe that ends before the TRAILER gives
 NOTRAILER.
 
-### 1.10 The Page Cache
+#### The Receiver
+
+When the input is a saveset and the output is a saveset too, VBACKUP
+copies the saveset block for block (`/TRANSFER`). With `-` on one side
+this joins a pipe and the volume files:
+
+```
+$ vbackup home.bck - | ...         the volumes, back to back, into the pipe
+$ ... | vbackup - home.bck         the stream into home.bck, home.bck.002, ...
+```
+
+The receiver, `vbackup - `*saveset*, splits the stream into volume files
+at each VHDR, with the names of Section 1.3: the saveset on its disk is
+the one that was sent, volume for volume and byte for byte. It checks
+every block as it arrives. A bad block is copied as it is and reported
+(BLKCOPIED), to be repaired from its group by a restore; a stream that
+ends before its TRAILER is reported (NOTRAILER). The records are never
+decoded, so an encrypted saveset passes without its passphrase. XFRSUMM
+gives the totals.
+
+### 1.10 Savesets on Other Nodes
+
+A saveset may lie on another node, named as DECnet named a file there:
+*node*`::`*file*. *node* is what ssh takes (`host` or `user@host`) and
+contains no slash; *file* is the saveset (its first volume) on that node.
+
+```
+$ vbackup /home backup-host::/backup/home.bck /VOLUME_SIZE=4G /VERIFY
+$ vbackup backup-host::/backup/home.bck /restore
+$ vbackup backup-host::/backup/home.bck /LIST
+```
+
+#### Mechanism
+
+VBACKUP starts VBACKUP on the other node through ssh -- or through the
+command named by the environment variable `VBACKUP_RSH` -- and joins it
+to this one by a pipe; the saveset goes through the pipe as a stream
+(Section 1.9). What is given to the other node is always a copy of a
+saveset:
+
+| This node | The other node |
+|---|---|
+| A save, or a copy of a saveset, to *node*`::`*file*: the saveset is written into the pipe. | `vbackup - `*file*` /TRANSFER`, with `/REPLACE` when it is given here: the stream is split into the volume files of *file*, every block checked. |
+| A restore, `/LIST`, `/COMPARE`, `/EXTRACT` or a copy of a saveset from *node*`::`*file*: the saveset is read from the pipe. | `vbackup `*file*` - /TRANSFER`: the volumes of *file*, back to back, into the pipe. |
+
+`/VOLUME_SIZE` of a save to another node therefore makes the volume
+files there. A *node*`::`*file* input must be the only input. The
+messages of the other side come to the standard error here as they are,
+among those of this side and with its own process number: its STARTED,
+CREATED, XFRSUMM and COMPLETED, and whatever went wrong there.
+
+#### /VERIFY
+
+A save to another node with `/VERIFY` is verified once the other side
+has completed: the saveset is read back from there (a second ssh,
+`vbackup `*file*` - /TRANSFER`) and every file is compared with the disk
+here (VERIFYING, CMPSUMM). The saveset as it arrived -- the CRC of every
+block, the TRAILER -- is checked by the receiver there. `/DELETE` and
+`/LIST` are not taken with a saveset made on another node (QUALUSE: `not
+with a saveset made on another node`); list it by a second command, which
+reads it back. With `/RECORD` the journal records such a saveset as
+`(standard output)`.
+
+#### Completion Codes
+
+The completion code of the other side joins that of this one. 0 adds
+nothing; 1 (warnings) makes the exit status at least 1; any other code,
+or an end by a signal (shown as 128 + the signal), is reported by
+REMOTEERR, and the exit status is 2. Code 127 most often means that the
+command of `VBACKUP_RSH` cannot be run here, or `vbackup` cannot be found
+there; 255 is ssh itself failing. When the other side stops while this
+one writes, this side finds the pipe broken: WRITERR (errno 32), FATALSAVE
+and REMOTEERR follow one another -- one fault, told by the messages of the
+other side above them. An `/EXTRACT` stops reading once it has its file;
+the broken pipe the other side meets then is no error. REMOTE reports that
+the pipe or the process for ssh cannot be made at all.
+
+#### Requirements
+
+- VBACKUP X01-11 or later on the other node, in the PATH of a
+  non-interactive ssh session: `ssh `*node*` vbackup` must start it.
+- ssh must let this node in by its keys, with nothing asked: the key of
+  the user installed there (`ssh-copy-id`), the host key of the other
+  node already known.
+- The user on the other node must be able to create, or read, the
+  saveset there.
+
+#### Why /TRANSFER
+
+The commands given to the other node carry `/TRANSFER`. A VBACKUP before
+X01-11 does not know that qualifier and refuses the command; without it,
+it would take `vbackup - /backup/home.bck` for a restore of the stream
+into a directory named `/backup/home.bck`. An old VBACKUP on the other
+node thus fails plainly (REMOTEERR) rather than does the wrong thing.
+
+### 1.11 The Page Cache
 
 VBACKUP takes care not to evict the working data of the system from the
 page cache:
@@ -523,19 +641,19 @@ page cache:
 The pages of the saveset and of "cold" files are therefore not in the
 cache after a save; that is intended.
 
-### 1.11 Threads
+### 1.12 Threads
 
 | Thread(s) | Work | Number |
 |---|---|---|
 | Writer | Writes the blocks of the saveset, while the main thread reads files and builds blocks. | 1; `VBACKUP_PIPELINE=0` writes without it. |
 | Read-ahead | Opens and reads the first megabyte of the next files of the walk, so that the save or copy finds them in the cache; at most 128 files and 64 MB ahead. | 8 by default; `VBACKUP_PREFETCH=n`, at most 64, 0 -- none. |
 | Compression | Compresses the data of a save `/DATA_FORMAT=COMPRESSED`; the main thread writes the records in order. | The number of processors, at most 8; `VBACKUP_ZTHREADS=n`, 1 -- none. |
-| Encryption | Writing: the ChaCha20 key stream of a block in stripes. Reading: the tags of the blocks of a group checked and the blocks decrypted side by side. | The number of processors, at most 8; `VBACKUP_CTHREADS=n`, 1 -- none. |
+| Encryption | Writing: the encrypted data blocks waiting for the writer sealed (ChaCha20 and tag) side by side, each whole, while the writer thread computes the XOR blocks and the CRCs in order; without the writer thread, the key stream of a block in stripes. Reading: the tags of the blocks of a group checked and the blocks decrypted side by side. | The number of processors, at most 8; `VBACKUP_CTHREADS=n`, 1 -- none. |
 
 No thread changes the saveset: with any number of threads the same input
 gives the same saveset.
 
-### 1.12 The Stand-Alone Extractor and the Extractors of Last Resort
+### 1.13 The Stand-Alone Extractor and the Extractors of Last Resort
 
 vbkx is a small, statically linked program that lists, extracts, prints
 and tests savesets on a machine where VBACKUP is not installed -- a
@@ -552,7 +670,7 @@ corrected against `format.md`. They read compressed and encrypted
 savesets, repair one bad block per group, and name every damaged or
 missing file. See Appendix C.
 
-### 1.13 File Manager Plugins
+### 1.14 File Manager Plugins
 
 Savesets can be browsed like folders in Midnight Commander (extfs script
 `uvbk`), far2l and Far Manager 3 (MultiArc, over vbkx), and Total
@@ -564,7 +682,7 @@ plugins never ask for a passphrase. See Appendix D.
 
 ---
 
-### 1.14 Scheduling and Rotation
+### 1.15 Scheduling and Rotation
 
 VBACKUP does not schedule itself nor delete old savesets: that is the
 business of a batch queue, and BATCH (the batch job subsystem, `batch
@@ -597,9 +715,9 @@ silently, as with cron.
 ## Chapter 2 VBACKUP Usage Summary
 
 The VBACKUP utility saves files into savesets, restores, lists,
-compares and extracts them, copies files from disk to disk, copies block
-devices and whole file systems, and keeps the journal of incremental
-backup.
+compares, extracts and copies them, here or on another node, copies
+files from disk to disk, copies block devices and whole file systems,
+and keeps the journal of incremental backup.
 
 ### Format
 
@@ -609,6 +727,7 @@ vbackup input-specifier /LIST[=file] [/qualifiers]
 vbackup input-specifier [output-specifier] /COMPARE [/qualifiers]
 vbackup input-specifier [output-specifier] /EXTRACT=stored-name [/qualifiers]
 vbackup input-specifier /ORIGINAL [/qualifiers]
+vbackup input-saveset output-saveset [/TRANSFER] [/qualifiers]
 vbackup saveset[,...] /RECORD [/JOURNAL=file]
 vbackup /JOURNAL[=file] /LIST [/FULL] [/SELECT=(pattern[,...])]
 vbackup /HELP [topic ...]
@@ -633,8 +752,13 @@ double quotes is taken as it stands.
   given; they are processed one after the other. For a restore
   `/INCREMENTAL`, give the full saveset first and then the incremental
   ones in the order they were made.
+- **Copy of a saveset:** one saveset, given by the name of its first
+  volume.
 - **`-`:** a saveset read from the standard input (restore, `/LIST`,
-  `/COMPARE`, `/EXTRACT`).
+  `/COMPARE`, `/EXTRACT`, copy of a saveset).
+- **`node::file`:** a saveset on another node (Section 1.10), read
+  through a pipe as `-` is; it must be the only input. *node* is a host
+  name or `user@host`, without a slash.
 
 A saveset is recognized by its contents. An input that contains a
 wildcard or `...` is never a saveset.
@@ -644,9 +768,12 @@ wildcard or `...` is never a saveset.
 Specifies the output of the operation.
 
 - **Save:** the saveset to be created: a name ending in `.bck` or `.sav`,
-  any name with `/SAVE_SET`, or `-` for the standard output. If the
-  saveset exists, VBACKUP stops (OPENOUT, errno 17) unless `/REPLACE` is
-  given.
+  any name with `/SAVE_SET`, `-` for the standard output, or
+  *node*`::`*file* for a saveset on another node. If the saveset exists,
+  VBACKUP stops (OPENOUT, errno 17) unless `/REPLACE` is given.
+- **Copy of a saveset:** the saveset to be created, named as for a save,
+  or any name with `/TRANSFER`. If a volume of it exists, VBACKUP stops
+  (OPENOUT, errno 17) unless `/REPLACE` is given.
 - **Restore:** the directory to restore into; it is created if
   necessary. Trailing slashes are ignored. Omitted with `/ORIGINAL`.
 - **Restore /PHYSICAL:** the output block device, or an image file.
@@ -692,15 +819,24 @@ $ vbackup '/home/rrl/.../*.c' sources.bck '/EXCLUDE=(*.o,*/.cache)'
 VBACKUP examines the parameters in this order:
 
 1. Each input is probed. An input with a wildcard is not a saveset; any
-   other input is a saveset when its contents say so.
+   other input is a saveset when its contents say so. A
+   *node*`::`*file* stands for `-` on its side: as the input it is a
+   saveset, as the output a saveset name.
 2. `/EXTRACT` given: extract. `/COMPARE` given: compare. Both require
    exactly one input, and it must be a saveset (otherwise NOTSAVESET).
-3. Every input is a saveset: `/LIST` without an output -- list;
+3. One input that is a saveset, an output that is a saveset name
+   (`.bck`, `.sav`, `/SAVE_SET` or `-`) or `/TRANSFER` given, and no
+   `/LIST`: copy of a saveset, block for block. So `vbackup x.bck y.bck`
+   copies the saveset; to restore, give a directory whose name is not a
+   saveset name.
+4. Every input is a saveset: `/LIST` without an output -- list;
    `/RECORD` without an output -- journal rebuild; otherwise -- restore.
-4. The output is a saveset name (`.bck`, `.sav`, `/SAVE_SET` or `-`):
+5. The output is a saveset name (`.bck`, `.sav`, `/SAVE_SET` or `-`):
    save.
-5. An output is given and the inputs exist: copy.
-6. No parameter at all, with `/JOURNAL` and `/LIST`: journal listing.
+6. An output is given and the inputs exist: copy.
+7. No parameter at all, with `/JOURNAL` and `/LIST`: journal listing.
+
+`/TRANSFER` with any other outcome is refused (QUALUSE).
 
 Otherwise VBACKUP reports what is missing: OPENIN when the input does not
 exist and no output is given; NOPARAM when the output is missing; IVOP
@@ -712,8 +848,8 @@ no parameters and no qualifiers, VBACKUP displays its usage text.
 Every operation except a listing reports its beginning (STARTED) and
 its end (COMPLETED) with the elapsed time and the outcome: `completed`,
 `completed with warnings` or `completed with errors`. Save, restore,
-compare and copy also report their totals (SAVESUMM, RESTSUMM, CMPSUMM,
-CPYSUMM) without `/LOG`. `/LOG` adds a message for every file.
+compare, copy and copy of a saveset also report their totals (SAVESUMM,
+RESTSUMM, CMPSUMM, CPYSUMM, XFRSUMM) without `/LOG`. `/LOG` adds a message for every file.
 
 #### Messages
 
@@ -726,7 +862,8 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 
 The standard output carries only what the operation produces: a listing,
 the data of `/EXTRACT`, a saveset written to `-`, the help text. See
-Appendix A.
+Appendix A. The messages of VBACKUP on another node (Section 1.10) come
+to the standard error too, with the process number of that side.
 
 #### Exit Status
 
@@ -734,7 +871,7 @@ Appendix A.
 |---|---|
 | 0 | All was done. No warning or error was signalled. |
 | 1 | All was done, with warnings: at least one message of severity W (for example, a file changed while it was saved, a file exists and was not restored). |
-| 2 | Something was not done: at least one message of severity E or F was signalled (for example, a file could not be read, a difference was found by `/COMPARE` or `/VERIFY`), or the command could not be parsed. |
+| 2 | Something was not done: at least one message of severity E or F was signalled (for example, a file could not be read, a difference was found by `/COMPARE` or `/VERIFY`, VBACKUP on another node did not complete -- REMOTEERR), or the command could not be parsed. |
 
 Informational and success messages do not affect the exit status.
 
@@ -773,9 +910,18 @@ Informational and success messages do not affect the exit status.
 
 #### Other Restrictions
 
-- A saveset written to the standard output is one volume.
+- A saveset written to the standard output carries its volumes back to
+  back; it cannot be verified (hence not deleted after) nor listed by
+  the command that writes it.
 - A saveset read from the standard input is read once, forward only: no
   catalog lookup; vbkx refuses names for it.
+- A saveset made on another node takes neither `/DELETE` nor `/LIST`;
+  `/VERIFY` reads it back from there. A *node*`::`*file* input must be the
+  only input. The other node needs VBACKUP X01-11 or later and must let
+  this one in by its ssh keys.
+- A copy of a saveset keeps the block size, group size and volumes of
+  the input: `/BLOCK_SIZE`, `/GROUP_SIZE` and `/VOLUME_SIZE` do not change
+  them.
 - `/PHYSICAL` and `/IMAGE` take one input on a save and one saveset on a
   restore.
 - `/INCREMENTAL` refuses a saveset without a catalog and a saveset made
@@ -797,7 +943,8 @@ alphabetical order, and the environment variables that affect it.
 ### Qualifier Summary
 
 In the column *Applies to*: S -- save, R -- restore, L -- list, C --
-compare, X -- extract, P -- copy, J -- journal rebuild and listing.
+compare, X -- extract, P -- copy, J -- journal rebuild and listing, T --
+copy of a saveset.
 
 | Qualifier | Class | Applies to | Default |
 |---|---|---|---|
@@ -832,10 +979,11 @@ compare, X -- extract, P -- copy, J -- journal rebuild and listing.
 | `/OWNER=option` | Output file | R, P | `ORIGINAL` for root, `DEFAULT` otherwise |
 | `/PHYSICAL` | Command | S, R | -- |
 | `/[NO]RECORD` | Command | S, J | `/NORECORD` |
-| `/[NO]REPLACE` | Output file, Output save-set | S, R, X | `/NOREPLACE` |
-| `/SAVE_SET` | Output save-set | S | By name |
+| `/[NO]REPLACE` | Output file, Output save-set | S, R, X, T | `/NOREPLACE` |
+| `/SAVE_SET` | Output save-set | S, T | By name |
 | `/SELECT=(pattern[,...])` | Input file-selection | S, R, C, P, J | All files |
 | `/SINCE=time` | Input file-selection | S, P | All times |
+| `/TRANSFER` | Command | T | By name |
 | `/[NO]VERIFY` | Command | S, P | `/NOVERIFY` |
 | `/VOLUME_SIZE=size` | Output save-set | S | One volume |
 | `/[NO]XATTRS` | Input file, Output file | S, R, P | `/XATTRS` |
@@ -932,7 +1080,7 @@ Listing of save set(s)
 
 Save set:          rrl.bck
 Volumes:           1
-Written with:      VBACKUP X01-08
+Written with:      VBACKUP X01-11
 Node name:         TTR-RTR
 Written by:        root
 Command:           vbackup /home/rrl rrl.bck /VERIFY
@@ -1192,7 +1340,8 @@ are kept.
 (SRCDELETED); DELSUMM gives the totals. `/DELETE` cannot be combined with
 `/PHYSICAL`, `/IMAGE`, `/SINCE` or `/BEFORE` (CONFQUAL). With the standard
 output as the saveset it is refused (QUALUSE): there is nothing to verify
-against.
+against. With a saveset on another node it is refused too (QUALUSE: `not
+with a saveset made on another node`).
 
 **Example**
 
@@ -1608,7 +1757,9 @@ listed. With a file name, the listing is written into that file, which is
 overwritten.
 
 Given to a save, `/LIST` lists the new saveset (refused when it goes to
-the standard output). With `/JOURNAL` and no parameter, it lists the
+the standard output or to another node). A saveset on another node,
+*node*`::`*file*, is listed from the stream it sends (Section 1.10). With
+`/JOURNAL` and no parameter, it lists the
 journal. `/SELECT` and `/EXCLUDE` restrict a saveset listing as they
 restrict a restore.
 
@@ -1793,7 +1944,8 @@ and, with `/VERIFY`, verified without a difference; and for every file
 saved with the status OK, its absolute name, inode, size, modification
 and change times (RECORDED). A file that changed while it was saved, or
 could not be read, is not recorded, so the next `/SINCE=BACKUP` saves it
-again. A saveset written to `-` is recorded as `(standard output)`.
+again. A saveset written to `-`, or to another node, is recorded as
+`(standard output)`.
 
 With savesets and no output specifier, rebuilds the journal from their
 catalogs: every entry with the status OK and inode data (X01-02 or later)
@@ -1828,7 +1980,8 @@ Output file qualifier; output save-set qualifier.
 
 | Operation | Effect |
 |---|---|
-| Save | An existing saveset is overwritten. Without `/REPLACE` the save stops with OPENOUT (errno 17, File exists). |
+| Save | An existing saveset is overwritten. Without `/REPLACE` the save stops with OPENOUT (errno 17, File exists). With a saveset on another node, `/REPLACE` is passed on to VBACKUP there. |
+| Copy of a saveset | The existing volumes of the output are overwritten. Without `/REPLACE` the copy stops at the first volume that exists (OPENOUT, errno 17). |
 | Restore, copy | An existing file is removed and restored again. Without `/REPLACE` it is kept, and FILEEXISTS is reported. |
 | Extract | An existing output file is overwritten. |
 | Restore `/PHYSICAL`, `/IMAGE` | The output device is overwritten; required. |
@@ -1856,7 +2009,8 @@ Output save-set qualifier.
 Specifies that the output specifier is a saveset, whatever its name. It
 is not needed when the name ends in `.bck` or `.sav`, or is `-`. Without
 it, an output with another name beside an input that is not a saveset
-means a copy. On the input side `/SAVE_SET` has no effect: a saveset is
+means a copy. Beside an input that is a saveset, it makes the command a
+copy of the saveset (`/TRANSFER`). On the input side `/SAVE_SET` has no effect: a saveset is
 recognized by its contents.
 
 **Example**
@@ -1932,6 +2086,63 @@ $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 
 ---
 
+### /TRANSFER
+
+Command qualifier.
+
+**Format**
+
+`input-saveset output-saveset /TRANSFER`
+
+**Description**
+
+Copies a saveset to a saveset, block for block. The blocks are copied as
+they are -- never the records: the copy is byte for byte the original,
+volume for volume, and an encrypted saveset is copied without its
+passphrase. The input is one saveset, given by its first volume, or `-`;
+the output is a saveset name, or `-`:
+
+| Command | Effect |
+|---|---|
+| `vbackup x.bck y.bck` | A copy, volume for volume: `y.bck`, `y.bck.002`, ... |
+| `vbackup x.bck -` | The volumes, back to back, to the standard output. |
+| `vbackup - y.bck` | The stream of the standard input split into `y.bck`, `y.bck.002`, ... at each VHDR. |
+
+Every block is checked on the way. A bad block is copied as it is and
+reported (BLKCOPIED): the copy keeps what it was given, and a restore
+repairs the block from its group. A missing volume of the input is
+reported (MISSVOL) and the others are still copied; an input that ends
+before its TRAILER is reported (NOTRAILER). An input that does not begin
+with the VHDR of volume 1 is not taken (NOTSAVESET). The block size and
+the volumes of the input are kept. XFRSUMM gives the totals; `/LOG`
+reports volume 1 too (CREATED); `/REPLACE` overwrites volumes that exist.
+
+A saveset input and a saveset output name mean this copy without the
+qualifier (Chapter 2). `/TRANSFER` asks for it whatever the names would
+mean: `vbackup x.bck dir /TRANSFER` writes the saveset `dir`, `dir.002`,
+..., and restores nothing. With any other input or output it is refused
+(QUALUSE: `the input must be one saveset (or -), and there must be an
+output`). The commands VBACKUP gives to another node carry it, so that a
+VBACKUP there before X01-11 refuses them rather than restores (Section
+1.10).
+
+**Example**
+
+```
+$ vbackup /backup/home.bck /mnt/usb/home.bck /LOG
+%VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/home.bck, Output: /mnt/usb/home.bck - started
+%VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck - created
+%VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
+...
+%VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.005 - created
+%VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+%VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+$ vbackup /backup/home.bck /TRANSFER
+%VBACKUP-E-QUALUSE, Qualifier: /TRANSFER - the input must be one saveset (or -), and there must be an output
+```
+
+---
+
 ### /VERIFY
 
 Command qualifier.
@@ -1946,7 +2157,9 @@ Command qualifier.
 On a save, after the saveset has been written, reads it back and compares
 every file with the disk (VERIFYING, then COMPARERR for a difference and
 CMPSUMM for the totals). With a saveset written to the standard output it is
-refused (QUALUSE). `/DELETE` and, under `/VERIFY`, `/RECORD` act only when the
+refused (QUALUSE). A saveset on another node is read back from there once
+the other side has completed, and compared with the disk here (Section
+1.10). `/DELETE` and, under `/VERIFY`, `/RECORD` act only when the
 verification found no difference.
 
 On a copy, reads every regular file back from both sides as soon as it
@@ -1984,8 +2197,11 @@ are named *name*, *name*`.002`, *name*`.003` and so on (Section 1.3); each
 volume after the first is reported (CREATED). Keep them together in one
 directory.
 
-`/VOLUME_SIZE` is refused for a saveset written to the standard output
-(QUALUSE).
+With the standard output as the saveset the volumes go into it back to
+back, each beginning with its VHDR (Section 1.9); a receiver
+(`vbackup - `*saveset*) or VBACKUP on another node (Section 1.10) splits
+them into volume files again. A copy of a saveset keeps the volumes of its input,
+whatever `/VOLUME_SIZE` says.
 
 **Example**
 
@@ -2038,6 +2254,7 @@ vbkx-rs and vbkx-pl.
 | `VBACKUP_ZTHREADS` | The threads that compress a save `/DATA_FORMAT=COMPRESSED`: the number of processors by default, at most 8; `1` or less -- none. |
 | `VBACKUP_PIPELINE` | `0` -- the saveset is written without the writer thread, for trouble-shooting. The hints to the page cache stay; the saveset is the same. |
 | `VBACKUP_PREFETCH` | The threads that read the next files ahead in a save or a copy: 8 by default, at most 64; `0` -- none. More may help on NFS or a slow network disk, fewer on a single slow hard disk. |
+| `VBACKUP_RSH` | The command that starts VBACKUP on another node for *node*`::`*file* (Section 1.10), in place of `ssh`. It is run as *command* *node* *remote-command*, the way ssh is. |
 | `VBACKUP_HELPLIB` | The help library used by `/HELP`. |
 | `HOME` | The directory of the default journal of a user other than root. |
 
@@ -2122,22 +2339,76 @@ vbkx-rs and vbkx-pl.
    a safe place -- without it the savesets cannot be opened.
 
 5. ```
-   $ vbackup /etc - | ssh backup-host 'cat > /backup/etc.bck'
-   %VBACKUP-I-STARTED, Operation: save, Input: /etc, Output: (standard output) - started
-   %VBACKUP-I-SAVESUMM, Files: 1520, Bytes: 6914304, Blocks: 120, Volumes: 1 - saved
-   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.41 - completed
-   $ ssh backup-host 'cat /backup/etc.bck' | vbackup - /restore/etc
-   %VBACKUP-I-STARTED, Operation: restore, Input: (standard input), Output: /restore/etc - started
-   %VBACKUP-I-RESTSUMM, Files: 1520, Bytes: 6914304 - restored
-   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.30 - completed
+   $ vbackup /etc backup-host::/backup/etc.bck /VOLUME_SIZE=1M /VERIFY
+   %VBACKUP-I-STARTED, Operation: save, Input: /etc, Output: backup-host::/backup/etc.bck - started
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /backup/etc.bck - started
+   %VBACKUP-I-CREATED, Volume: (standard output) - created
+   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.002 - created
+   ...
+   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.005 - created
+   %VBACKUP-I-SAVESUMM, Files: 42, Bytes: 3662512, Blocks: 72, Volumes: 5 - saved
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+   %VBACKUP-I-VERIFYING, Saveset: backup-host::/backup/etc.bck - verifying
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
+   %VBACKUP-I-CMPSUMM, Files: 42, Differences: 0 - compared
+   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.04 - completed
    ```
 
-   A save to another machine through a pipe, and a restore from it. The
-   messages go to the standard error and do not mix with the saveset. A
-   saveset on a pipe is one volume, not verified nor listed; when the pipe is
-   cut, the restore reports NOTRAILER and restores what came.
+   A save to another node, in volumes of 1 MB, verified. VBACKUP on
+   `backup-host`, started through ssh, receives the stream and makes the
+   volume files `/backup/etc.bck`, `/backup/etc.bck.002`, ... there,
+   checking every block; its messages (the copy of a saveset) come here
+   among those of the save. `/VERIFY` reads the saveset back from there and
+   compares it with `/etc`. Had VBACKUP there failed, REMOTEERR would give
+   its completion code, and the exit status would be 2.
 
 6. ```
+   $ vbackup backup-host::/backup/etc.bck /restore/etc
+   %VBACKUP-I-STARTED, Operation: restore, Input: backup-host::/backup/etc.bck, Output: /restore/etc - started
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
+   %VBACKUP-I-RESTSUMM, Files: 42, Bytes: 3662512 - restored
+   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.01 - completed
+   $ vbackup backup-host::/backup/etc.bck /LIST
+   $ vbackup backup-host::/backup/etc.bck /EXTRACT=etc/fstab | less
+   ```
+
+   A restore from another node. VBACKUP there sends the volumes back to
+   back; the restore reads them as a pipe, once, forward only. A listing
+   reads the whole stream (the catalog at its end cannot be reached
+   first); an extraction stops as soon as it has its file.
+
+7. ```
+   $ vbackup /backup/home.bck - > /tmp/home.stream
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/home.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.01 - completed
+   $ vbackup - /mnt/usb/home.bck < /tmp/home.stream
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /mnt/usb/home.bck - started
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
+   ...
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.005 - created
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+   $ cmp /backup/home.bck.003 /mnt/usb/home.bck.003
+   $ vbackup /backup/secret.bck - | ssh vault 'vbackup - /archive/secret.bck'
+   $ vbackup /backup/secret.bck vault::/archive/secret.bck
+   ```
+
+   A saveset of five volumes is copied into a stream, here kept in a
+   file, and back into volume files: every volume of the copy is byte for
+   byte the original. The last two commands send an encrypted saveset to
+   another machine, through a pipe given by hand and as
+   *node*`::`*file*: the blocks are copied, never decrypted, so no
+   passphrase is asked on either side. Had a block gone bad on the
+   way, the receiver would report it (BLKCOPIED) and copy it as it is; a
+   restore repairs it from its group.
+
+8. ```
    # umount /dev/sdb1
    # vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL /DATA_FORMAT=COMPRESSED
    # vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
@@ -2151,7 +2422,7 @@ vbkx-rs and vbkx-pl.
    the labels and UUIDs of the original (PHYSUUID): do not mount both at
    the same time.
 
-7. ```
+9. ```
    # vbackup /mnt/data /mnt/usb/data.bck /IMAGE /VERIFY
    # vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE /LOG
    ```
@@ -2162,29 +2433,29 @@ vbkx-rs and vbkx-pl.
    file system and unmounts it (IMGSUMM). `/dev/sdc1` may be smaller than
    the original device as long as the files fit.
 
-8. ```
-   # vbackup /mnt/usb/home.bck /ORIGINAL
-   %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/home.bck, Output: (where its files came from) - started
-   %VBACKUP-I-ORIGTARGET, Saveset: /mnt/usb/home.bck, Target: /home - its files go back there
-   %VBACKUP-W-FILEEXISTS, File: /home/rrl/a.txt - already exists, not restored
-   ...
-   ```
-
-   Every file goes back to the directory it was saved from. Files that are
-   there are kept and reported; add `/REPLACE` to overwrite them.
-
-9. ```
-   $ vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
-   ...
-   %VBACKUP-I-CMPSUMM, Files: 213, Differences: 0 - compared
-   %VBACKUP-W-SRCKEPT, File: /home/ivan/old/log.txt - not deleted: it changed after it was saved
-   %VBACKUP-I-DELSUMM, Deleted: 197, Kept: 1
-   ```
-
-   The files are archived and then deleted from the disk. A file that was
-   written to after it was saved is kept. Directories are kept.
-
 10. ```
+    # vbackup /mnt/usb/home.bck /ORIGINAL
+    %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/home.bck, Output: (where its files came from) - started
+    %VBACKUP-I-ORIGTARGET, Saveset: /mnt/usb/home.bck, Target: /home - its files go back there
+    %VBACKUP-W-FILEEXISTS, File: /home/rrl/a.txt - already exists, not restored
+    ...
+    ```
+
+    Every file goes back to the directory it was saved from. Files that are
+    there are kept and reported; add `/REPLACE` to overwrite them.
+
+11. ```
+    $ vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
+    ...
+    %VBACKUP-I-CMPSUMM, Files: 213, Differences: 0 - compared
+    %VBACKUP-W-SRCKEPT, File: /home/ivan/old/log.txt - not deleted: it changed after it was saved
+    %VBACKUP-I-DELSUMM, Deleted: 197, Kept: 1
+    ```
+
+    The files are archived and then deleted from the disk. A file that was
+    written to after it was saved is kept. Directories are kept.
+
+12. ```
     $ vbackup /backup/rrl.bck /COMPARE
     $ vbackup /backup/rrl.bck /tmp/restore /COMPARE
     ```
@@ -2194,7 +2465,7 @@ vbkx-rs and vbkx-pl.
     Every difference is reported with COMPARERR; the exit status is 2 when
     there is one.
 
-11. ```
+13. ```
     $ vbackup /backup/rrl.bck /EXTRACT=rrl/notes.txt | less
     $ vbackup /backup/rrl.bck /tmp/notes.txt /EXTRACT=rrl/notes.txt
     ```
@@ -2202,7 +2473,7 @@ vbkx-rs and vbkx-pl.
     One file is extracted to the standard output, then to a file. The name
     is the stored name, as `/LIST` shows it.
 
-12. ```
+14. ```
     $ vbackup /backup/rrl.bck /LIST
     $ vbackup /backup/rrl.bck /LIST /FULL
     $ vbackup /backup/rrl.bck /LIST=/tmp/rrl.lis /FORMAT=LS
@@ -2211,7 +2482,7 @@ vbkx-rs and vbkx-pl.
     The three forms of a listing: brief (the default), full, and one line
     per file in the form of `ls -l`, here written to a file.
 
-13. ```
+15. ```
     $ vbackup /JOURNAL=/backup/home.jnl /LIST /FULL '/SELECT=*/notes.txt'
     $ rm /backup/home.jnl
     $ vbackup /backup/full.bck,/backup/mon.bck /RECORD /JOURNAL=/backup/home.jnl
@@ -2221,7 +2492,7 @@ vbkx-rs and vbkx-pl.
     `/notes.txt` and the saveset that holds the last copy of each. Then the
     journal is rebuilt from the catalogs of the savesets, oldest first.
 
-14. ```
+16. ```
     # vbkx t /mnt/usb/home.bck
     /mnt/usb/home.bck: all files read, all checksums match
     # vbkx l /mnt/usb/home.bck | less
@@ -2232,7 +2503,7 @@ vbkx-rs and vbkx-pl.
     the saveset, lists it and extracts one directory into the disk being
     repaired.
 
-15. ```
+17. ```
     C:\> set VBACKUP_KEY_FILE=C:\Users\rrl\backup.key
     C:\> vbkx.exe l E:\home.bck
     C:\> vbkx.exe x E:\home.bck -C C:\restore rrl/documents
@@ -2338,6 +2609,27 @@ was made by VBACKUP, report the problem with a copy of the saveset.
 
 ---
 
+**BLKCOPIED**, Block: *block*, Volume: *volume* - is bad, copied as it is: a restore repairs it from its group
+
+**Facility:** VBACKUP. **Severity:** Warning.
+
+**Explanation:** A copy of a saveset (`/TRANSFER`, a receiver of a stream,
+VBACKUP on another node receiving a save) met a block with a wrong
+checksum. It is copied as it is: the copy keeps what it was given, and a
+restore of the copy repairs the block from its group, as it would from
+the original. *block* is the position of the block in the copy, counted
+from 0, and *volume* the volume of the output being written; when no
+volume is missing before the bad block, they are its block and volume
+numbers in the saveset.
+
+**User Action:** None for the copy, while no other block of the same
+group is bad. If the block went bad on the way (a network, a pipe), copy
+the saveset again; if it is bad in the original, the medium may be
+failing: copy the saveset to another medium and test it with a restore
+or `/COMPARE`.
+
+---
+
 **BLKFIXED**, Block: *block*, Volume: *volume* - was bad, rebuilt from its group
 
 **Facility:** VBACKUP. **Severity:** Informational.
@@ -2431,7 +2723,7 @@ recording the save.
 **Facility:** VBACKUP. **Severity:** Informational.
 
 **Explanation:** The operation (save, restore, compare, extract, copy,
-rebuild of the journal) has ended, after the elapsed time given.
+rebuild of the journal, copy of a saveset) has ended, after the elapsed time given.
 *outcome* is `completed`, `completed with warnings` or `completed with
 errors`, in agreement with the exit status. Displayed without `/LOG`; a
 listing does not display it.
@@ -2500,7 +2792,9 @@ read by the same version, report the problem.
 **Facility:** VBACKUP. **Severity:** Informational.
 
 **Explanation:** A volume of the saveset was created. Volume 1 is reported
-under `/LOG` only; every further volume always.
+under `/LOG` only; every further volume always. The further volumes of a
+saveset written to the standard output are reported as `Volume: (standard
+output)`: they follow one another in the stream.
 
 **User Action:** None. When the volumes go to removable media, keep them
 together.
@@ -2871,11 +3165,14 @@ all, the full one first, then the incremental ones oldest first.
 **Facility:** VBACKUP. **Severity:** Error.
 
 **Explanation:** A volume of the saveset was not found beside the first
-one. The files that lie wholly in the other volumes are still restored;
-the others are reported.
+one, or a stream of several volumes passed from one volume to a later one
+(the saveset is then named `-`). The files that lie wholly in the other
+volumes are still restored; the others are reported. A copy of a saveset
+reports the volume it cannot find and copies the others.
 
 **User Action:** Put all volumes into one directory, with their names
-unchanged, and repeat the operation.
+unchanged, and repeat the operation. For a stream, find why the sender
+left the volume out (its own MISSVOL).
 
 ---
 
@@ -3017,9 +3314,11 @@ by X01-02 and later carry what `/INCREMENTAL` needs.
 
 **Explanation:** The last block of the saveset is not its TRAILER: the save
 was interrupted (the disk became full, the program was stopped), the
-last volume is missing, or a pipe ended before the saveset did. The files
-up to the break can be restored; the saveset is read sequentially. A
-journal rebuild skips such a saveset.
+last volume is missing, or a pipe ended before the saveset did -- with a
+stream of several volumes, before its last volume came. The files up to
+the break can be restored; the saveset is read sequentially. A journal
+rebuild skips such a saveset. A copy of a saveset reports it after it has
+copied what came, and its copy has no TRAILER either.
 
 **User Action:** Find the missing volume if there is one. Otherwise restore
 what can be restored and make a new saveset.
@@ -3032,7 +3331,9 @@ what can be restored and make a new saveset.
 
 **Explanation:** `/LIST`, `/COMPARE` or `/EXTRACT` was given an input that is
 not a saveset, or more than one input; or a file to be read as a saveset
-is not one.
+is not one; or the input of a copy of a saveset does not begin with the
+volume header of volume 1. With *node*`::`*file* the file is `-`: VBACKUP
+there sent nothing, and its messages above say why.
 
 **User Action:** Give the first volume of one saveset.
 
@@ -3250,8 +3551,12 @@ both must be used.
 
 **Explanation:** A qualifier was given where it cannot be used; *reason*
 says why: `/DELETE` without `/VERIFY`; `/ENCRYPT` on an operation other than a
-save; `/VOLUME_SIZE` with the standard output as the saveset; `/PHYSICAL` or
-`/IMAGE` with more than one input (`one input - one device or volume - a
+save; `/VERIFY` or `/LIST` with the standard output as the saveset (`a
+saveset written to the standard output is gone once written: it cannot be
+read back here`); `/DELETE` or `/LIST` with a saveset on another node (`not
+with a saveset made on another node`); `/TRANSFER` when the command is not
+a copy of a saveset (`the input must be one saveset (or -), and there must
+be an output`); `/PHYSICAL` or `/IMAGE` with more than one input (`one input - one device or volume - a
 saveset`) or more than one saveset (`one saveset at a time`); `/ORIGINAL`
 with an output specifier, or with `/INCREMENTAL` and a saveset of several
 bases.
@@ -3280,6 +3585,41 @@ file being copied or compared, or the temporary catalog spool of a save.
 recorded), or rebuilt from catalogs.
 
 **User Action:** None.
+
+---
+
+**REMOTE**, Node: *node*, errno: *n* - the pipe to VBACKUP there cannot be made (*reason*)
+
+**Facility:** VBACKUP. **Severity:** Error.
+
+**Explanation:** For a saveset on another node, *node*`::`*file*, VBACKUP
+could not make the pipe to VBACKUP there, nor start the process for ssh
+(or for the command of `VBACKUP_RSH`). Nothing was sent or read. A
+command that cannot be run, or a node that cannot be reached, is not
+reported here but by REMOTEERR.
+
+**User Action:** Most often the system is short of processes or file
+descriptors: look at *reason*, and repeat the operation.
+
+---
+
+**REMOTEERR**, Node: *node*, Exit: *n* - VBACKUP there did not complete: see its messages above
+
+**Facility:** VBACKUP. **Severity:** Error.
+
+**Explanation:** VBACKUP on the other node, or ssh that runs it, ended
+with the completion code *n* (2 -- VBACKUP there signalled an error; 127 --
+the command of `VBACKUP_RSH` cannot be run here, or `vbackup` is not on the
+PATH there; 255 -- ssh failed: the node cannot be reached, or does not let
+this one in), or was ended by a signal (*n* = 128 + the signal). A code
+of 1 (warnings) is not reported: it makes the exit status at least 1.
+When the other side stopped during a save, WRITERR (errno 32, Broken pipe)
+and FATALSAVE come before this message.
+
+**User Action:** Read the messages of the other side above it. Check
+that `ssh `*node*` vbackup` displays the usage text without a question, that VBACKUP
+there is X01-11 or later (an earlier one refuses `/TRANSFER`), and that
+the saveset there can be created or read.
 
 ---
 
@@ -3367,11 +3707,14 @@ that is wanted.
 **Facility:** VBACKUP. **Severity:** Informational.
 
 **Explanation:** An operation begins. *operation* is `save`, `restore`,
-`compare`, `extract`, `copy` or `rebuild of the journal`. The standard input
-and output are shown as `(standard input)` and `(standard output)`; the
-output of a restore `/ORIGINAL` as `(where its files came from)`. When
-several input specifications are given, the first is shown. Displayed
-without `/LOG`; a listing does not display it.
+`compare`, `extract`, `copy`, `rebuild of the journal` or `copy of a
+saveset`. The standard input and output are shown as `(standard input)`
+and `(standard output)`; the output of a restore `/ORIGINAL` as `(where
+its files came from)`; a saveset on another node as *node*`::`*file*. When
+several input specifications are given, all are shown as they were
+given. Displayed without `/LOG`; a listing does not display it. VBACKUP on
+another node displays its own STARTED, with the operation `copy of a
+saveset`.
 
 **User Action:** None.
 
@@ -3479,13 +3822,27 @@ savesets saved under the same name.
 
 ---
 
+**XFRSUMM**, Blocks: *n*, Volumes: *n*, Bad: *n* - copied
+
+**Facility:** VBACKUP. **Severity:** Informational.
+
+**Explanation:** The totals of a copy of a saveset: the blocks copied, the
+volumes, and the bad blocks among them (each reported by BLKCOPIED).
+Displayed without `/LOG`, also when the copy failed, with what was copied
+until then. VBACKUP on another node displays it for its side of a save or
+a restore through *node*`::`*file*.
+
+**User Action:** None when Bad is 0. Otherwise see BLKCOPIED.
+
+---
+
 ## Appendix B Saveset Format Summary
 
 This appendix summarizes the saveset format, version 1. The authoritative
 definition is `doc/format.md`; a reader written from that document alone
 must be able to list and restore any saveset. Since X01-08 a saveset may
-also be read from the standard input (see Section 1.9; `format.md`,
-section 8).
+also be read from the standard input, and since X01-11 a stream carries
+several volumes (see Section 1.9; `format.md`, sections 2 and 8).
 
 ### B.1 Conventions
 
@@ -3514,6 +3871,13 @@ Volume *k* >= 2 is named *name*`.`*k* with at least three digits. A group
 never crosses a volume boundary. The block size B is 8192 to 1048576, a
 multiple of 512; the payload of a block is P = B - 64 bytes. Blocks are
 numbered from 0 through the whole saveset.
+
+A stream (a pipe, since X01-11) carries the volumes back to back, each
+beginning with its VHDR; the block numbers run on as ever. A reader of a
+stream takes a VHDR of the next volume as the end of the volume in hand;
+a receiver splits the stream into volume files at each VHDR. A reader of
+a stream reads forward only: a TRAILER ends the groups where it comes,
+and the catalog at the end of the stream is not used for seeking.
 
 ### B.3 Block Header (64 bytes)
 
