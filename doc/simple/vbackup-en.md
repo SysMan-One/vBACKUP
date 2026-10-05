@@ -1306,6 +1306,46 @@ And most of all: ask the person who set up your computer. Show them the message.
 
 ---
 
+## 15. A box from an old OpenVMS computer
+
+**Why:** you have a box made by BACKUP on an old OpenVMS computer
+(a VAX or an Alpha). Its name is often like `USERS.BCK`.
+VBACKUP can open it too.
+
+**First, copy the box here in binary mode.** With FTP, type `binary` before `get`:
+
+```
+ftp> binary
+ftp> get DKA0:[BACKUP]USERS.BCK USERS.BCK
+```
+
+**See what is inside** — the same list OpenVMS shows:
+
+```
+vbackup USERS.BCK /LIST
+```
+
+**Take everything out into a folder:**
+
+```
+vbackup USERS.BCK /home/ivan/vms
+```
+
+The names change a little: `[SMITH.WORK]NOTES.TXT;5` becomes
+`SMITH/WORK/NOTES.TXT`. If there are older versions, they keep the number:
+`NOTES.TXT;4`. Text files become ordinary text files.
+
+**Take out one file:**
+
+```
+vbackup USERS.BCK /EXTRACT=SMITH/LOGIN.COM login.com
+```
+
+If you see `VMSRAW` — that file is a special OpenVMS file (a database).
+It was copied as it is; only OpenVMS can read it.
+
+---
+
 ## Little dictionary
 
 - **Folder** — a place where files live. Like a drawer in a cupboard.

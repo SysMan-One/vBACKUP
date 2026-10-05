@@ -40,6 +40,10 @@ saveset, восстановить их, получить листинг и ср�
 - `vbkx` -- автономный распаковщик, собранный статически: листинг,
   извлечение и проверка saveset-а там, где VBACKUP не установлен
   (`vbackup /HELP VBKX`);
+- saveset-ы OpenVMS BACKUP тоже читаются: листинг как у `BACKUP/LIST`,
+  файлы восстанавливаются с именами Linux, тексты становятся текстами,
+  плохие блоки чинятся по их XOR-группам (`vbackup /HELP OPENVMS`,
+  [doc/vmsbackup.md](doc/vmsbackup.md));
 - никаких зависимостей, кроме libc, StarLet и HELP.
 
 Формат описан в [doc/format.md](doc/format.md) (на английском);
@@ -105,6 +109,15 @@ ACL, capabilities, флаги chattr, жёсткие ссылки, разреж�
 восстановление, которое удаляет то, что было удалено; копирование с
 диска на диск; saveset-ы через ssh.
 
+**Мост с OpenVMS.**  Saveset, записанный OpenVMS BACKUP, -- со старого
+диска, с ленты, скопированной в файл, из архива VAX или Alpha --
+читается в Linux: `vbackup USERS.BCK /LIST /FULL` печатает то же, что
+`BACKUP/LIST/FULL`, байт в байт; восстановление даёт файлам имена Linux
+(`[SMITH]LOGIN.COM;3` -- это `SMITH/LOGIN.COM`, младшие версии
+сохраняют `;n`), делает тексты текстами и чинит плохие блоки по
+XOR-группам, как это сделал бы BACKUP.  `vbkx` и `vbkx.exe` его тоже
+читают.  Никто из остальных этого не умеет.
+
 **Команды OpenVMS BACKUP.**  `/SAVE_SET`, `/SINCE=BACKUP`, `/RECORD`,
 `/INCREMENTAL`, `/IMAGE`, `/PHYSICAL`, `/VERIFY`, `/LIST`, `/SELECT`,
 `/EXCLUDE` -- со справкой HELP, сообщениями в форме VMS и справочным
@@ -129,6 +142,7 @@ Double Commander открывают saveset как папку (только дл
 | Листинг большой резервной копии | каталог, мгновенно | читает всё | каталог | индекс | - |
 | Тома | да | многотомный, неудобно | срезы | - | split |
 | Целое устройство / файловая система | `/PHYSICAL`, `/IMAGE` | нет | нет | нет | да |
+| Читает saveset-ы OpenVMS BACKUP | да, с починкой | нет | нет | нет | нет |
 | Дедупликация | **нет** | нет | нет | **да** | нет |
 | Удалённый репозиторий | канал через ssh | канал | канал | **да** | канал |
 
@@ -190,7 +204,7 @@ Saveset, сделанный с `/PHYSICAL`, любой распаковщик в
 исходных текстов:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 

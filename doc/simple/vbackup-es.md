@@ -1306,6 +1306,47 @@ Y sobre todo: pide ayuda a quien te preparó el ordenador. Enséñale el mensaje
 
 ---
 
+## 15. Una caja de un viejo ordenador OpenVMS
+
+**Para qué:** tienes una caja hecha por BACKUP en un viejo ordenador
+con OpenVMS (un VAX o un Alpha). Suele llamarse algo como `USERS.BCK`.
+VBACKUP también puede abrirla.
+
+**Primero copia la caja aquí en modo binario.** Con FTP, escribe `binary`
+antes de `get`:
+
+```
+ftp> binary
+ftp> get DKA0:[BACKUP]USERS.BCK USERS.BCK
+```
+
+**Ver qué hay dentro** — la misma lista que muestra OpenVMS:
+
+```
+vbackup USERS.BCK /LIST
+```
+
+**Sacarlo todo a una carpeta:**
+
+```
+vbackup USERS.BCK /home/ivan/vms
+```
+
+Los nombres cambian un poco: `[SMITH.WORK]NOTES.TXT;5` pasa a ser
+`SMITH/WORK/NOTES.TXT`. Si hay versiones antiguas, conservan el número:
+`NOTES.TXT;4`. Los ficheros de texto pasan a ser ficheros de texto normales.
+
+**Sacar un solo fichero:**
+
+```
+vbackup USERS.BCK /EXTRACT=SMITH/LOGIN.COM login.com
+```
+
+Si ves `VMSRAW` — ese fichero es un fichero especial de OpenVMS (una base
+de datos). Se copió tal cual; solo OpenVMS puede leerlo.
+
+---
+
 ## Pequeño diccionario
 
 - **Carpeta** — un sitio donde viven los archivos. Como un cajón de un armario.

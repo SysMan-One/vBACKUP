@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-08.
+VBACKUP X01-11.
 
-**Software Version:** VBACKUP X01-11
+**Software Version:** VBACKUP X01-13
 
 **Operating System:** Linux (x86_64, aarch64); Windows for vbkx.exe and
 the WCX plugin
@@ -22,7 +22,7 @@ the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-11 as built from
+The information in this document reflects VBACKUP X01-13 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -711,6 +711,47 @@ $ batch submit /opt/jobs/vbackup-daily.sh /NAME=vbackup-daily /AFTER=TOMORROW
 A job that fails stays in the queue with its log (`batch show`), the
 messages of VBACKUP and its completion code in it; nothing is lost
 silently, as with cron.
+
+### 1.16 OpenVMS BACKUP Savesets
+
+A saveset written by OpenVMS BACKUP is accepted as input. It is known by
+the header of its first block (there is no magic string) and read from its
+first block to its last; VBACKUP displays VMSSAVESET with its block and
+group size. Copy it from VMS in binary mode (FTP `binary`); a saveset taken
+off a tape must keep its block size.
+
+```
+$ vbackup USERS.BCK /LIST /FULL
+$ vbackup USERS.BCK /restore/vms /LOG
+$ vbackup USERS.BCK "/EXTRACT=[SMITH]LOGIN.COM;3" login.com
+```
+
+`/LIST` and `/LIST /FULL` display what `BACKUP/LIST` and `BACKUP/LIST/FULL`
+display, octet for octet. A restore puts the files under the output
+directory by their Linux names: `[SMITH.WORK]NOTES.TXT;5` becomes
+`SMITH/WORK/NOTES.TXT`; the highest version takes the plain name, older
+versions keep `;n`; the escapes of ODS-5 are undone and 8-bit names made
+UTF-8; a directory file becomes the directory. `/SELECT`, `/EXCLUDE` and
+`/EXTRACT` take the Linux names; `/EXTRACT` also the name with its version
+or the file specification of VMS.
+
+Sequential files with a carriage control become texts with LF, as FTP of
+VMS makes them: variable and VFC records lose their counts and control
+areas, fixed records are followed by LF, Stream turns CR LF into LF and
+Stream_CR CR into LF. Files without a carriage control are copied as they
+are on the VMS disk; indexed and relative files as the image of the RMS
+file (VMSRAW). The mode comes from the protection (R - r, W - w, E - x for
+directories only), the modification time from the revision date taken as
+local time; the owner is the user who restores.
+
+Bad blocks are rebuilt from the XOR blocks of `/GROUP_SIZE` (BLKFIXED);
+blocks that cannot be rebuilt are reported (BLKLOST), and a file that lost
+data is reported (FILDAMAGED). A saveset written `/NOCRC` is reported once
+(VMSNOCRC). Savesets encrypted by BACKUP, and the LBN data of `/IMAGE`
+and `/PHYSICAL` savesets, are not read. `/COMPARE`, `/INCREMENTAL`,
+`/ORIGINAL`, `/IMAGE`, `/PHYSICAL` and `/TRANSFER` are not valid with such
+a saveset. The stand-alone extractor `vbkx` reads it the same way. The
+format, as VBACKUP reads it, is described in `doc/vmsbackup.md`.
 
 ## Chapter 2 VBACKUP Usage Summary
 
@@ -2513,6 +2554,16 @@ vbkx-rs and vbkx-pl.
     extracts a directory. Names that Windows cannot hold are not extracted,
     and said.
 
+18. ```
+    $ vbackup USERS.BCK /LIST /FULL
+    $ vbackup USERS.BCK /restore/vms /SELECT=SMITH/*
+    $ vbkx p USERS.BCK "[SMITH]LOGIN.COM;3"
+    ```
+
+    A saveset of OpenVMS BACKUP, copied in binary mode from an Alpha, is
+    listed as `BACKUP/LIST/FULL` lists it, the files of one user restored
+    with Linux names, and one older version of a file displayed by vbkx.
+
 ---
 
 ## Appendix A VBACKUP Messages
@@ -3782,6 +3833,44 @@ compared with the disk.
 
 ---
 
+**VMSNOCRC**, Saveset: *saveset* - written /NOCRC: its blocks carry no CRC, damage in them cannot be seen
+
+**Facility:** VBACKUP. **Severity:** Informational.
+
+**Explanation:** The saveset of OpenVMS BACKUP was written `/NOCRC`: its
+blocks have no CRC, and a damaged block is not recognized as such. Its XOR
+blocks, if any, are still read.
+
+**User Action:** None. Check the restored files by other means where it
+matters.
+
+---
+
+**VMSRAW**, File: *file*, Organization: *org*, Record format: *rfm* - restored as it is on the VMS disk: its records are not converted
+
+**Facility:** VBACKUP. **Severity:** Informational.
+
+**Explanation:** A file of a saveset of OpenVMS BACKUP was restored as the
+image of its RMS file: an indexed or relative file, or a variable-length
+file without a carriage control. Its records cannot be had without RMS.
+
+**User Action:** Copy the file back to OpenVMS in binary mode and set its
+attributes there, or `CONVERT` it to a sequential file on OpenVMS before
+the save.
+
+---
+
+**VMSSAVESET**, Saveset: *saveset*, Block size: *n*, Group size: *n* - an OpenVMS BACKUP saveset
+
+**Facility:** VBACKUP. **Severity:** Informational.
+
+**Explanation:** The input is a saveset written by OpenVMS BACKUP, read as
+Section 1.16 describes.
+
+**User Action:** None.
+
+---
+
 **WRITERR**, File: *file*, errno: *n* - cannot be written (*reason*)
 
 **Facility:** VBACKUP. **Severity:** Error.
@@ -3993,6 +4082,16 @@ of everything before it. The key of an FSTATE is the absolute name of the
 file. The journal is rewritten whole through `journal.tmp` under an
 exclusive lock on `journal.lock`.
 
+### B.9 OpenVMS BACKUP Savesets
+
+Read, not written (Section 1.16; `doc/vmsbackup.md`): blocks of one size
+with a 256-byte header (BBH: size 256, structure level 0x0101, applic 1 for
+data and 2 for XOR, the block number from 1, CRC-32/IEEE of the block with
+its CRC and checksum fields as zeroes, flag 1 `/NOCRC`), records with a
+16-byte header (BRH: size, type 1 SUMMARY, 3 FILE, 4 VBN, the VBN address),
+SUMMARY and FILE attributes as counted TLVs, the data of a file as its VBNs
+of 512 octets.
+
 ---
 
 ## Appendix C The Stand-Alone Extractor vbkx
@@ -4106,7 +4205,7 @@ source tree:
 
 ```
 $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
+      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
 $ make -f tools/Makefile.win
 ```
 

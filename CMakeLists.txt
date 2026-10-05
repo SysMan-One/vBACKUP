@@ -14,6 +14,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-13 : Stage 9: VBKVMS - the savesets of OpenVMS BACKUP
+#					(lib/vbkvms.c into VBKCORE, vbkx and vbkx.exe;
+#					src/vbkvms.c); doc/vmsbackup.md installed.
+#
 #		 5-OCT-2026	RRL	X-09 : The kit by git archive of HEAD (cmake/kit.cmake):
 #					what is not committed never gets into it.
 #					The magic of file(1) into /etc/magic: MC knows a
@@ -155,7 +159,7 @@ endif()
 #	CRC), no writer, no utility, no tests.
 #
 if ( WIN32 )
-	add_executable(vbkx tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c)
+	add_executable(vbkx tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c)
 	target_include_directories(vbkx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 	target_link_libraries(vbkx PRIVATE vbackup_options shell32)
 	target_link_options(vbkx PRIVATE -static)
@@ -215,6 +219,7 @@ add_library(vbkcore STATIC
 	lib/vbkrd.c
 	lib/vbklz4.c
 	lib/vbkcrp.c
+	lib/vbkvms.c
 	lib/vbkpar.c)
 
 target_include_directories(vbkcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
@@ -239,6 +244,7 @@ add_executable(vbackup
 	src/vbkkey.c
 	src/vbkxfr.c
 	src/vbkrsh.c
+	src/vbkvms.c
 	src/vbkpre.c)
 
 #
@@ -321,7 +327,7 @@ if ( VBACKUP$M_WINVBKX )
 	find_program(VBACKUP_WINE wine)
 
 	if ( VBACKUP_MINGW )
-		set(L_SRC tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c)
+		set(L_SRC tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c)
 
 		#	In a directory of its own: as a file next to them, CMake took vbkx.exe for the target vbkx
 		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe
@@ -442,7 +448,7 @@ endif()
 #		<prefix>/bin/vbackup
 #		<prefix>/share/man/man1/vbackup.1
 #		<prefix>/share/help/vbackup.hlb, ru/vbackup_ru.hlb
-#		<prefix>/share/doc/vbackup/README.md, format.md, vbackuplib[_ru].md
+#		<prefix>/share/doc/vbackup/README.md, format.md, vmsbackup.md, vbackuplib[_ru].md
 #
 option(VBACKUP$M_INSTALL_DOC "Install the manual page and the documents" ON)
 
@@ -457,6 +463,7 @@ if ( VBACKUP$M_INSTALL_DOC )
 	install(FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/README.md
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/format.md
+		${CMAKE_CURRENT_SOURCE_DIR}/doc/vmsbackup.md
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/vbackuplib.md
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/vbackuplib_ru.md
 		DESTINATION ${CMAKE_INSTALL_DOCDIR})

@@ -35,6 +35,10 @@ What a saveset gives you:
   recognized; no crypto library, so every reader below reads it;
 - `vbkx`, a stand-alone extractor linked statically: list, extract and
   test a saveset where VBACKUP is not installed (`vbackup /HELP VBKX`);
+- the savesets of OpenVMS BACKUP read too: listed as `BACKUP/LIST`
+  lists them, their files restored with Linux names and their texts made
+  texts, bad blocks rebuilt from their XOR groups (`vbackup /HELP OPENVMS`,
+  [doc/vmsbackup.md](doc/vmsbackup.md));
 - no dependency beyond libc, StarLet and HELP.
 
 The format is described in [doc/format.md](doc/format.md); the
@@ -97,6 +101,15 @@ deletes what was deleted; a copy disk to disk; savesets through ssh.
 `/SELECT`, `/EXCLUDE` - with HELP, messages of the VMS form and a reference
 manual in the manner of DEC ([doc/ref](doc/ref/vbackup_ref.md)).
 
+**A bridge from OpenVMS.**  A saveset written by OpenVMS BACKUP - off an
+old disk, a tape copied into a file, an archive of a VAX or an Alpha - is
+read on Linux: `vbackup USERS.BCK /LIST /FULL` prints what `BACKUP/LIST
+/FULL` prints, octet for octet; a restore gives its files Linux names
+(`[SMITH]LOGIN.COM;3` is `SMITH/LOGIN.COM`, older versions keep `;n`),
+makes its texts texts and repairs its bad blocks from its XOR groups as
+BACKUP would.  `vbkx` and `vbkx.exe` read it too.  None of the others
+does.
+
 **Scheduling and rotation are left to a batch queue.**  BATCH (the batch
 job subsystem) runs a save every night the way OpenVMS does - a job that
 submits itself again for the next day, keeps its log, and stays in the
@@ -115,6 +128,7 @@ Double Commander open a saveset like a folder (read only).
 | Listing of a large backup | catalog, instant | reads it all | catalog | index | - |
 | Volumes | yes | multi-volume, awkward | slices | - | split |
 | Whole device / file system | `/PHYSICAL`, `/IMAGE` | no | no | no | yes |
+| Reads OpenVMS BACKUP savesets | yes, with repair | no | no | no | no |
 | Deduplication | **no** | no | no | **yes** | no |
 | Remote repository | pipe through ssh | pipe | pipe | **yes** | pipe |
 
@@ -171,7 +185,7 @@ It needs no StarLet and no CMake; with MinGW-w64, from the top of the
 source tree:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 

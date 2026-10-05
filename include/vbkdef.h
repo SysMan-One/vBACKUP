@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-11"
+#define	__IDENT__	"X01-13"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.11.0"
+#define	__REV__		"1.13.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-13		 5-OCT-2026	RRL
+**		VBKVMS.C: the savesets of OpenVMS BACKUP read; VMSSAVESET,
+**		VMSNOCRC, VMSRAW.
 **
 **	X01-11		 5-OCT-2026	RRL
 **		VBACKUP$K_OP_TRANSFER; VBKXFR.C, VBKRSH.C; BLKCOPIED, XFRSUMM, REMOTE,
@@ -193,6 +197,9 @@ enum	{
 	VBACKUP$K_MSG_XFRSUMM,			/* ... the totals				*/
 	VBACKUP$K_MSG_REMOTE,			/* node::file: the pipe to the node cannot be made */
 	VBACKUP$K_MSG_REMOTEERR,		/* ... VBACKUP there failed			*/
+	VBACKUP$K_MSG_VMSSAVESET,		/* The input is a saveset of OpenVMS BACKUP	*/
+	VBACKUP$K_MSG_VMSNOCRC,			/* ... written /NOCRC				*/
+	VBACKUP$K_MSG_VMSRAW,			/* ... a file restored as it is, not converted	*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -292,6 +299,9 @@ enum	{
 #define	VBACKUP$_XFRSUMM	$VBKSTS(VBACKUP$K_MSG_XFRSUMM,		STS$K_INFO)
 #define	VBACKUP$_REMOTE		$VBKSTS(VBACKUP$K_MSG_REMOTE,		STS$K_ERROR)
 #define	VBACKUP$_REMOTEERR	$VBKSTS(VBACKUP$K_MSG_REMOTEERR,	STS$K_ERROR)
+#define	VBACKUP$_VMSSAVESET	$VBKSTS(VBACKUP$K_MSG_VMSSAVESET,	STS$K_INFO)
+#define	VBACKUP$_VMSNOCRC	$VBKSTS(VBACKUP$K_MSG_VMSNOCRC,		STS$K_INFO)
+#define	VBACKUP$_VMSRAW		$VBKSTS(VBACKUP$K_MSG_VMSRAW,		STS$K_INFO)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -663,6 +673,14 @@ int	vbk$transfer	(VBK$OPTS *a_opts);
 int	vbk$rsh_parse	(const char *a_spec, char *a_node, size_t a_nsz, const char **a_file);
 int	vbk$rsh_open	(const char *a_node, const char *a_file, int a_output, int a_replace, pid_t *a_pid);
 int	vbk$rsh_close	(const char *a_node, int a_output, int a_early, pid_t a_pid);
+
+/*
+**  VBKVMS.C - a saveset of OpenVMS BACKUP on the input
+*/
+int	vbk$vms_isss	(const char *a_spec);
+int	vbk$vms_list	(VBK$OPTS *a_opts);
+int	vbk$vms_restore	(VBK$OPTS *a_opts);
+int	vbk$vms_extract	(VBK$OPTS *a_opts);
 
 /*
 **  VBKKEY.C - the passphrase of an encrypted saveset

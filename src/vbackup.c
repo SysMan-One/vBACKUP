@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-12"
-#define	__REV__		"1.12.0"
+#define	__IDENT__	"X01-13"
+#define	__REV__		"1.13.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-13		 5-OCT-2026	RRL
+**		A saveset of OpenVMS BACKUP on the input (VBKVMS.C): /LIST,
+**		the restore, /EXTRACT.  Qualifiers glued to one another and to
+**		nothing - /LIST/FULL - are all qualifiers: the word was cut
+**		into a parameter "/LIST", and the saveset restored into /LIST.
 **
 **	X01-12		 5-OCT-2026	RRL
 **		/RECORD of a save onto another node names it node::file (OUTNODE);
@@ -751,8 +757,10 @@ ASC		l_val;
 **  The word is cut at the first slash from which on every piece is a
 **  qualifier - and only when the word is not the name of a file as a
 **  whole.  A value with a slash in it (/JOURNAL=/var/...) is not taken
-**  from a glued word: it is given apart.  Returns the length of the
-**  parameter, 0 - the word is not cut.
+**  from a glued word: it is given apart.  A word that is qualifiers
+**  from its first octet on - /LIST/FULL - is all qualifiers.  Returns the
+**  length of the parameter, 0 - no parameter in it, (size_t) -1 - the
+**  word is not cut.
 */
 static	size_t	s_vbk$glued	(
 	const	char *		a_word
@@ -765,12 +773,13 @@ size_t		l_n;
 int		l_ok;
 
 	if ( a_word [0] == '/' ? !strchr(a_word + 1, '/') : !strchr(a_word, '/') )
-		return	0;
+		return	(size_t) -1;
 
 	if ( !lstat(a_word, &l_st) )
-		return	0;
+		return	(size_t) -1;
 
-	for ( l_p = strchr(a_word + 1, '/'); l_p; l_p = strchr(l_p + 1, '/') )
+	/* From the first octet: /LIST/FULL - before X01-13 it was cut into the parameter "/LIST" and /FULL */
+	for ( l_p = (a_word [0] == '/') ? a_word : strchr(a_word + 1, '/'); l_p; l_p = strchr(l_p + 1, '/') )
 		{
 		for ( l_ok = 1, l_q = l_p; l_ok && *l_q; l_q += l_n )
 			{
@@ -789,7 +798,7 @@ int		l_ok;
 			return	(size_t) (l_p - a_word);
 		}
 
-	return	0;
+	return	(size_t) -1;
 }
 
 
@@ -846,7 +855,7 @@ char		l_rinnode [256] = "", l_routnode [256] = "";
 const char *	l_rinfile = NULL, *l_routfile = NULL;
 pid_t		l_rinpid = 0, l_routpid = 0;
 int		l_rverify = 0;
-int		l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
+int		l_vms = 0, l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
 size_t		l_cmdlen = 0;
 
 	vbk$inimsg();
@@ -917,14 +926,16 @@ size_t		l_cmdlen = 0;
 		{
 		size_t	l_cut = s_vbk$glued(a_argv [i]);
 
-		if ( l_cut )
+		if ( l_cut != (size_t) -1 )
 			{
 			char *	l_w = strdup(a_argv [i]), *l_p, *l_e;
 
 			if ( !l_w )
 				return	VBACKUP$K_EXIT_ERROR;
 
-			l_glued [l_nglued++ % $ARRSZ(l_glued)] = a_argv [i];
+			/* Qualifiers only, glued to one another: nothing to say, no parameter */
+			if ( l_cut )
+				l_glued [l_nglued++ % $ARRSZ(l_glued)] = a_argv [i];
 
 			for ( l_p = l_w + l_cut; *l_p; l_p = l_e )
 				{
@@ -937,7 +948,7 @@ size_t		l_cmdlen = 0;
 
 			l_w [l_cut] = '\0';
 
-			if ( l_wordcnt < (int) $ARRSZ(l_words) )
+			if ( l_cut && (l_wordcnt < (int) $ARRSZ(l_words)) )
 				l_words [l_wordcnt++] = l_w;
 
 			continue;
@@ -1043,8 +1054,11 @@ size_t		l_cmdlen = 0;
 	*/
 	l_status = STS$K_SUCCESS;
 
+	/* A saveset of OpenVMS BACKUP: known by its first block, read by VBKVMS.C */
+	l_vms = (l_opts.ninput == 1) && !s_vbk$haswild(l_opts.input [0]) && (1 & vbk$vms_isss(l_opts.input [0]));
+
 	for ( unsigned i = 0; (i < l_opts.ninput) && (l_status == STS$K_SUCCESS); i++ )
-		l_status = s_vbk$haswild(l_opts.input [i]) ? STS$K_WARN : vbk$rd_probe(l_opts.input [i]);
+		l_status = l_vms ? STS$K_SUCCESS : s_vbk$haswild(l_opts.input [i]) ? STS$K_WARN : vbk$rd_probe(l_opts.input [i]);
 
 	if ( l_opts.extract [0] )
 		l_opts.op	= VBACKUP$K_OP_EXTRACT;
@@ -1166,7 +1180,24 @@ size_t		l_cmdlen = 0;
 	if ( l_routnode [0] && (l_opts.op != VBACKUP$K_OP_NONE) && !(1 & vbk$rsh_open(l_routnode, l_routfile, 1, l_opts.replace, &l_routpid)) )
 		l_opts.op	= VBACKUP$K_OP_NONE, l_routnode [0] = '\0';
 
-	switch ( l_opts.op )
+	if ( l_vms && (l_opts.op != VBACKUP$K_OP_NONE) )
+		{
+		/* OpenVMS BACKUP: listed, restored, one file extracted - nothing else */
+		if ( l_opts.op == VBACKUP$K_OP_LIST )
+			l_status = vbk$vms_list(&l_opts);
+		else if ( l_opts.op == VBACKUP$K_OP_EXTRACT )
+			l_status = vbk$vms_extract(&l_opts);
+		else if ( (l_opts.op == VBACKUP$K_OP_RESTORE) && (l_opts.physical || l_opts.image || l_opts.original || l_opts.incremental) )
+			$VBKMSG(VBACKUP$_QUALUSE, l_opts.physical ? "PHYSICAL" : l_opts.image ? "IMAGE" : l_opts.original ? "ORIGINAL" : "INCREMENTAL",
+				"not with a saveset of OpenVMS BACKUP: its files are restored into a directory");
+		else if ( (l_opts.op == VBACKUP$K_OP_RESTORE) && !l_opts.output [0] )
+			$VBKMSG(VBACKUP$_NOPARAM, "output directory");
+		else if ( l_opts.op == VBACKUP$K_OP_RESTORE )
+			l_status = vbk$vms_restore(&l_opts);
+		else	$VBKMSG(VBACKUP$_QUALUSE, (l_opts.op == VBACKUP$K_OP_COMPARE) ? "COMPARE" : (l_opts.op == VBACKUP$K_OP_RECORD) ? "RECORD" : "TRANSFER",
+				"not with a saveset of OpenVMS BACKUP: it is listed, restored or extracted - copied as a file");
+		}
+	else switch ( l_opts.op )
 		{
 		case	VBACKUP$K_OP_SAVE:
 			if ( (l_opts.physical || l_opts.image) && (l_opts.ninput != 1) )

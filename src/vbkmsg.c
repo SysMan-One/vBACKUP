@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-11"
-#define	__REV__		"1.11.0"
+#define	__IDENT__	"X01-13"
+#define	__REV__		"1.13.0"
 
 /*
 **++
@@ -19,6 +19,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-13		 5-OCT-2026	RRL
+**		VMSSAVESET, VMSNOCRC, VMSRAW: the savesets of OpenVMS BACKUP.
 **
 **	X01-11		 5-OCT-2026	RRL
 **		BLKCOPIED, XFRSUMM, REMOTE, REMOTEERR.
@@ -168,7 +171,10 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_BLKCOPIED,	"BLKCOPIED, Block: !UQ, Volume: !UL - is bad, copied as it is: a restore repairs it from its group"),
 	$VBKREC(VBACKUP$_XFRSUMM,	"XFRSUMM, Blocks: !UQ, Volumes: !UL, Bad: !UQ - copied"),
 	$VBKREC(VBACKUP$_REMOTE,	"REMOTE, Node: !AZ, errno: !SL - the pipe to VBACKUP there cannot be made (!AZ)"),
-	$VBKREC(VBACKUP$_REMOTEERR,	"REMOTEERR, Node: !AZ, Exit: !UL - VBACKUP there did not complete: see its messages above")
+	$VBKREC(VBACKUP$_REMOTEERR,	"REMOTEERR, Node: !AZ, Exit: !UL - VBACKUP there did not complete: see its messages above"),
+	$VBKREC(VBACKUP$_VMSSAVESET,	"VMSSAVESET, Saveset: !AZ, Block size: !UL, Group size: !UL - an OpenVMS BACKUP saveset"),
+	$VBKREC(VBACKUP$_VMSNOCRC,	"VMSNOCRC, Saveset: !AZ - written /NOCRC: its blocks carry no CRC, damage in them cannot be seen"),
+	$VBKREC(VBACKUP$_VMSRAW,	"VMSRAW, File: !AZ, Organization: !AZ, Record format: !AZ - restored as it is on the VMS disk: its records are not converted")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

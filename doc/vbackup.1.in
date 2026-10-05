@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 5-OCT-2026	RRL	X-13 : The savesets of OpenVMS BACKUP: list, restore, extract.
+.\"
 .\"		 5-OCT-2026	RRL	X-06 : /ENCRYPT, /KEY_FILE; VBACKUP_KEY_FILE,
 .\"					VBACKUP_NOPROMPT, VBACKUP_KDFITER,
 .\"					VBACKUP_NOHWCRYPTO; .sav, glued qualifiers.
@@ -71,6 +73,15 @@ saveset[,...] /RECORD    rebuild the journal from the catalogs
 /JOURNAL /LIST           list the journal
 .fi
 .RE
+.PP
+A saveset written by OpenVMS BACKUP, copied here in binary mode, is an
+input too: /LIST and /LIST /FULL print what BACKUP/LIST prints, a
+restore puts its files under the directory by their Linux names
+([A.B]C.TXT;3 is A/B/C.TXT, older versions keep ";n") and makes its
+text files texts with LF, /EXTRACT takes one file (see
+.BR "vbackup /HELP OPENVMS"
+and
+.IR vmsbackup.md ).
 .PP
 Wildcards are expanded by the utility: quote them.
 .B *
@@ -216,6 +227,8 @@ $ vbackup /mnt/data /mnt/usb/data.bck /IMAGE
 $ vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE
 $ vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL
 $ vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
+$ vbackup USERS.BCK /LIST /FULL
+$ vbackup USERS.BCK /restore/vms /SELECT=*.COM
 .fi
 .SH ENVIRONMENT
 .TP
@@ -262,7 +275,9 @@ before it was saved.  Files that were in the cache stay there.  See
 .I /usr/local/share/help/vbackup.hlb
 \- the help library;
 .I /usr/local/share/doc/vbackup/format.md
-\- the saveset format.
+\- the saveset format;
+.I /usr/local/share/doc/vbackup/vmsbackup.md
+\- the savesets of OpenVMS BACKUP, as VBACKUP reads them.
 .SH SEE ALSO
 .BR tar (1),
 .BR dar (1)
