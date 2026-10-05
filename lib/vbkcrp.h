@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-06"
+#define	__IDENT__	"X01-08"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.6.0"
+#define	__REV__		"1.8.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  5-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		VBK$PARFN, VBK$PARRUN, VBK$CRP_SETPAR, VBK$CRP_PAR, VBK$PAR_INIT.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Initial version.
@@ -76,6 +79,20 @@ typedef struct vbk_keys_t			/* The keys of one saveset			*/
 	uint8_t		check [VBK$K_KEYSZ];
 	VBK$HMAC	mac;
 } VBK$KEYS;
+
+/*
+**  Work split over several cores, when the utility gives a runner (VBKPAR.C):
+**  jobs 0..n-1 of a function, back when all are done.  Without one - vbkx,
+**  the WCX plugin - everything runs in the calling thread.
+*/
+typedef void	(*VBK$PARFN)	(void *a_arg, uint32_t a_i);
+typedef void	(*VBK$PARRUN)	(uint32_t a_n, VBK$PARFN a_fn, void *a_arg);
+
+void	vbk$crp_setpar		(VBK$PARRUN a_run, uint32_t a_nthr);
+void	vbk$crp_par		(uint32_t a_n, VBK$PARFN a_fn, void *a_arg);
+void	vbk$crp_inpool		(int a_in);
+uint32_t vbk$crp_nthr		(void);
+uint32_t vbk$par_init		(void);
 
 void	vbk$sha256_init		(VBK$SHA256 *a_ctx);
 void	vbk$sha256_update	(VBK$SHA256 *a_ctx, const void *a_data, size_t a_len);

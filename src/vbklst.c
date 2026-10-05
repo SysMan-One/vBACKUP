@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -23,6 +23,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		A pipe is listed as it is read, without NOTRAILER or NOCATALOG.
 **
 **	X01-07		 5-OCT-2026	RRL
 **		The listing made by FAO, byte for byte the one of printf: the widths
@@ -439,10 +442,12 @@ int		l_status;
 
 	if ( l_status == STS$K_WARN )
 		{
-		if ( !l_rctx.trailer )
+		/* A pipe has its catalog at its end: it is listed as it is read, and that is no fault */
+		if ( !l_rctx.trailer && !l_rctx.isstream )
 			$VBKMSG(VBACKUP$_NOTRAILER, l_spec);
 
-		$VBKMSG(VBACKUP$_NOCATALOG, l_spec);
+		if ( !l_rctx.isstream )
+			$VBKMSG(VBACKUP$_NOCATALOG, l_spec);
 		s_vbk$fromstream(&l_lst, &l_rctx);
 		}
 
@@ -460,6 +465,10 @@ int		l_status;
 		$VBKMSG(VBACKUP$_WRITERR, a_opts->lstfile, errno, strerror(errno));
 	else if ( l_lst.out == stdout )
 		fflush(stdout);
+
+	/* A stream: its TRAILER is known only at its end - a stream that ended without one was cut */
+	if ( l_rctx.isstream && l_rctx.eof && !l_rctx.trailer && !l_rctx.trlraw )
+		$VBKMSG(VBACKUP$_NOTRAILER, l_spec);
 
 	vbk$rd_close(&l_rctx);
 

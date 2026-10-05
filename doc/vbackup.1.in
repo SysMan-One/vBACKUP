@@ -38,7 +38,9 @@ vbackup \- save files into a saveset, restore, list and compare them
 .I output-spec
 .RI [ /qualifiers ]
 .SH DESCRIPTION
-Two parameters at most: an input and an output.  A saveset on the
+Two parameters at most: an input and an output; "-" as the input is a
+saveset from the standard input (a pipe), as the output the standard
+output.  A saveset on the
 output side is a name ending in .bck or .sav, or /SAVE_SET; qualifiers
 may be glued to a parameter, as in DCL: x.sav/sav/log.
 .B vbackup
@@ -217,6 +219,10 @@ file managers set it): no key file means %VBACKUP-E-NOKEY.
 .B VBACKUP_KDFITER
 The PBKDF2 iterations of an encrypted save, for the tests (at least
 1000); not to be lowered for real savesets.
+.TP
+.B VBACKUP_CTHREADS
+The threads of the encryption (the stripes of a block, the blocks of a
+group when reading); the cores by default (at most 8), 1 \- none.
 .TP
 .B VBACKUP_NOHWCRYPTO
 1 \- SHA-256 by the portable code even where the CPU has instructions

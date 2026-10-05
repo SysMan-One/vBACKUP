@@ -209,7 +209,8 @@ add_library(vbkcore STATIC
 	lib/vbkwrt.c
 	lib/vbkrd.c
 	lib/vbklz4.c
-	lib/vbkcrp.c)
+	lib/vbkcrp.c
+	lib/vbkpar.c)
 
 target_include_directories(vbkcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 target_link_libraries(vbkcore PUBLIC StarLet::starlet Threads::Threads PRIVATE vbackup_options)

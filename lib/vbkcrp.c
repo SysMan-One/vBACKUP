@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCRP"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -38,6 +38,10 @@
 **  CREATION DATE:  5-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		The pool: ChaCha20 of a block in stripes (VBK$CRP_SETPAR,
+**		VBK$CRP_PAR); a worker never splits its job again.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Initial version.  The SHA-256 instructions of ARMv8, checked
@@ -549,6 +553,103 @@ VBK$HMAC	l_h;
 
 
 /*
+**  The runner of the pool, when there is one, and whether this thread is
+**  one of its workers (a job never splits itself again: no deadlock)
+*/
+static	VBK$PARRUN	s_vbk$run;
+static	uint32_t	s_vbk$nthr = 1;
+static	__thread int	s_vbk$inpool;
+
+void	vbk$crp_setpar		(
+		VBK$PARRUN	a_run,
+		uint32_t	a_nthr
+			)
+{
+	s_vbk$run	= a_run;
+	s_vbk$nthr	= a_run ? a_nthr : 1;
+}
+
+void	vbk$crp_inpool		(
+		int		a_in
+			)
+{
+	s_vbk$inpool	= a_in;
+}
+
+uint32_t	vbk$crp_nthr	(void)
+{
+	return	(s_vbk$run && !s_vbk$inpool) ? s_vbk$nthr : 1;
+}
+
+void	vbk$crp_par		(
+		uint32_t	a_n,
+		VBK$PARFN	a_fn,
+		void *		a_arg
+			)
+{
+	if ( s_vbk$run && !s_vbk$inpool && (a_n > 1) )
+		{
+		s_vbk$run(a_n, a_fn, a_arg);
+
+		return;
+		}
+
+	for ( uint32_t i = 0; i < a_n; i++ )
+		a_fn(a_arg, i);
+}
+
+
+/*
+**  ChaCha20 over a payload in stripes, one a job: the key stream of a
+**  stripe begins at its counter, so the stripes are independent and the
+**  bytes are those of one pass
+*/
+#define	VBK$K_STRIPEMIN	16384			/* Smaller payloads are not split		*/
+
+typedef struct vbk_stripe_t
+{
+	const uint8_t *	key;
+	const uint8_t *	nonce;
+	uint8_t *	data;
+	size_t		len, slen;		/* All of it; a stripe, a multiple of 64	*/
+} VBK$STRIPE;
+
+static	void	s_vbk$stripe	(
+		void *		a_arg,
+		uint32_t	a_i
+			)
+{
+VBK$STRIPE *	l_s = (VBK$STRIPE *) a_arg;
+size_t		l_off = (size_t) a_i * l_s->slen;
+
+	if ( l_off < l_s->len )
+		vbk$chacha20(l_s->key, l_s->nonce, (uint32_t) (l_off / 64), l_s->data + l_off,
+			((l_s->len - l_off) < l_s->slen) ? (l_s->len - l_off) : l_s->slen);
+}
+
+static	void	s_vbk$chachapar	(
+	const	uint8_t		a_key [VBK$K_KEYSZ],
+	const	uint8_t		a_nonce [12],
+		uint8_t *	a_data,
+		size_t		a_len
+			)
+{
+VBK$STRIPE	l_s = { a_key, a_nonce, a_data, a_len, 0 };
+uint32_t	l_n = vbk$crp_nthr();
+
+	if ( (l_n < 2) || (a_len < VBK$K_STRIPEMIN) )
+		{
+		vbk$chacha20(a_key, a_nonce, 0, a_data, a_len);
+
+		return;
+		}
+
+	l_s.slen = ((a_len / l_n) + 63) & ~(size_t) 63;
+	vbk$crp_par(l_n, s_vbk$stripe, &l_s);
+}
+
+
+/*
 **  The TAG of a block: the header fields of format.md 6.10, then the ciphertext
 */
 void	vbk$crp_tag		(
@@ -604,7 +705,7 @@ void	vbk$crp_seal		(
 uint8_t		l_nonce [12];
 
 	s_vbk$nonce(a_hdr->blkno, l_nonce);
-	vbk$chacha20(a_keys->enc, l_nonce, 0, a_pay, a_hdr->paylen);
+	s_vbk$chachapar(a_keys->enc, l_nonce, a_pay, a_hdr->paylen);
 	vbk$crp_tag(a_keys, a_hdr, a_pay, a_pay + a_psize - VBK$K_TAGSZ);
 }
 
@@ -642,7 +743,7 @@ void	vbk$crp_decrypt		(
 uint8_t		l_nonce [12];
 
 	s_vbk$nonce(a_hdr->blkno, l_nonce);
-	vbk$chacha20(a_keys->enc, l_nonce, 0, a_pay, a_hdr->paylen);
+	s_vbk$chachapar(a_keys->enc, l_nonce, a_pay, a_hdr->paylen);
 }
 
 

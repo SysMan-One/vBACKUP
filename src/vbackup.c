@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		Stage 7: "-" as the input - a saveset from a pipe; the pool of the
+**		encryption started (VBK$PAR_INIT); lib/ without printf.
+**		/VOLUME_SIZE refused with the standard output: one stream, one
+**		volume.
 **
 **	X01-07		 5-OCT-2026	RRL
 **		STARTED and COMPLETED (how it went, how long): a command that has
@@ -816,6 +822,9 @@ size_t		l_cmdlen = 0;
 
 	vbk$inimsg();
 
+	/* The cores for the encryption: the stripes of a block, the blocks of a group (VBACKUP_CTHREADS) */
+	vbk$par_init();
+
 	/* The defaults */
 	l_opts.bsize	= VBK$K_DEFBSZ;
 	l_opts.grpsz	= VBK$K_DEFGRP;
@@ -1005,6 +1014,10 @@ size_t		l_cmdlen = 0;
 	else if ( l_opts.output [0] && (l_status != STS$K_ERROR) )
 		l_opts.op	= VBACKUP$K_OP_COPY;
 
+	/* /LIST of a file that is no saveset, and no output: that is what it is, not a missing output */
+	if ( (l_opts.op == VBACKUP$K_OP_NONE) && l_list && !l_opts.output [0] && (l_status == STS$K_WARN) )
+		l_opts.op	= VBACKUP$K_OP_LIST;
+
 	if ( (l_opts.op == VBACKUP$K_OP_EXTRACT) || (l_opts.op == VBACKUP$K_OP_COMPARE) || (l_opts.op == VBACKUP$K_OP_LIST) )
 		if ( (l_status != STS$K_SUCCESS) || (l_opts.ninput != 1) )
 			{
@@ -1017,6 +1030,15 @@ size_t		l_cmdlen = 0;
 	if ( l_opts.encrypt && (l_opts.op != VBACKUP$K_OP_SAVE) )
 		{
 		$VBKMSG(VBACKUP$_QUALUSE, "ENCRYPT", "a saveset is made encrypted by a save; one that is, is known by itself - give /KEY_FILE or nothing");
+		__cli$cleanup(l_clictx);
+
+		return	VBACKUP$K_EXIT_ERROR;
+		}
+
+	/* The standard output is one stream: one volume */
+	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && !strcmp(l_opts.output, "-") && l_opts.volsize )
+		{
+		$VBKMSG(VBACKUP$_QUALUSE, "VOLUME_SIZE", "a saveset written to the standard output is one volume");
 		__cli$cleanup(l_clictx);
 
 		return	VBACKUP$K_EXIT_ERROR;
@@ -1035,8 +1057,10 @@ size_t		l_cmdlen = 0;
 	clock_gettime(CLOCK_MONOTONIC, &l_t0);
 
 	if ( l_announce )
-		$VBKMSG(VBACKUP$_STARTED, l_opname, l_words [0], l_opts.output [0] ? " to " : "", l_opts.output [0] ? l_opts.output :
-			(l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? " to where its files came from" : "");
+		$VBKMSG(VBACKUP$_STARTED, l_opname, strcmp(l_words [0], "-") ? l_words [0] : "(standard input)",
+			l_opts.output [0] || l_opts.original ? ", Output: " : "",
+			!strcmp(l_opts.output, "-") ? "(standard output)" : l_opts.output [0] ? l_opts.output
+			: (l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? "(where its files came from)" : "");
 	}
 
 	switch ( l_opts.op )
@@ -1113,8 +1137,11 @@ size_t		l_cmdlen = 0;
 			break;
 
 		default:
-			if ( !l_opts.output [0] )
-				$VBKMSG(VBACKUP$_NOPARAM, (l_status == STS$K_ERROR) ? "input specification - it does not exist" : "output specification");
+			/* An input given that is not there: said by its name, not as a missing parameter */
+			if ( !l_opts.output [0] && (l_status == STS$K_ERROR) )
+				$VBKMSG(VBACKUP$_OPENIN, l_opts.input [0], ENOENT, strerror(ENOENT));
+			else if ( !l_opts.output [0] )
+				$VBKMSG(VBACKUP$_NOPARAM, "output specification");
 			else	$VBKMSG(VBACKUP$_IVOP, "the input does not exist - and for a save the output must be named .bck or .sav, or /SAVE_SET given");
 		}
 
@@ -1126,8 +1153,8 @@ size_t		l_cmdlen = 0;
 		clock_gettime(CLOCK_MONOTONIC, &l_t1);
 		l_cs	= (uint64_t) ((l_t1.tv_sec - l_t0.tv_sec) * 100 + (l_t1.tv_nsec - l_t0.tv_nsec) / 10000000);
 
-		$VBKMSG(VBACKUP$_COMPLETED, l_opname, vbk$errors() ? "completed with errors" : vbk$warnings() ? "completed with warnings"
-			: "completed", (uint32_t) (l_cs / 100), (uint32_t) (l_cs % 100));
+		$VBKMSG(VBACKUP$_COMPLETED, l_opname, (uint32_t) (l_cs / 100), (uint32_t) (l_cs % 100),
+			vbk$errors() ? "completed with errors" : vbk$warnings() ? "completed with warnings" : "completed");
 		}
 
 	__cli$cleanup(l_clictx);

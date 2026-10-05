@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -32,6 +32,13 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-08		 5-OCT-2026	RRL
+**		"-": a saveset read from a pipe - forward only, block by block, its
+**		TRAILER taken where it comes; no seek; VBK$RD_SETKEY puts the
+**		reader back within the first group, which it still holds.
+**		The TAGs and the decryption of a group on the cores of the pool.
+**		No printf: the name of volume 1 by VBK$STRPUT.
+**
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets (format.md 6.10): EDATA blocks checked by
 **		their TAG before the repair, the repaired one after it, then
@@ -61,7 +68,6 @@
 #include	<stdlib.h>
 #include	<string.h>
 #include	<errno.h>
-#include	<stdio.h>
 
 #include	"vbkrd.h"
 #include	"vbkos.h"
@@ -119,6 +125,72 @@ int64_t	l_rc;
 
 
 /*
+**  The same from a stream: forward only.  A place behind what has been
+**  read cannot be had again (STS$K_ERROR); one ahead is reached by
+**  reading over what lies between.  A short read is padded with zeros,
+**  and the end of the stream is then known.
+*/
+static	int	s_vbk$sread	(
+		VBK$RCTX *	a_ctx,
+		uint8_t *	a_buf,
+		size_t		a_len,
+		uint64_t	a_off
+			)
+{
+size_t	l_got = 0;
+int64_t	l_rc;
+uint8_t	l_skip [4096];
+
+	if ( a_off < a_ctx->spos )
+		{
+		memset(a_buf, 0, a_len);
+
+		return	STS$K_ERROR;
+		}
+
+	while ( a_ctx->spos < a_off )
+		{
+		size_t	l_n = ((a_off - a_ctx->spos) < sizeof(l_skip)) ? (size_t) (a_off - a_ctx->spos) : sizeof(l_skip);
+
+		if ( 0 >= (l_rc = vbk$os_read(a_ctx->vols [0].fd, l_skip, l_n)) )
+			{
+			if ( (l_rc < 0) && (errno == EINTR) )
+				continue;
+
+			memset(a_buf, 0, a_len);
+
+			return	STS$K_WARN;
+			}
+
+		a_ctx->spos += (uint64_t) l_rc;
+		}
+
+	while ( l_got < a_len )
+		{
+		if ( 0 > (l_rc = vbk$os_read(a_ctx->vols [0].fd, a_buf + l_got, a_len - l_got)) )
+			{
+			if ( errno == EINTR )
+				continue;
+
+			break;
+			}
+
+		if ( !l_rc )
+			break;
+
+		l_got	+= (size_t) l_rc;
+		}
+
+	a_ctx->spos += l_got;
+
+	if ( l_got < a_len )
+		memset(a_buf + l_got, 0, a_len - l_got);
+
+	return	(l_got == a_len) ? STS$K_SUCCESS : STS$K_WARN;
+}
+
+
+/*
 **  Read the VHDR of an open volume and judge it: version 1, the expected
 **  volume number, and - but for volume 1 - the UUID of this saveset.
 */
@@ -167,6 +239,10 @@ uint8_t		l_hdr [VBK$K_HDRSZ];
 VBK$BHDR	l_bhdr;
 uint64_t	l_size;
 int		l_fd, l_isreg, l_status = STS$K_WARN;
+
+	/* The standard input: taken for a saveset unseen - a look would eat what it is */
+	if ( !strcmp(a_spec, "-") )
+		return	STS$K_SUCCESS;
 
 	if ( 0 > (l_fd = vbk$os_open(a_spec)) )
 		return	STS$K_ERROR;
@@ -272,20 +348,33 @@ uint16_t	l_tag;
 const uint8_t *	l_val;
 int		l_fd, l_isreg = 0;
 
-	snprintf(a_ctx->spec, sizeof(a_ctx->spec), "%s", a_spec);
+	vbk$strput(a_ctx->spec, sizeof(a_ctx->spec), a_spec);
 
 	a_ctx->evcb	= a_evcb;
 	a_ctx->evarg	= a_evarg;
+	a_ctx->isstream	= !strcmp(a_spec, "-");
 
-	if ( 0 > (l_fd = vbk$os_open(a_spec)) )
+	if ( 0 > (l_fd = a_ctx->isstream ? vbk$os_stdin() : vbk$os_open(a_spec)) )
 		{
 		a_ctx->err	= errno;
 
 		return	STS$K_ERROR;
 		}
 
+	/* A stream is read through VOLS [0] from the start: it needs its descriptor at once */
+	if ( a_ctx->isstream && !(a_ctx->vols = calloc(VBK$K_MAXVOL, sizeof(VBK$RVOL))) )
+		{
+		a_ctx->err	= ENOMEM;
+
+		return	STS$K_FATAL;
+		}
+
+	if ( a_ctx->isstream )
+		a_ctx->vols [0].fd = l_fd;
+
 	/* The block size comes from the first header; nothing else is trusted before the checksum */
-	if ( !(1 & s_vbk$pread(l_fd, l_hdr, sizeof(l_hdr), 0)) || !(1 & vbk$bhdr_peek(l_hdr, &l_bhdr))
+	if ( !(1 & (a_ctx->isstream ? s_vbk$sread(a_ctx, l_hdr, sizeof(l_hdr), 0) : s_vbk$pread(l_fd, l_hdr, sizeof(l_hdr), 0)))
+		|| !(1 & vbk$bhdr_peek(l_hdr, &l_bhdr))
 		|| (l_bhdr.bsize < VBK$K_MINBSZ) || (l_bhdr.bsize > VBK$K_MAXBSZ) || (l_bhdr.bsize % VBK$K_BSZALIGN) )
 		{
 		vbk$os_close(l_fd);
@@ -296,7 +385,7 @@ int		l_fd, l_isreg = 0;
 	a_ctx->bsize	= l_bhdr.bsize;
 	a_ctx->psize	= l_bhdr.bsize - VBK$K_HDRSZ;
 
-	if ( !(a_ctx->vols = calloc(VBK$K_MAXVOL, sizeof(VBK$RVOL))) || !(l_blk = malloc(a_ctx->bsize)) )
+	if ( (!a_ctx->vols && !(a_ctx->vols = calloc(VBK$K_MAXVOL, sizeof(VBK$RVOL)))) || !(l_blk = malloc(a_ctx->bsize)) )
 		{
 		vbk$os_close(l_fd);
 		free(l_blk);
@@ -308,7 +397,23 @@ int		l_fd, l_isreg = 0;
 	for ( uint32_t i = 0; i < VBK$K_MAXVOL; i++ )
 		a_ctx->vols [i].fd = -1;
 
-	if ( !(1 & s_vbk$vhdr(a_ctx, l_fd, 1, l_blk, &l_bhdr)) )
+	a_ctx->vols [0].fd = a_ctx->isstream ? l_fd : -1;
+
+	/* A stream: the header read is the head of the VHDR, the rest follows it */
+	if ( a_ctx->isstream )
+		{
+		memcpy(l_blk, l_hdr, sizeof(l_hdr));
+		s_vbk$sread(a_ctx, l_blk + sizeof(l_hdr), a_ctx->bsize - sizeof(l_hdr), sizeof(l_hdr));
+
+		if ( !(1 & vbk$blk_check(l_blk, a_ctx->bsize, NULL, &l_bhdr)) || (l_bhdr.type != VBK$K_BT_VHDR) || (l_bhdr.volno != 1) )
+			{
+			a_ctx->vols [0].fd = -1;
+			free(l_blk);
+
+			return	STS$K_WARN;
+			}
+		}
+	else if ( !(1 & s_vbk$vhdr(a_ctx, l_fd, 1, l_blk, &l_bhdr)) )
 		{
 		vbk$os_close(l_fd);
 		free(l_blk);
@@ -390,8 +495,13 @@ int		l_fd, l_isreg = 0;
 		return	STS$K_WARN;
 		}
 
-	vbk$os_fsize(l_fd, &l_size, &l_isreg);
-	vbk$os_seq(l_fd);
+	/* A stream has no size: its end is where its TRAILER comes, or where it stops */
+	if ( a_ctx->isstream )
+		l_size	= (uint64_t) VBK$K_STREAMBLK * a_ctx->bsize;
+	else	{
+		vbk$os_fsize(l_fd, &l_size, &l_isreg);
+		vbk$os_seq(l_fd);
+		}
 
 	a_ctx->vols [0].fd	 = l_fd;
 	a_ctx->vols [0].firstblk = l_bhdr.blkno;
@@ -402,7 +512,7 @@ int		l_fd, l_isreg = 0;
 	**  The further volumes.  A missing name does not end the search at
 	**  once: with volume 3 lost, volumes 4 and on are still worth having.
 	*/
-	for ( uint32_t l_volno = 2; (l_volno <= VBK$K_MAXVOL) && (l_miss < VBK$K_VOLGAP); l_volno++ )
+	for ( uint32_t l_volno = 2; !a_ctx->isstream && (l_volno <= VBK$K_MAXVOL) && (l_miss < VBK$K_VOLGAP); l_volno++ )
 		{
 		if ( !(1 & vbk$volspec(a_spec, l_volno, l_volspec, sizeof(l_volspec))) || (0 > (l_fd = vbk$os_open(l_volspec))) )
 			{
@@ -433,7 +543,8 @@ int		l_fd, l_isreg = 0;
 	{
 	VBK$RVOL *	l_vol = &a_ctx->vols [a_ctx->nvols - 1];
 
-	if ( l_vol->nblk > 1 )
+	/* A stream gives its TRAILER at its end, when the groups are read (S_VBK$LOADGRP) */
+	if ( !a_ctx->isstream && (l_vol->nblk > 1) )
 		{
 		s_vbk$pread(l_vol->fd, l_blk, a_ctx->bsize, (l_vol->nblk - 1) * a_ctx->bsize);
 
@@ -535,6 +646,32 @@ int		l_fd, l_isreg = 0;
 
 
 /*
+**  The ETRAILER kept by S_VBK$TRAILER, opened with the keys; its TAG
+**  failing is said (BADTAG) and the saveset goes on without a catalog
+*/
+static	int	s_vbk$opentrl	(
+		VBK$RCTX *	a_ctx
+			)
+{
+VBK$BHDR	l_bhdr;
+
+	if ( (1 & vbk$blk_check(a_ctx->trlraw, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr))
+		&& (1 & vbk$crp_open(&a_ctx->keys, &l_bhdr, a_ctx->trlraw + VBK$K_HDRSZ, a_ctx->psize))
+		&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
+		{
+		memcpy(a_ctx->trailer, a_ctx->trlraw + VBK$K_HDRSZ, l_bhdr.paylen);
+		a_ctx->trllen	= l_bhdr.paylen;
+
+		return	STS$K_SUCCESS;
+		}
+
+	s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->nvols, a_ctx->trlblk);
+
+	return	STS$K_ERROR;
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
@@ -563,7 +700,6 @@ int	vbk$rd_setkey	(
 		size_t		a_plen
 			)
 {
-VBK$BHDR	l_bhdr;
 VBK$KEYS	l_keys;
 int		l_status = STS$K_SUCCESS;
 
@@ -583,26 +719,40 @@ int		l_status = STS$K_SUCCESS;
 	a_ctx->haskey	= 1;
 	vbk$crp_wipe(&l_keys, sizeof(l_keys));
 
-	if ( a_ctx->trlraw && !a_ctx->trailer )
-		{
-		if ( (1 & vbk$blk_check(a_ctx->trlraw, a_ctx->bsize, a_ctx->ssuuid, &l_bhdr))
-			&& (1 & vbk$crp_open(&a_ctx->keys, &l_bhdr, a_ctx->trlraw + VBK$K_HDRSZ, a_ctx->psize))
-			&& (a_ctx->trailer = malloc(l_bhdr.paylen + 1)) )
-			{
-			memcpy(a_ctx->trailer, a_ctx->trlraw + VBK$K_HDRSZ, l_bhdr.paylen);
-			a_ctx->trllen	= l_bhdr.paylen;
-			}
-		else	{
-			s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->nvols, a_ctx->trlblk);
-			l_status = STS$K_WARN;
-			}
-		}
+	if ( a_ctx->trlraw && !a_ctx->trailer && !(1 & s_vbk$opentrl(a_ctx)) )
+		l_status = STS$K_WARN;
 
 	/*
 	**  The first record of the stream is the complete SUMMARY.  It is read
 	**  quietly: whatever is lost on the way is reported when the caller
 	**  reads it for itself.
 	*/
+	if ( a_ctx->isstream )
+		{
+		/*
+		**  A stream cannot be read twice: the events of the first group are
+		**  reported now, once, and the reader is put back to the start of
+		**  that group, which it still holds - decrypted.
+		*/
+		const uint8_t *	l_body;
+		uint32_t	l_len;
+		uint16_t	l_type;
+		uint8_t *	l_sum;
+
+		if ( (STS$K_SUCCESS == vbk$rd_next(a_ctx, &l_type, &l_body, &l_len, NULL)) && (l_type == VBK$K_RT_SUMMARY)
+			&& !a_ctx->resync && (l_sum = malloc(l_len + 1)) )
+			{
+			memcpy(l_sum, l_body, l_len);
+			free(a_ctx->summary);
+			a_ctx->summary	= l_sum;
+			a_ctx->sumlen	= l_len;
+			}
+
+		vbk$rd_rewind(a_ctx);
+
+		return	l_status;
+		}
+
 	{
 	void		(*l_evcb) (void *, int, uint32_t, uint64_t) = a_ctx->evcb;
 	uint64_t	l_nrep = a_ctx->nrepaired, l_nlost = a_ctx->nlost;
@@ -661,6 +811,25 @@ int	vbk$rd_rewind	(
 		VBK$RCTX *	a_ctx
 			)
 {
+	/*
+	**  A stream goes back only within the first group, while it is still
+	**  in hand: the SUMMARY taken by VBK$RD_SETKEY; before anything has
+	**  been read beyond the VHDR it is at its start anyway.
+	*/
+	if ( a_ctx->isstream && (a_ctx->spos > a_ctx->bsize) )
+		{
+		if ( !a_ctx->gdata || (a_ctx->gpos != 1) || (a_ctx->gvol != 1) )
+			return	STS$K_ERROR;
+
+		a_ctx->gnext	= 0;
+		a_ctx->pay	= NULL;
+		a_ctx->paylen	= a_ctx->payoff = 0;
+		a_ctx->gap	= a_ctx->eof = a_ctx->pendrs = 0;
+		a_ctx->rewound	= 1;
+
+		return	STS$K_SUCCESS;
+		}
+
 	a_ctx->curvol	= 1;
 	a_ctx->curpos	= 1;
 	a_ctx->gdata	= a_ctx->gnext = 0;
@@ -669,6 +838,35 @@ int	vbk$rd_rewind	(
 	a_ctx->gap	= a_ctx->eof = a_ctx->pendrs = 0;
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  One block of the group in hand, a job of the pool: its TAG checked
+**  (into GTAG) or, after the repair, the block decrypted.  Jobs touch
+**  only their own block; events are left to the caller.
+*/
+typedef struct vbk_grpjob_t
+{
+	VBK$RCTX *	ctx;
+	int		decrypt;
+} VBK$GRPJOB;
+
+static	void	s_vbk$tagjob	(
+		void *		a_arg,
+		uint32_t	a_i
+			)
+{
+VBK$GRPJOB *	l_j = (VBK$GRPJOB *) a_arg;
+VBK$RCTX *	l_c = l_j->ctx;
+uint8_t *	l_pay = l_c->gbuf + (size_t) a_i * l_c->bsize + VBK$K_HDRSZ;
+
+	if ( !l_c->gok [a_i] )
+		return;
+
+	if ( l_j->decrypt )
+		vbk$crp_decrypt(&l_c->keys, &l_c->ghdr [a_i], l_pay);
+	else	l_c->gtag [a_i] = (uint8_t) vbk$crp_check(&l_c->keys, &l_c->ghdr [a_i], l_pay, l_c->psize);
 }
 
 
@@ -734,10 +932,57 @@ uint8_t *	l_blk;
 	l_n	= a_ctx->grpsz ? (a_ctx->grpsz + 1) : 1;
 	l_n	= ((l_end - a_ctx->curpos) < l_n) ? (l_end - a_ctx->curpos) : l_n;
 
-	s_vbk$pread(l_vol->fd, a_ctx->gbuf, (size_t) (l_n * a_ctx->bsize), a_ctx->curpos * a_ctx->bsize);
+	if ( a_ctx->isstream )
+		{
+		/*
+		**  A stream, a block at a time: its end is not known before it
+		**  comes.  A good TRAILER ends the groups - it is not taken into
+		**  the one in hand - and so does the end of the stream.
+		*/
+		VBK$BHDR	l_th;
+		uint64_t	l_i;
 
-	/* A saveset is read once: its pages would only push working data out of the cache */
-	vbk$os_drop(l_vol->fd, a_ctx->curpos * a_ctx->bsize, l_n * a_ctx->bsize);
+		for ( l_i = 0; l_i < l_n; l_i++ )
+			{
+			uint8_t *	l_b = a_ctx->gbuf + (size_t) l_i * a_ctx->bsize;
+
+			if ( STS$K_SUCCESS != s_vbk$sread(a_ctx, l_b, a_ctx->bsize, (a_ctx->curpos + l_i) * a_ctx->bsize) )
+				{
+				l_vol->nblk = a_ctx->curpos + l_i;
+				break;
+				}
+
+			if ( (1 & vbk$blk_check(l_b, a_ctx->bsize, a_ctx->ssuuid, &l_th))
+				&& ((l_th.type == VBK$K_BT_TRAILER) || (l_th.type == VBK$K_BT_ETRAILER))
+				&& (l_th.blkno == (l_vol->firstblk + a_ctx->curpos + l_i)) )
+				{
+				s_vbk$trailer(a_ctx, l_b, &l_th);
+
+				/* Encrypted, and the keys at hand: the TRAILER is opened now, there is no going back to it */
+				if ( a_ctx->trlraw && a_ctx->haskey && !a_ctx->trailer )
+					s_vbk$opentrl(a_ctx);
+
+				l_vol->nblk = a_ctx->curpos + l_i + 1;
+				break;
+				}
+			}
+
+		l_n	= l_i;
+
+		if ( !l_n )
+			{
+			a_ctx->curvol	= a_ctx->nvols + 1;
+			a_ctx->eof	= 1;
+
+			return	STS$K_WARN;
+			}
+		}
+	else	{
+		s_vbk$pread(l_vol->fd, a_ctx->gbuf, (size_t) (l_n * a_ctx->bsize), a_ctx->curpos * a_ctx->bsize);
+
+		/* A saveset is read once: its pages would only push working data out of the cache */
+		vbk$os_drop(l_vol->fd, a_ctx->curpos * a_ctx->bsize, l_n * a_ctx->bsize);
+		}
 
 	for ( uint32_t i = 0; i < l_n; i++ )
 		{
@@ -769,17 +1014,31 @@ uint8_t *	l_blk;
 	a_ctx->gdata	= (uint32_t) l_n - l_hasxor;
 
 	for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
-		{
 		if ( a_ctx->gok [i] && (a_ctx->ghdr [i].type != a_ctx->dtype) )
 			a_ctx->gok [i] = 0;
 
-		/* A good CRC and a wrong TAG: changed on purpose - a bad block all the same, repairable as any */
-		if ( a_ctx->gok [i] && a_ctx->crypt
-			&& !vbk$crp_check(&a_ctx->keys, &a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ, a_ctx->psize) )
-			{
-			a_ctx->gok [i] = 0;
-			s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->curvol, a_ctx->ghdr [i].blkno);
-			}
+	/*
+	**  A good CRC and a wrong TAG: changed on purpose - a bad block all the
+	**  same, repairable as any.  The TAGs of the group are checked on the
+	**  cores of the pool, when the utility has one; what failed is then
+	**  reported here, in the order of the blocks.
+	*/
+	if ( a_ctx->crypt )
+		{
+		VBK$GRPJOB	l_job = { a_ctx, 0 };
+
+		vbk$crp_par(a_ctx->gdata, s_vbk$tagjob, &l_job);
+
+		for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
+			if ( a_ctx->gok [i] && !a_ctx->gtag [i] )
+				{
+				a_ctx->gok [i] = 0;
+				s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->curvol, a_ctx->ghdr [i].blkno);
+				}
+		}
+
+	for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
+		{
 
 		if ( !a_ctx->gok [i] )
 			{
@@ -847,11 +1106,13 @@ uint8_t *	l_blk;
 			s_vbk$event(a_ctx, VBK$K_EV_LOST, a_ctx->curvol, l_vol->firstblk + a_ctx->curpos + i);
 			}
 
-	/* Every check done, the repair too: now the good blocks are decrypted where they lie */
+	/* Every check done, the repair too: now the good blocks are decrypted where they lie, on the cores of the pool */
 	if ( a_ctx->crypt )
-		for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
-			if ( a_ctx->gok [i] )
-				vbk$crp_decrypt(&a_ctx->keys, &a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ);
+		{
+		VBK$GRPJOB	l_job = { a_ctx, 1 };
+
+		vbk$crp_par(a_ctx->gdata, s_vbk$tagjob, &l_job);
+		}
 
 	a_ctx->gvol	= a_ctx->curvol;
 	a_ctx->gpos	= a_ctx->curpos;
@@ -1109,7 +1370,8 @@ VBK$RVOL *	l_vol;
 uint64_t	l_pos, l_start;
 int		l_status;
 
-	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) || (a_ctx->crypt && !a_ctx->haskey) )
+	/* A stream has no places to go to: it is read through, forward */
+	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) || (a_ctx->crypt && !a_ctx->haskey) || a_ctx->isstream )
 		return	STS$K_ERROR;
 
 	l_vol	= &a_ctx->vols [a_loc->vol - 1];

@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-06"
+#define	__IDENT__	"X01-08"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.6.0"
+#define	__REV__		"1.8.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		ISSTREAM, SPOS; VBK$K_STREAMBLK.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets: CRYPT, VBK$RD_SETKEY, the event BADTAG.
@@ -59,6 +62,7 @@ extern "C" {
 
 #define	VBK$K_MAXVOL	9999			/* Volumes looked for				*/
 #define	VBK$K_VOLGAP	16			/* Missing names in a row that end the probe	*/
+#define	VBK$K_STREAMBLK	(1ULL << 40)		/* The blocks a stream may have, its end unknown */
 
 enum	{					/* Events reported through the callback		*/
 	VBK$K_EV_REPAIRED = 1,			/* A block has been rebuilt from its group	*/
@@ -103,10 +107,14 @@ typedef struct vbk_rctx_t
 	uint8_t		keycheck [VBK$K_KEYSZ];
 	VBK$KEYS	keys;
 	uint8_t		dtype;			/* Type of its DATA blocks: DATA or EDATA	*/
+	int		isstream;		/* "-": a pipe, read once, forward only		*/
+	uint64_t	spos;			/* ... octets of it consumed			*/
+	int		rewound;		/* ... the group in hand given out once more	*/
 	uint32_t	cap;			/* The most PAYLEN of a DATA block may be	*/
 
 	uint8_t *	gbuf;			/* The group being read, (grpsz + 1) blocks	*/
 	uint8_t		gok [VBK$K_MAXGRP + 1];
+	uint8_t		gtag [VBK$K_MAXGRP + 1];	/* ... its TAG is right (encrypted)		*/
 	VBK$BHDR	ghdr [VBK$K_MAXGRP + 1];
 	uint32_t	gdata;			/* DATA blocks in the group			*/
 	uint32_t	gnext;			/* Next of them to deliver			*/

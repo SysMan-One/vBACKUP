@@ -41,6 +41,11 @@ vbkx \- the stand-alone extractor of VBACKUP savesets
 .IR keyfile ]
 .RB [ \-n ]
 .SH DESCRIPTION
+A
+.I saveset
+of "-" is the standard input: listed and extracted as it is read (no
+names: its catalog comes last).
+.PP
 .B vbkx
 reads savesets made by
 .BR vbackup (1)

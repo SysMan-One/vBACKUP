@@ -29,6 +29,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-08 : A saveset through a pipe: restore, listing,
+#					/EXTRACT, encrypted and compressed, a bad block
+#					repaired, a pipe cut short, /VOLUME_SIZE refused,
+#					vbkx -.
+#
 #		 5-OCT-2026	RRL	X-06 : /ENCRYPT: save, list, restore, compare, /VERIFY,
 #					volumes and compression; a wrong passphrase, no
 #					key, a key file others may read; a forged block
@@ -419,9 +424,9 @@ check '[ $? = 0 ] && [ "$(grep -c BLKFIXED sk.log)" = 1 ]' "EXTRACT through a re
 
 if [ -w /dev/full ]; then
 	$VB src/tree /dev/full /SAVE_SET /REPLACE > full.log 2>&1
-	check '[ $? = 2 ] && grep -q "WRITERR.*errno=28" full.log' "a write error of the thread was not reported: $(cat full.log)"
+	check '[ $? = 2 ] && grep -q "WRITERR.*errno: 28" full.log' "a write error of the thread was not reported: $(cat full.log)"
 	VBACKUP_PIPELINE=0 $VB src/tree /dev/full /SAVE_SET /REPLACE > full0.log 2>&1
-	check '[ $? = 2 ] && grep -q "WRITERR.*errno=28" full0.log' "a write error without the thread was not reported"
+	check '[ $? = 2 ] && grep -q "WRITERR.*errno: 28" full0.log' "a write error without the thread was not reported"
 fi
 
 #	Determinism: the same tree saved twice lists the same, attributes and all, but for the date;
@@ -469,7 +474,7 @@ check '[ $? = 0 ] && cmp -s phys.img phys.out' "/PHYSICAL restore into an image 
 $VB phys.bck physdir > /dev/null 2>&1
 check 'cmp -s phys.img physdir/phys.img && [ $(du -k physdir/phys.img | cut -f1) -lt 8000 ]' "a /PHYSICAL saveset restored plainly is not the sparse image"
 $VB phys.bck phys.out /PHYSICAL > physx.log 2>&1
-check '[ $? = 2 ] && grep -q "OPENOUT.*errno=17" physx.log' "/PHYSICAL restore over a file without /REPLACE: $(cat physx.log)"
+check '[ $? = 2 ] && grep -q "OPENOUT.*errno: 17" physx.log' "/PHYSICAL restore over a file without /REPLACE: $(cat physx.log)"
 $VB x.bck phys2.out /PHYSICAL > physn.log 2>&1
 check '[ $? = 2 ] && grep -q PHYSNOTPHYS physn.log' "/PHYSICAL restore of a plain saveset: $(cat physn.log)"
 $VB src phys3.bck /PHYSICAL > physd.log 2>&1
@@ -592,7 +597,7 @@ if [ -n "$VX" ]; then
 		dd if=/dev/zero of=tinyd.bck bs=8192 seek=$B count=1 conv=notrunc 2>/dev/null
 		for I in $(seq 100 199); do
 			$VX p tinyd.bck t/f$I > tp.out 2> tp.log
-			if [ -s tp.out ] && ! cmp -s tp.out tiny/t/f$I && ! grep -q "f$I is incomplete" tp.log; then
+			if [ -s tp.out ] && ! cmp -s tp.out tiny/t/f$I && ! grep -q "f$I - is incomplete" tp.log; then
 				WRONG=$((WRONG + 1))
 			fi
 		done
@@ -679,6 +684,35 @@ rm -rf e2d; VBACKUP_KEY_FILE=$S/key $VB e2.bck e2d > e2d.log 2>&1
 #	A warning: the saveset was changed by somebody, though nothing of it is lost
 check '[ $? = 1 ] && grep -q BLKFORGED e2d.log && [ "$(grep -c BLKFIXED e2d.log)" = 2 ] && diff -r --no-dereference etree e2d/etree > /dev/null' "a forged and a zapped block: $(grep -- '-[EW]-' e2d.log | head -3)"
 
+
+#
+#	15. A saveset through a pipe: "-" as the input, read once, forward only
+#
+$VB etree - > pipe.bck 2> pipe.log
+check '[ $? = 0 ] && [ -s pipe.bck ]' "a save to the standard output: $(head -2 pipe.log)"
+rm -rf po; cat pipe.bck | $VB - po > po.log 2>&1
+check '[ $? = 0 ] && diff -r --no-dereference etree po/etree > /dev/null && ! grep -q -- "-W-" po.log' "a restore from a pipe: $(grep -- '-[EW]-' po.log | head -2)"
+check '[ "$(cat pipe.bck | $VB - /LIST /FORMAT=LS 2>/dev/null)" = "$($VB pipe.bck /LIST /FORMAT=LS 2>/dev/null)" ]' "a listing from a pipe differs from the listing of the file"
+cat pipe.bck | $VB - pe.out /EXTRACT=etree/sub/deeper/numbers.txt > pe.log 2>&1
+check '[ $? = 0 ] && cmp -s pe.out etree/sub/deeper/numbers.txt' "/EXTRACT from a pipe: $(head -2 pe.log)"
+$VB etree - /ENCRYPT /KEY_FILE=key /DATA_FORMAT=COMPRESSED 2> /dev/null > pipee.bck
+rm -rf poe; cat pipee.bck | $VB - poe /KEY_FILE=key > poe.log 2>&1
+check '[ $? = 0 ] && diff -r --no-dereference etree poe/etree > /dev/null' "an encrypted compressed saveset through a pipe: $(head -2 poe.log)"
+check 'cat pipee.bck | $VB - /LIST /FULL /KEY_FILE=key 2> /dev/null | grep -q "^Node name:"' "an encrypted pipe: the full SUMMARY not taken from the stream"
+python3 -c "import sys; d=bytearray(open('pipe.bck','rb').read()); B=65536; d[2*B:3*B]=bytes(B); open('pipez.bck','wb').write(d)"
+rm -rf pz; cat pipez.bck | $VB - pz > pz.log 2>&1
+check '[ $? = 0 ] && grep -q BLKFIXED pz.log && diff -r --no-dereference etree pz/etree > /dev/null' "a bad block in a pipe not repaired: $(grep -- '-[EW]-' pz.log | head -2)"
+rm -rf pc; head -c 300000 pipe.bck | $VB - pc > pc.log 2>&1
+check '[ $? = 2 ] && grep -q NOTRAILER pc.log' "a pipe cut short not reported: $(tail -2 pc.log)"
+$VB etree - /VOLUME_SIZE=1000000 > /dev/null 2> pv.log
+check '[ $? = 2 ] && grep -q QUALUSE pv.log' "/VOLUME_SIZE with the standard output accepted"
+if [ -n "$VBKX" ]; then
+	rm -rf pvx; cat pipe.bck | $VBKX x - -C pvx > pvx.log 2>&1
+	check '[ $? = 0 ] && diff -r --no-dereference etree pvx/etree > /dev/null' "vbkx x - from a pipe: $(head -2 pvx.log)"
+	cat pipe.bck | $VBKX l - > pvl.log 2>&1
+	check '[ $? = 0 ]' "vbkx l - from a pipe: $(tail -1 pvl.log)"
+fi
+
 if [ -n "$VBKX" ]; then
 	rm -rf ex; $VBKX x e1.bck -C ex -k key > ex.log 2>&1
 	check '[ $? = 0 ] && diff -r --no-dereference etree ex/etree > /dev/null' "vbkx -k: $(head -2 ex.log)"
@@ -686,7 +720,7 @@ if [ -n "$VBKX" ]; then
 	chmod 600 bad; $VBKX t e2.bck -k bad > exb.log 2>&1
 	check '[ $? = 2 ] && grep -q "does not open" exb.log' "vbkx with a wrong passphrase: $(head -1 exb.log)"
 	VBACKUP_KEY_FILE=$S/key $VBKX t e2.bck > ext.log 2>&1
-	check '[ $? = 0 ] && grep -q "block .* not what was written" ext.log' "vbkx t of the forged saveset: $(head -2 ext.log)"
+	check '[ $? = 0 ] && grep -q "Block: .* - is not what was written" ext.log' "vbkx t of the forged saveset: $(head -2 ext.log)"
 fi
 
 

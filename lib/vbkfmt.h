@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-06"
+#define	__IDENT__	"X01-08"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.6.0"
+#define	__REV__		"1.8.0"
 #endif
 
 /*
@@ -34,6 +34,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		VBK$STRPUT.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		The block types EDATA, ETRAILER; the tags CIPHER, KDF, KDFITER,
@@ -312,6 +315,7 @@ int	vbk$tlv_next	(const uint8_t *a_body, uint32_t a_len, uint32_t *a_pos, uint16
 uint64_t vbk$tlv_getu	(uint32_t a_vlen, const uint8_t *a_val);
 void	vbk$tlv_gettime	(uint32_t a_vlen, const uint8_t *a_val, VBK$TIME *a_tim);
 
+void	vbk$strput	(char *a_buf, size_t a_size, const char *a_src);
 int	vbk$volspec	(const char *a_spec, uint32_t a_volno, char *a_out, size_t a_outsz);
 
 #ifdef	__cplusplus
