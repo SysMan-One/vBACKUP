@@ -1053,8 +1053,10 @@ size_t		l_cmdlen = 0;
 	clock_gettime(CLOCK_MONOTONIC, &l_t0);
 
 	if ( l_announce )
-		$VBKMSG(VBACKUP$_STARTED, l_opname, l_words [0], l_opts.output [0] ? " to " : "", l_opts.output [0] ? l_opts.output :
-			(l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? " to where its files came from" : "");
+		$VBKMSG(VBACKUP$_STARTED, l_opname, strcmp(l_words [0], "-") ? l_words [0] : "(standard input)",
+			l_opts.output [0] || l_opts.original ? ", Output: " : "",
+			!strcmp(l_opts.output, "-") ? "(standard output)" : l_opts.output [0] ? l_opts.output
+			: (l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? "(where its files came from)" : "");
 	}
 
 	switch ( l_opts.op )
@@ -1131,8 +1133,11 @@ size_t		l_cmdlen = 0;
 			break;
 
 		default:
-			if ( !l_opts.output [0] )
-				$VBKMSG(VBACKUP$_NOPARAM, (l_status == STS$K_ERROR) ? "input specification - it does not exist" : "output specification");
+			/* An input given that is not there: said by its name, not as a missing parameter */
+			if ( !l_opts.output [0] && (l_status == STS$K_ERROR) )
+				$VBKMSG(VBACKUP$_OPENIN, l_opts.input [0], ENOENT, strerror(ENOENT));
+			else if ( !l_opts.output [0] )
+				$VBKMSG(VBACKUP$_NOPARAM, "output specification");
 			else	$VBKMSG(VBACKUP$_IVOP, "the input does not exist - and for a save the output must be named .bck or .sav, or /SAVE_SET given");
 		}
 
@@ -1144,8 +1149,8 @@ size_t		l_cmdlen = 0;
 		clock_gettime(CLOCK_MONOTONIC, &l_t1);
 		l_cs	= (uint64_t) ((l_t1.tv_sec - l_t0.tv_sec) * 100 + (l_t1.tv_nsec - l_t0.tv_nsec) / 10000000);
 
-		$VBKMSG(VBACKUP$_COMPLETED, l_opname, vbk$errors() ? "completed with errors" : vbk$warnings() ? "completed with warnings"
-			: "completed", (uint32_t) (l_cs / 100), (uint32_t) (l_cs % 100));
+		$VBKMSG(VBACKUP$_COMPLETED, l_opname, (uint32_t) (l_cs / 100), (uint32_t) (l_cs % 100),
+			vbk$errors() ? "completed with errors" : vbk$warnings() ? "completed with warnings" : "completed");
 		}
 
 	__cli$cleanup(l_clictx);

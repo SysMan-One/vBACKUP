@@ -40,6 +40,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-08 : The judge reads the messages in their new form,
+#					"File: name - text".
+#
 #		 5-OCT-2026	RRL	X-06 : Every fourth round damages the tree saved
 #					/ENCRYPT and seals the spoilt blocks again:
 #					a right CRC, a wrong TAG.
@@ -171,8 +174,10 @@ def judge(src, out, log):
 	# A damaged file is named as it lies in the output directory
 	# A damaged file is named as it lies in the output directory (VBACKUP) or by its stored name (VBKX)
 	relo = lambda n: os.path.relpath(n, out) if n.startswith(out + "/") else n
-	named = set(relo(n) for n in re.findall(r"(?:FILDAMAGED, |vbkx: )(.+?) is incomplete", text))
-	lost = set(relo(n) for n in re.findall(r"(?:FILLOST, |vbkx: )(.+?) was not (?:restored|extracted)", text))
+	named = set(relo(n) for n in re.findall(r"FILDAMAGED, File: (.+?) - is incomplete", text))
+	named |= set(relo(n) for n in re.findall(r"vbkx: (.+?) is incomplete", text))
+	lost = set(relo(n) for n in re.findall(r"FILLOST, File: (.+?) - not restored", text))
+	lost |= set(relo(n) for n in re.findall(r"vbkx: (.+?) was not extracted", text))
 	bad = []
 	for root, ds, fs in os.walk(src):
 		for f in fs:

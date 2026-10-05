@@ -782,7 +782,7 @@ $ vbackup /etc - | ssh backup-host 'cat > etc.bck'
 
 ## Troubleshooting -- what to do when
 
-**The saveset is not created: %VBACKUP-E-OPENOUT ... errno=17 (File
+**The saveset is not created: %VBACKUP-E-OPENOUT ... errno: 17 (File
 exists).** A saveset of that name is there. Give another name, or
 /REPLACE to overwrite it.
 

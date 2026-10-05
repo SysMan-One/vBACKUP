@@ -424,9 +424,9 @@ check '[ $? = 0 ] && [ "$(grep -c BLKFIXED sk.log)" = 1 ]' "EXTRACT through a re
 
 if [ -w /dev/full ]; then
 	$VB src/tree /dev/full /SAVE_SET /REPLACE > full.log 2>&1
-	check '[ $? = 2 ] && grep -q "WRITERR.*errno=28" full.log' "a write error of the thread was not reported: $(cat full.log)"
+	check '[ $? = 2 ] && grep -q "WRITERR.*errno: 28" full.log' "a write error of the thread was not reported: $(cat full.log)"
 	VBACKUP_PIPELINE=0 $VB src/tree /dev/full /SAVE_SET /REPLACE > full0.log 2>&1
-	check '[ $? = 2 ] && grep -q "WRITERR.*errno=28" full0.log' "a write error without the thread was not reported"
+	check '[ $? = 2 ] && grep -q "WRITERR.*errno: 28" full0.log' "a write error without the thread was not reported"
 fi
 
 #	Determinism: the same tree saved twice lists the same, attributes and all, but for the date;
@@ -474,7 +474,7 @@ check '[ $? = 0 ] && cmp -s phys.img phys.out' "/PHYSICAL restore into an image 
 $VB phys.bck physdir > /dev/null 2>&1
 check 'cmp -s phys.img physdir/phys.img && [ $(du -k physdir/phys.img | cut -f1) -lt 8000 ]' "a /PHYSICAL saveset restored plainly is not the sparse image"
 $VB phys.bck phys.out /PHYSICAL > physx.log 2>&1
-check '[ $? = 2 ] && grep -q "OPENOUT.*errno=17" physx.log' "/PHYSICAL restore over a file without /REPLACE: $(cat physx.log)"
+check '[ $? = 2 ] && grep -q "OPENOUT.*errno: 17" physx.log' "/PHYSICAL restore over a file without /REPLACE: $(cat physx.log)"
 $VB x.bck phys2.out /PHYSICAL > physn.log 2>&1
 check '[ $? = 2 ] && grep -q PHYSNOTPHYS physn.log' "/PHYSICAL restore of a plain saveset: $(cat physn.log)"
 $VB src phys3.bck /PHYSICAL > physd.log 2>&1
