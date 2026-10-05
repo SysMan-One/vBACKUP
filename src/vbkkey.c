@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKKEY"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  5-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		The prompt made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Initial version.
@@ -274,7 +277,7 @@ int		l_fd, l_n, l_m;
 			if ( 0 > (l_fd = open("/dev/tty", O_RDWR | O_NOCTTY | O_CLOEXEC)) )
 				return	$VBKMSG(VBACKUP$_NOKEY, a_what);
 
-			snprintf(l_prompt, sizeof(l_prompt), "Passphrase for %s: ", a_what);
+			$VBKFAOB(l_prompt, sizeof(l_prompt), "Passphrase for !AZ: ", a_what);
 			l_n	= s_vbk$ttyread(l_fd, l_prompt, s_pass, sizeof(s_pass));
 
 			if ( (l_n > 0) && a_confirm )

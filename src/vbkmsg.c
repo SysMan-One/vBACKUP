@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -20,6 +20,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-07		 5-OCT-2026	RRL
+**		STARTED, COMPLETED; $VBKFAOB, $VBKFAOP, $VBKFAOD - every text of
+**		the utility through FAO (no printf); the questions of /CONFIRM.
+**
 **	X01-06		 5-OCT-2026	RRL
 **		MAXPARM, NOKEY, WRONGKEY, KEYFILE, KEYMATCH, BLKFORGED, ENCRYPTED,
 **		GLUED; the event BADTAG.
@@ -37,6 +41,7 @@
 **--
 */
 
+#include	<stdarg.h>
 #include	<stdio.h>
 #include	<stdlib.h>
 #include	<string.h>
@@ -148,7 +153,9 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_KEYMATCH,	"KEYMATCH, the two passphrases differ: nothing saved"),
 	$VBKREC(VBACKUP$_BLKFORGED,	"BLKFORGED, block !UQ of volume !UL is not what was written: its CRC is right, its authentication fails"),
 	$VBKREC(VBACKUP$_ENCRYPTED,	"ENCRYPTED, !AZ is encrypted: ChaCha20, HMAC-SHA256, PBKDF2 of !UL iterations"),
-	$VBKREC(VBACKUP$_GLUED,		"GLUED, !AZ: the qualifiers glued to it are taken as qualifiers")
+	$VBKREC(VBACKUP$_GLUED,		"GLUED, !AZ: the qualifiers glued to it are taken as qualifiers"),
+	$VBKREC(VBACKUP$_STARTED,	"STARTED, !AZ of !AZ!AZ!AZ"),
+	$VBKREC(VBACKUP$_COMPLETED,	"COMPLETED, !AZ !AZ, !UL.!2ZL seconds")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {
@@ -213,6 +220,139 @@ void	vbk$warned	(void)
 int	vbk$errors	(void)
 {
 	return	s_errors;
+}
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	The FAO of StarLet into a buffer, onto a stream, onto a descriptor:
+**	the one way the utility makes a text ($VBKFAOB, $VBKFAOP, $VBKFAOD).
+**
+**  FORMAL PARAMETERS:
+**
+**	a_buf, a_size	The buffer and its size, the NUL included
+**	a_ctl		The FAO control string
+**	a_prmcnt	The number of parameters, each a fao_prm_t
+**
+**  RETURN VALUE:
+**	vbk$faob: the length of the text, <a_size> when it was cut;
+**	vbk$faop, vbk$faod: STS$K_SUCCESS, STS$K_ERROR - not written.
+**--
+*/
+static	int	s_vbk$faol	(
+		char *		a_buf,
+		size_t		a_size,
+	const	char *		a_ctl,
+		int		a_prmcnt,
+		va_list		a_ap
+			)
+{
+fao_prm_t	l_prm [FAO$K_MAXPRM];
+fao_desc_t	l_dsc;
+unsigned short	l_len = 0;
+int		l_status;
+
+	if ( !a_size )
+		return	0;
+
+	a_prmcnt = (a_prmcnt > FAO$K_MAXPRM) ? FAO$K_MAXPRM : a_prmcnt;
+
+	for ( int i = 0; i < a_prmcnt; i++ )
+		l_prm [i] = va_arg(a_ap, fao_prm_t);
+
+	l_dsc.dsc$w_length  = (unsigned short) (((a_size - 1) > 0xFFFF) ? 0xFFFF : (a_size - 1));
+	l_dsc.dsc$b_dtype   = l_dsc.dsc$b_class = 0;
+	l_dsc.dsc$a_pointer = a_buf;
+
+	l_status = __util$faol(a_ctl, &l_len, &l_dsc, l_prm, a_prmcnt);
+
+	a_buf [(l_len < a_size) ? l_len : (a_size - 1)] = '\0';
+
+	return	(l_status == FAO$K_BUFOVF) ? (int) a_size : (int) l_len;
+}
+
+int	vbk$faob	(
+		char *		a_buf,
+		size_t		a_size,
+	const	char *		a_ctl,
+		int		a_prmcnt,
+		...
+			)
+{
+va_list	l_ap;
+int	l_len;
+
+	va_start(l_ap, a_prmcnt);
+	l_len	= s_vbk$faol(a_buf, a_size, a_ctl, a_prmcnt, l_ap);
+	va_end(l_ap);
+
+	return	l_len;
+}
+
+int	vbk$faop	(
+		FILE *		a_fp,
+	const	char *		a_ctl,
+		int		a_prmcnt,
+		...
+			)
+{
+char	l_buf [VBK$K_FAOBUF];
+va_list	l_ap;
+int	l_len;
+
+	va_start(l_ap, a_prmcnt);
+	l_len	= s_vbk$faol(l_buf, sizeof(l_buf), a_ctl, a_prmcnt, l_ap);
+	va_end(l_ap);
+
+	l_len	= (l_len >= (int) sizeof(l_buf)) ? (int) strlen(l_buf) : l_len;
+
+	return	(fwrite(l_buf, 1, (size_t) l_len, a_fp) == (size_t) l_len) ? STS$K_SUCCESS : STS$K_ERROR;
+}
+
+int	vbk$faod	(
+		int		a_fd,
+	const	char *		a_ctl,
+		int		a_prmcnt,
+		...
+			)
+{
+char	l_buf [VBK$K_FAOBUF];
+va_list	l_ap;
+int	l_len;
+
+	va_start(l_ap, a_prmcnt);
+	l_len	= s_vbk$faol(l_buf, sizeof(l_buf), a_ctl, a_prmcnt, l_ap);
+	va_end(l_ap);
+
+	l_len	= (l_len >= (int) sizeof(l_buf)) ? (int) strlen(l_buf) : l_len;
+
+	return	(write(a_fd, l_buf, (size_t) l_len) == (ssize_t) l_len) ? STS$K_SUCCESS : STS$K_ERROR;
+}
+
+/*
+**  The width of a number in a column of <a_w>: its digits when they are more
+*/
+uint32_t	vbk$numw	(
+		uint32_t	a_w,
+		uint64_t	a_v
+			)
+{
+uint32_t	l_n = 1;
+
+	while ( a_v >= 10 )
+		{
+		a_v	/= 10;
+		l_n++;
+		}
+
+	return	(l_n > a_w) ? l_n : a_w;
+}
+
+
+int	vbk$warnings	(void)
+{
+	return	s_warnings;
 }
 
 int	vbk$exitcode	(void)
@@ -401,7 +541,7 @@ ssize_t	l_n;
 
 	for ( ;; )
 		{
-		dprintf(l_fd, "%s %s ? [N]: ", a_what, a_name);
+		$VBKFAOD(l_fd, "!AZ !AZ ? [N]: ", a_what, a_name);
 
 		if ( 0 >= (l_n = read(l_fd, l_ans, sizeof(l_ans) - 1)) )
 			{
@@ -433,7 +573,7 @@ ssize_t	l_n;
 				return	STS$K_WARN;
 			}
 
-		dprintf(l_fd, "  YES, NO, QUIT or ALL\n");
+		$VBKFAOD(l_fd, "  YES, NO, QUIT or ALL\n");
 		}
 }
 

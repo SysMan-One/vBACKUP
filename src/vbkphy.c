@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKPHY"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -41,6 +41,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		Texts made by FAO; PHYSSUMM always.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
@@ -84,7 +87,7 @@ unsigned	l_n = 0;
 
 	a_out [l_n++] = a_dev;
 
-	snprintf(l_dir, sizeof(l_dir), "/sys/dev/block/%u:%u", major(a_dev), minor(a_dev));
+	$VBKFAOB(l_dir, sizeof(l_dir), "/sys/dev/block/!UL:!UL", major(a_dev), minor(a_dev));
 
 	if ( !(l_d = opendir(l_dir)) )
 		return	l_n;
@@ -97,10 +100,10 @@ unsigned	l_n = 0;
 		if ( l_de->d_name [0] == '.' )
 			continue;
 
-		if ( snprintf(l_path, sizeof(l_path), "%s/%s/partition", l_dir, l_de->d_name) >= (int) sizeof(l_path) || access(l_path, F_OK) )
+		if ( ($VBKFAOB(l_path, sizeof(l_path), "!AZ/!AZ/partition", l_dir, l_de->d_name) >= (int) sizeof(l_path)) || access(l_path, F_OK) )
 			continue;
 
-		snprintf(l_path, sizeof(l_path), "%s/%s/dev", l_dir, l_de->d_name);
+		$VBKFAOB(l_path, sizeof(l_path), "!AZ/!AZ/dev", l_dir, l_de->d_name);
 
 		if ( (l_f = fopen(l_path, "re")) )
 			{
@@ -184,14 +187,14 @@ struct dirent *	l_de;
 FILE *		l_f;
 int		l_held = 0;
 
-	snprintf(l_dir, sizeof(l_dir), "/sys/dev/block/%u:%u/holders", major(a_dev), minor(a_dev));
+	$VBKFAOB(l_dir, sizeof(l_dir), "/sys/dev/block/!UL:!UL/holders", major(a_dev), minor(a_dev));
 
 	if ( (l_d = opendir(l_dir)) )
 		{
 		while ( !l_held && (l_de = readdir(l_d)) )
 			if ( l_de->d_name [0] != '.' )
 				{
-				snprintf(a_what, a_wsz, "held by %s", l_de->d_name);
+				$VBKFAOB(a_what, a_wsz, "held by !AZ", l_de->d_name);
 				l_held	= 1;
 				}
 
@@ -261,7 +264,7 @@ int		l_ro = 0, l_m;
 		{
 		if ( (l_m = s_vbk$mounted(l_devs [i], l_where, sizeof(l_where))) && (a_write || (l_m == 2)) )
 			{
-			snprintf(l_what, sizeof(l_what), "%s%s", a_spec, i ? " (a partition of it)" : "");
+			$VBKFAOB(l_what, sizeof(l_what), "!AZ!AZ", a_spec, i ? " (a partition of it)" : "");
 
 			return	$VBKMSG(VBACKUP$_PHYSMOUNTED, l_what, a_write ? "" : " read-write", l_where,
 				a_write ? "nothing is written to a mounted device, unmount it" : "unmount it, mount it read-only, or save a snapshot");
@@ -441,8 +444,8 @@ char	l_ans [64];
 	if ( !isatty(STDIN_FILENO) )
 		return	1;
 
-	fprintf(stderr, "Everything on %s (%llu bytes) is to be overwritten with the device saved in %s.\nType YES to go on: ",
-		a_dev, (unsigned long long) a_size, a_spec);
+	$VBKFAOP(stderr, "Everything on !AZ (!UQ bytes) is to be overwritten with the device saved in !AZ.\nType YES to go on: ",
+		a_dev, a_size, a_spec);
 	fflush(stderr);
 
 	if ( !fgets(l_ans, sizeof(l_ans), stdin) )
@@ -644,8 +647,7 @@ int		l_phys = 0, l_isdev = 0, l_fd = -1, l_damaged = 0, l_status, l_fend = 0, l_
 	if ( l_isdev )
 		$VBKMSG(VBACKUP$_PHYSUUID, l_out);
 
-	if ( a_opts->log || (l_status == STS$K_SUCCESS) )
-		$VBKMSG(VBACKUP$_PHYSSUMM, l_out, l_devsize, l_nbytes);
+	$VBKMSG(VBACKUP$_PHYSSUMM, l_out, l_devsize, l_nbytes);
 
 	return	l_status;
 }

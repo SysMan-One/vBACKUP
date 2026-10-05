@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		RESTSUMM always; names made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
@@ -379,7 +382,7 @@ int		l_status;
 			a_rst->seen [l_byte] |= (uint8_t) (1 << (l_a->fileno % 8));
 		}
 
-	snprintf(l_name, sizeof(l_name), "%.*s", (int) l_a->pathlen, l_a->path);
+	$VBKFAOB(l_name, sizeof(l_name), "!AD", l_a->pathlen, l_a->path);
 
 	if ( l_o->nexclude && (1 & vbk$match(l_name, l_o->exclude, l_o->nexclude)) )
 		return	STS$K_SUCCESS;
@@ -441,7 +444,7 @@ int		l_status;
 			return	STS$K_SUCCESS;
 
 		case	VBK$K_FT_SYMLINK:
-			snprintf(l_tgt, sizeof(l_tgt), "%.*s", (int) l_a->linklen, l_a->link ? l_a->link : "");
+			$VBKFAOB(l_tgt, sizeof(l_tgt), "!AD", l_a->link ? l_a->linklen : 0, l_a->link ? l_a->link : "");
 
 			if ( !(1 & s_vbk$clear(a_rst)) )
 				return	STS$K_SUCCESS;
@@ -1022,7 +1025,7 @@ struct stat	l_st;
 			if ( !strcmp(l_de->d_name, ".") || !strcmp(l_de->d_name, "..") )
 				continue;
 
-			if ( snprintf(l_rel, sizeof(l_rel), "%s/%s", l_name, l_de->d_name) >= (int) sizeof(l_rel) )
+			if ( $VBKFAOB(l_rel, sizeof(l_rel), "!AZ/!AZ", l_name, l_de->d_name) >= (int) sizeof(l_rel) )
 				continue;
 
 			if ( vbk$hash_get(a_names, l_rel) )
@@ -1051,7 +1054,7 @@ struct stat	l_st;
 			{
 			int	l_status;
 
-			if ( l_quit || (snprintf(l_path, sizeof(l_path), "%s/%s/%s", l_o->output, l_name, l_ents [j]) >= (int) sizeof(l_path)) )
+			if ( l_quit || ($VBKFAOB(l_path, sizeof(l_path), "!AZ/!AZ/!AZ", l_o->output, l_name, l_ents [j]) >= (int) sizeof(l_path)) )
 				continue;
 
 			if ( l_o->confirm )
@@ -1479,8 +1482,8 @@ int		l_status = STS$K_SUCCESS;
 	a_opts->rstfiles = l_nfiles;
 	a_opts->rstbytes = l_nbytes;
 
-	if ( a_opts->log )
-		$VBKMSG(VBACKUP$_RESTSUMM, l_nfiles, l_nbytes);
+	/* Always: a command says what it did, not only under /LOG */
+	$VBKMSG(VBACKUP$_RESTSUMM, l_nfiles, l_nbytes);
 
 	return	l_status;
 }

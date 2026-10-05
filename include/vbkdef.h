@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-06"
+#define	__IDENT__	"X01-07"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.6.0"
+#define	__REV__		"1.7.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		STARTED, COMPLETED; $VBKFAOB, $VBKFAOP, $VBKFAOD, VBK$NUMW,
+**		VBK$PADW.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		/ENCRYPT, /KEY_FILE; the messages of the encryption, MAXPARM,
@@ -60,6 +64,7 @@
 
 #include	<stdint.h>
 #include	<stddef.h>
+#include	<stdio.h>
 #include	<sys/types.h>
 #include	<sys/stat.h>
 
@@ -178,6 +183,8 @@ enum	{
 	VBACKUP$K_MSG_BLKFORGED,		/* ... a block whose CRC is right, its TAG not	*/
 	VBACKUP$K_MSG_ENCRYPTED,		/* ... a saveset made encrypted, /LOG		*/
 	VBACKUP$K_MSG_GLUED,			/* Qualifiers glued to a parameter, taken apart	*/
+	VBACKUP$K_MSG_STARTED,			/* The work begins: what, from where, to where	*/
+	VBACKUP$K_MSG_COMPLETED,		/* ... it is done: how, in how long		*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -271,6 +278,8 @@ enum	{
 #define	VBACKUP$_BLKFORGED	$VBKSTS(VBACKUP$K_MSG_BLKFORGED,	STS$K_WARN)
 #define	VBACKUP$_ENCRYPTED	$VBKSTS(VBACKUP$K_MSG_ENCRYPTED,	STS$K_INFO)
 #define	VBACKUP$_GLUED		$VBKSTS(VBACKUP$K_MSG_GLUED,		STS$K_INFO)
+#define	VBACKUP$_STARTED	$VBKSTS(VBACKUP$K_MSG_STARTED,		STS$K_INFO)
+#define	VBACKUP$_COMPLETED	$VBKSTS(VBACKUP$K_MSG_COMPLETED,	STS$K_INFO)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -285,6 +294,32 @@ enum	{
 #endif
 
 #define	$VBKMSG(a_sts, ...)	vbk$note((int) $PUTMSG_FAO((a_sts), ##__VA_ARGS__))
+
+/*
+**  Every other text the utility makes goes through FAO too - no printf:
+**
+**	$VBKFAOB(buf, size, ctl, ...)	into a buffer, always ended by a NUL;
+**					returns its length, or <size> when cut
+**					(as snprintf tells a cut)
+**	$VBKFAOP(fp, ctl, ...)		onto a stream
+**	$VBKFAOD(fd, ctl, ...)		onto a file descriptor (a terminal)
+**
+**  The parameters are cast and counted as for $PUTMSG_FAO.  A field of FAO
+**  that is too narrow is filled with '*' (a number) or cut (a string), as
+**  on OpenVMS; where a value may outgrow its column the width is given
+**  by '#' as VBK$NUMW / VBK$PADW reckon it, so nothing is ever lost.
+*/
+#define	$VBKFAOB(a_buf, a_size, a_ctl, ...)	vbk$faob((a_buf), (a_size), (a_ctl), FAO$_NARG(__VA_ARGS__) FAO$_EACH(__VA_ARGS__))
+#define	$VBKFAOP(a_fp, a_ctl, ...)		vbk$faop((a_fp), (a_ctl), FAO$_NARG(__VA_ARGS__) FAO$_EACH(__VA_ARGS__))
+#define	$VBKFAOD(a_fd, a_ctl, ...)		vbk$faod((a_fd), (a_ctl), FAO$_NARG(__VA_ARGS__) FAO$_EACH(__VA_ARGS__))
+
+#define	VBK$K_FAOBUF	8192			/* A line of $VBKFAOP / $VBKFAOD		*/
+
+/* The width of a right-justified number: <a_w>, or its digits when they are more */
+#define	VBK$NUMW(a_w, a_v)	vbk$numw((a_w), (uint64_t) (a_v))
+
+/* The blanks after a string of <a_len> octets in a column of <a_w>: 0 when it fills it */
+#define	VBK$PADW(a_w, a_len)	((size_t) (a_len) < (size_t) (a_w) ? (uint32_t) ((size_t) (a_w) - (size_t) (a_len)) : 0U)
 
 /*
 **  Completion codes of the image
@@ -494,6 +529,11 @@ int	vbk$inimsg	(void);
 int	vbk$note	(int a_sts);
 void	vbk$warned	(void);
 int	vbk$exitcode	(void);
+int	vbk$warnings	(void);
+int	vbk$faob	(char *a_buf, size_t a_size, const char *a_ctl, int a_prmcnt, ...);
+int	vbk$faop	(FILE *a_fp, const char *a_ctl, int a_prmcnt, ...);
+int	vbk$faod	(int a_fd, const char *a_ctl, int a_prmcnt, ...);
+uint32_t vbk$numw	(uint32_t a_w, uint64_t a_v);
 int	vbk$errors	(void);
 int	vbk$strcpy	(size_t a_bufsz, char *a_buf, const char *a_src);
 int	vbk$upcase	(size_t a_len, const char *a_src, char *a_dst);

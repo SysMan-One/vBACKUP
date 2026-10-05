@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCMP"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -27,6 +27,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		CMPSUMM always; texts made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
@@ -149,7 +152,7 @@ ssize_t		l_n;
 	if ( !(1 & vbk$atr_parse(a_body, a_len, &l_attr)) )
 		return;
 
-	snprintf(a_cmp->name, sizeof(a_cmp->name), "%.*s", (int) l_attr.pathlen, l_attr.path);
+	$VBKFAOB(a_cmp->name, sizeof(a_cmp->name), "!AD", l_attr.pathlen, l_attr.path);
 
 	if ( l_o->nexclude && (1 & vbk$match(a_cmp->name, l_o->exclude, l_o->nexclude)) )
 		return;
@@ -263,7 +266,7 @@ char		l_what [96];
 		while ( (i < l_n) && (a_cmp->buf [i] == l_data [i]) )
 			i++;
 
-		snprintf(l_what, sizeof(l_what), "the contents differ at octet %llu", (unsigned long long) (l_off + i));
+		$VBKFAOB(l_what, sizeof(l_what), "the contents differ at octet !UQ", l_off + i);
 		s_vbk$differs(a_cmp, l_what);
 		}
 }
@@ -391,8 +394,8 @@ int		l_status;
 
 	s_vbk$done(l_cmp);
 
-	if ( a_opts->log || l_cmp->ndiff )
-		$VBKMSG(VBACKUP$_CMPSUMM, l_cmp->nfiles, l_cmp->ndiff);
+	/* Always: a command says what it did, not only under /LOG */
+	$VBKMSG(VBACKUP$_CMPSUMM, l_cmp->nfiles, l_cmp->ndiff);
 
 	l_status = l_cmp->ndiff ? STS$K_WARN : STS$K_SUCCESS;
 

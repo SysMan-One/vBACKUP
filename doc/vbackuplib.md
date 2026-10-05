@@ -454,8 +454,11 @@ every file with the disk. A difference is reported with
 
 ## /LOG -- report every file
 
-Reports every file saved, restored or compared, and the totals at the
-end.
+Reports every file saved, restored or compared.
+
+Without /LOG too, VBACKUP says when it begins (%VBACKUP-I-STARTED),
+the totals, and how it ended and how long it took
+(%VBACKUP-I-COMPLETED). A listing is its own answer and says neither.
 
 ## /CONFIRM -- ask before every file
 
@@ -959,6 +962,8 @@ that were in the cache stay there.
 %VBACKUP-E-KEYFILE      the key file cannot be used (chmod 600, first line)
 %VBACKUP-E-KEYMATCH     the two passphrases of a save differ: nothing saved
 %VBACKUP-W-BLKFORGED    a block changed on purpose: its checksum right, its tag not
+%VBACKUP-I-STARTED      the work begins: what, from where, to where
+%VBACKUP-I-COMPLETED    the work is done: completed, with warnings or with errors; how long
 ```
 
 A message goes to the standard error. It begins with the date, the

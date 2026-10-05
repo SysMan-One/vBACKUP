@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		SAVESUMM always; SYSTEM made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		/ENCRYPT: the passphrase, the SALT and the keys of the saveset;
@@ -993,7 +996,7 @@ int		l_ok = 1;
 	a_sav->created	= l_tim;
 
 	uname(&l_uts);
-	snprintf(l_sys, sizeof(l_sys), "%s %s %s", l_uts.sysname, l_uts.release, l_uts.machine);
+	$VBKFAOB(l_sys, sizeof(l_sys), "!AZ !AZ !AZ", l_uts.sysname, l_uts.release, l_uts.machine);
 
 	l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_PRODUCT, "VBACKUP " VBACKUP_K_IDENT);
 	l_ok &= vbk$tlv_str(a_tlvb, VBK$K_TAG_HOST, l_uts.nodename);
@@ -1419,13 +1422,11 @@ int		l_status = STS$K_SUCCESS;
 		return	STS$K_FATAL;
 		}
 
-	if ( a_opts->log )
-		{
-		$VBKMSG(VBACKUP$_SAVESUMM, l_sav->nfiles, l_sav->nbytes, l_nblocks, l_nvols);
+	/* Always: a command says what it did, not only under /LOG */
+	$VBKMSG(VBACKUP$_SAVESUMM, l_sav->nfiles, l_sav->nbytes, l_nblocks, l_nvols);
 
-		if ( a_opts->timefilter )
-			$VBKMSG(VBACKUP$_INCRSUMM, l_sav->npresent);
-		}
+	if ( a_opts->timefilter )
+		$VBKMSG(VBACKUP$_INCRSUMM, l_sav->npresent);
 
 	vbk$tlv_free(&l_sum);
 	vbk$tlv_free(&l_trl);

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKJNL"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		The listing of the journal and every name made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		An encrypted saveset: VBK$KEY_UNLOCK before its catalog is read.
@@ -74,9 +77,9 @@ const char *	l_home;
 		return	vbk$strcpy(a_outsz, a_out, a_spec);
 
 	if ( !geteuid() )
-		snprintf(a_out, a_outsz, "%s/%s", VBK$K_JNLDIR_ROOT, VBK$K_JNLNAME);
+		$VBKFAOB(a_out, a_outsz, "!AZ/!AZ", VBK$K_JNLDIR_ROOT, VBK$K_JNLNAME);
 	else if ( (l_home = getenv("HOME")) && *l_home )
-		snprintf(a_out, a_outsz, "%s/%s/%s", l_home, VBK$K_JNLDIR_USER, VBK$K_JNLNAME);
+		$VBKFAOB(a_out, a_outsz, "!AZ/!AZ/!AZ", l_home, VBK$K_JNLDIR_USER, VBK$K_JNLNAME);
 	else	return	STS$K_ERROR;
 
 	return	STS$K_SUCCESS;
@@ -209,7 +212,7 @@ int		l_fd;
 		if ( !(1 & s_vbk$jnldir(a_jnl->spec)) )
 			return	$VBKMSG(VBACKUP$_JNLERR, a_jnl->spec, "cannot make its directory", errno, strerror(errno));
 
-		snprintf(l_lock, sizeof(l_lock), "%s.lock", a_jnl->spec);
+		$VBKFAOB(l_lock, sizeof(l_lock), "!AZ.lock", a_jnl->spec);
 
 		if ( 0 > (a_jnl->lockfd = open(l_lock, O_RDWR | O_CREAT | O_CLOEXEC, 0600)) )
 			return	$VBKMSG(VBACKUP$_JNLERR, l_lock, "cannot be opened", errno, strerror(errno));
@@ -527,7 +530,7 @@ int		l_fd, l_ok = 1;
 	vbk$put64(l_out.buf + 8, l_nrec);
 	vbk$put32(l_crc, $VBK_CRC(0, l_out.buf, l_out.len));
 
-	snprintf(l_tmp, sizeof(l_tmp), "%s.tmp", a_jnl->spec);
+	$VBKFAOB(l_tmp, sizeof(l_tmp), "!AZ.tmp", a_jnl->spec);
 
 	if ( 0 > (l_fd = open(l_tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600)) )
 		{
@@ -658,7 +661,7 @@ char		l_tim [64];
 		return	$VBKMSG(VBACKUP$_OPENOUT, a_opts->lstfile, errno, strerror(errno));
 		}
 
-	fprintf(l_out, "Journal:           %s%s\n\n", l_jnl.spec, l_jnl.exists ? "" : "  (not there yet: empty)");
+	$VBKFAOP(l_out, "Journal:           !AZ!AZ\n\n", l_jnl.spec, l_jnl.exists ? "" : "  (not there yet: empty)");
 
 	for ( size_t i = 0; i < l_jnl.nsset; i++ )
 		{
@@ -678,18 +681,17 @@ char		l_tim [64];
 				case	VBK$K_TAG_KIND:		l_kind = vbk$tlv_getu(l_vlen, l_val) ? "incremental" : "full";	break;
 				case	VBK$K_TAG_NFILES:	l_nf = vbk$tlv_getu(l_vlen, l_val);				break;
 				case	VBK$K_TAG_NBYTES:	l_nb = vbk$tlv_getu(l_vlen, l_val);				break;
-				case	VBK$K_TAG_SPEC:		snprintf(l_spec, sizeof(l_spec), "%.*s", (int) l_vlen, l_val);	break;
-				case	VBK$K_TAG_FILTER:	snprintf(l_filter, sizeof(l_filter), " %.*s", (int) l_vlen, l_val); break;
+				case	VBK$K_TAG_SPEC:		$VBKFAOB(l_spec, sizeof(l_spec), "!AD", l_vlen, l_val);		break;
+				case	VBK$K_TAG_FILTER:	$VBKFAOB(l_filter, sizeof(l_filter), " !AD", l_vlen, l_val);	break;
 				}
 			}
 
 		s_vbk$fmttim(l_t.sec, l_tim, sizeof(l_tim));
-		fprintf(l_out, "%s  %-11s %8llu files %14llu bytes  %s%s\n", l_tim, l_kind, (unsigned long long) l_nf,
-			(unsigned long long) l_nb, l_spec, l_filter);
+		$VBKFAOP(l_out, "!AZ  !AZ!#*  !#UQ files !#UQ bytes  !AZ!AZ\n", l_tim, l_kind, VBK$PADW(11, strlen(l_kind)),
+			VBK$NUMW(8, l_nf), l_nf, VBK$NUMW(14, l_nb), l_nb, l_spec, l_filter);
 		}
 
-	fprintf(l_out, "\nTotal of %zu saveset%s, %zu file%s recorded\n", l_jnl.nsset, (l_jnl.nsset == 1) ? "" : "s",
-		l_jnl.files.cnt, (l_jnl.files.cnt == 1) ? "" : "s");
+	$VBKFAOP(l_out, "\nTotal of !UQ saveset!%S, !UQ file!%S recorded\n", l_jnl.nsset, l_jnl.files.cnt);
 
 	/* The files, in the order of their names */
 	if ( (a_opts->lstfmt == VBACKUP$K_LST_FULL) && l_jnl.files.cnt && (l_sorted = malloc(l_jnl.files.cnt * sizeof(*l_sorted))) )
@@ -700,7 +702,7 @@ char		l_tim [64];
 
 		qsort(l_sorted, l_n, sizeof(*l_sorted), s_vbk$cmpkey);
 
-		fputc('\n', l_out);
+		$VBKFAOP(l_out, "\n");
 
 		for ( size_t i = 0; i < l_n; i++ )
 			{
@@ -720,11 +722,12 @@ char		l_tim [64];
 
 				while ( 1 & vbk$tlv_next(l_jnl.sset [j].buf, l_jnl.sset [j].len, &l_pos, &l_tag, &l_vlen, &l_val) )
 					if ( l_tag == VBK$K_TAG_SPEC )
-						snprintf(l_spec, sizeof(l_spec), "%.*s", (int) l_vlen, l_val);
+						$VBKFAOB(l_spec, sizeof(l_spec), "!AD", l_vlen, l_val);
 				}
 
 			s_vbk$fmttim(l_st->recorded.sec, l_tim, sizeof(l_tim));
-			fprintf(l_out, "%-50s %12llu  %s  %s\n", l_sorted [i]->key, (unsigned long long) l_st->size, l_tim, l_spec);
+			$VBKFAOP(l_out, "!AZ!#*  !#UQ  !AZ  !AZ\n", l_sorted [i]->key, VBK$PADW(50, strlen(l_sorted [i]->key)),
+				VBK$NUMW(12, l_st->size), l_st->size, l_tim, l_spec);
 			}
 
 		free(l_sorted);
@@ -868,8 +871,8 @@ uint64_t	l_nrec = 0;
 						/* A catalog of X01-01 has no CTIME and DEVINO: such an entry is of no use */
 						if ( !l_attr.hasctime || !l_attr.hasdevino || (l_base [l_attr.baseidx][0] != '/') )
 							l_bare++;
-						else if ( snprintf(l_path, sizeof(l_path), "%s%s%.*s", l_base [l_attr.baseidx],
-								strcmp(l_base [l_attr.baseidx], "/") ? "/" : "", (int) l_attr.pathlen, l_attr.path) < (int) sizeof(l_path) )
+						else if ( $VBKFAOB(l_path, sizeof(l_path), "!AZ!AZ!AD", l_base [l_attr.baseidx],
+								strcmp(l_base [l_attr.baseidx], "/") ? "/" : "", l_attr.pathlen, l_attr.path) < (int) sizeof(l_path) )
 							{
 							l_old	= (const VBK$FSTATE *) vbk$hash_get(&l_jnl.files, l_path);
 

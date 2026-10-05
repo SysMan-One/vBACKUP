@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCPY"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-07"
+#define	__REV__		"1.7.0"
 
 /*
 **++
@@ -27,6 +27,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-07		 5-OCT-2026	RRL
+**		CPYSUMM always; the key of a hard link made by FAO.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		What lies under the output directory is not copied: a pattern
@@ -249,7 +252,7 @@ int		l_fd = -1, l_status;
 	/* A further name of a file already copied: a link to the first one */
 	if ( (l_attr.ftype == VBK$K_FT_REG) && (l_attr.nlink > 1) )
 		{
-		snprintf(l_key, sizeof(l_key), "%llx:%llx", (unsigned long long) l_attr.dev, (unsigned long long) l_attr.ino);
+		$VBKFAOB(l_key, sizeof(l_key), "!XQ:!XQ", l_attr.dev, l_attr.ino);
 
 		if ( (l_first = (const char *) vbk$hash_get(&l_cpy->hlink, l_key)) )
 			{
@@ -362,8 +365,8 @@ int		l_status = STS$K_SUCCESS;
 
 	vbk$rst_finish(l_cpy.rst, &l_nfiles, &l_nbytes);
 
-	if ( a_opts->log )
-		$VBKMSG(VBACKUP$_CPYSUMM, l_nfiles, l_nbytes);
+	/* Always: a command says what it did, not only under /LOG */
+	$VBKMSG(VBACKUP$_CPYSUMM, l_nfiles, l_nbytes);
 
 	if ( a_opts->verify && l_cpy.ndiff )
 		$VBKMSG(VBACKUP$_CMPSUMM, l_nfiles, l_cpy.ndiff);
