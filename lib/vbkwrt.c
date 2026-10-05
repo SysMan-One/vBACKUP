@@ -49,7 +49,11 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-11		 5-OCT-2026	RRL
-**		The standard output carries volumes back to back.
+**		The standard output carries volumes back to back.  SPIPE, the
+**		pipeline of an encrypted save: sealers seal the EDATA blocks of
+**		the queue side by side, the writer XORs, fills the XOR block and
+**		sets every CRC in order; the numbering of the blocks and the
+**		volumes stay with the main thread.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		No printf: the names by VBK$STRPUT.
@@ -138,6 +142,84 @@ ssize_t	l_rc;
 **  The writer thread: the queue is written out in order until STOP; after
 **  a failure what comes is given back unwritten
 */
+/*
+**  The pipeline of an encrypted save (SPIPE): the main thread numbers the
+**  blocks and closes the volumes as ever, but leaves the payloads as they
+**  are; threads of their own seal the EDATA blocks in the queue as they
+**  come, side by side; the writer thread takes them in order, XORs their
+**  ciphertext into the group, fills the XOR block when it comes, and sets
+**  every CRC last - after the flags of the end of a volume are final.
+*/
+static	void *	s_vbk$sealer	(
+		void *		a_arg
+			)
+{
+VBK$WCTX *	l_ctx = (VBK$WCTX *) a_arg;
+VBK$BHDR	l_h;
+uint32_t	l_k, l_pos;
+uint8_t *	l_buf;
+
+	/* A sealer splits nothing further: the stripes of ChaCha20 are for a block sealed alone */
+	vbk$crp_inpool(1);
+
+	pthread_mutex_lock(&l_ctx->mtx);
+
+	for ( ;; )
+		{
+		for ( l_k = 0; l_k < l_ctx->qcnt; l_k++ )
+			if ( l_ctx->rstate [l_pos = (l_ctx->qhead + l_k) % l_ctx->nbufs] == 1 )
+				break;
+
+		if ( l_k < l_ctx->qcnt )
+			{
+			l_ctx->rstate [l_pos] = 2;
+			l_buf	= l_ctx->ring [l_pos];
+			pthread_mutex_unlock(&l_ctx->mtx);
+
+			vbk$bhdr_peek(l_buf, &l_h);
+			vbk$crp_seal(l_ctx->keys, &l_h, l_buf + VBK$K_HDRSZ, l_ctx->psize);
+
+			pthread_mutex_lock(&l_ctx->mtx);
+			l_ctx->rstate [l_pos] = 0;
+			pthread_cond_broadcast(&l_ctx->cvsealed);
+			continue;
+			}
+
+		if ( l_ctx->stop )
+			break;
+
+		pthread_cond_wait(&l_ctx->cvseal, &l_ctx->mtx);
+		}
+
+	pthread_mutex_unlock(&l_ctx->mtx);
+
+	return	NULL;
+}
+
+/*
+**  The last of a block in the pipeline, in the order of the blocks: the
+**  XOR of the group, the payload of the XOR block, the CRC
+*/
+static	void	s_vbk$final	(
+		VBK$WCTX *	a_ctx,
+		uint8_t *	a_buf
+			)
+{
+uint64_t *	l_x = (uint64_t *) a_ctx->xor, *l_p = (uint64_t *) (a_buf + VBK$K_HDRSZ);
+
+	if ( a_ctx->grpsz && (a_buf [12] == VBK$K_BT_EDATA) )
+		for ( uint32_t i = 0; i < (a_ctx->psize / sizeof(uint64_t)); i++ )
+			l_x [i] ^= l_p [i];
+	else if ( a_ctx->grpsz && (a_buf [12] == VBK$K_BT_XOR) )
+		{
+		memcpy(l_p, l_x, a_ctx->psize);
+		memset(l_x, 0, a_ctx->psize);
+		}
+
+	vbk$blk_seal(a_buf, a_ctx->bsize);
+}
+
+
 static	void *	s_vbk$writer	(
 		void *		a_arg
 			)
@@ -156,6 +238,10 @@ int		l_err;
 		if ( !l_ctx->qcnt )
 			break;
 
+		/* The pipeline: the block at the head is written once it is sealed */
+		while ( l_ctx->spipe && l_ctx->rstate [l_ctx->qhead] )
+			pthread_cond_wait(&l_ctx->cvsealed, &l_ctx->mtx);
+
 		l_buf		= l_ctx->ring [l_ctx->qhead];
 		l_ctx->qhead	= (l_ctx->qhead + 1) % l_ctx->nbufs;
 		l_ctx->qcnt--;
@@ -166,6 +252,9 @@ int		l_err;
 			{
 			l_ctx->busy	= 1;
 			pthread_mutex_unlock(&l_ctx->mtx);
+
+			if ( l_ctx->spipe )
+				s_vbk$final(l_ctx, l_buf);
 
 			l_err	= s_vbk$write(l_ctx, l_buf, l_ctx->bsize);
 
@@ -217,7 +306,17 @@ int	l_err;
 	if ( (l_err = a_ctx->werr) )
 		a_ctx->freel [a_ctx->nfree++] = a_buf;
 	else	{
-		a_ctx->ring [(a_ctx->qhead + a_ctx->qcnt) % a_ctx->nbufs] = a_buf;
+		uint32_t	l_pos = (a_ctx->qhead + a_ctx->qcnt) % a_ctx->nbufs;
+
+		a_ctx->ring [l_pos] = a_buf;
+
+		/* The pipeline: an EDATA block is to be sealed before it is written */
+		if ( a_ctx->spipe )
+			{
+			a_ctx->rstate [l_pos] = (a_buf [12] == VBK$K_BT_EDATA) ? 1 : 0;
+			pthread_cond_broadcast(&a_ctx->cvseal);
+			}
+
 		a_ctx->qcnt++;
 		pthread_cond_signal(&a_ctx->cvfull);
 		}
@@ -347,10 +446,13 @@ uint8_t *	l_buf = a_ctx->pend;
 	if ( !a_ctx->haspend )
 		return	STS$K_SUCCESS;
 
+	/* The pipeline sets the CRC itself, last */
 	if ( a_flags )
 		{
 		l_buf [13] |= a_flags;
-		vbk$blk_seal(l_buf, a_ctx->bsize);
+
+		if ( !a_ctx->spipe )
+			vbk$blk_seal(l_buf, a_ctx->bsize);
 		}
 
 	a_ctx->haspend	= 0;
@@ -468,13 +570,19 @@ int		l_status;
 	l_hdr.prvpaylen	= a_ctx->prvpaylen;
 
 	vbk$bhdr_put(&l_hdr, a_ctx->aux);
-	memcpy(a_ctx->aux + VBK$K_HDRSZ, a_ctx->xor, a_ctx->psize);
-	vbk$blk_seal(a_ctx->aux, a_ctx->bsize);
+
+	/* The pipeline fills the payload of the XOR block when it gets there: the ciphertext is made there */
+	if ( !a_ctx->spipe )
+		{
+		memcpy(a_ctx->aux + VBK$K_HDRSZ, a_ctx->xor, a_ctx->psize);
+		vbk$blk_seal(a_ctx->aux, a_ctx->bsize);
+		}
 
 	if ( !(1 & (l_status = s_vbk$emit(a_ctx, &a_ctx->aux))) )
 		return	l_status;
 
-	memset(a_ctx->xor, 0, a_ctx->psize);
+	if ( !a_ctx->spipe )
+		memset(a_ctx->xor, 0, a_ctx->psize);
 
 	a_ctx->gcnt	= 0;
 	a_ctx->prvrecoff = VBK$K_NONE;
@@ -612,12 +720,14 @@ int		l_status;
 	l_hdr.prvrecoff	= a_ctx->grpsz ? a_ctx->prvrecoff : VBK$K_NONE;
 	l_hdr.prvpaylen	= a_ctx->grpsz ? a_ctx->prvpaylen : 0;
 
-	/* Encrypted before the XOR and the CRC: both cover what lies on the medium */
-	if ( a_ctx->keys )
+	/* Encrypted before the XOR and the CRC: both cover what lies on the medium; the pipeline does all three later */
+	if ( a_ctx->keys && !a_ctx->spipe )
 		vbk$crp_seal(a_ctx->keys, &l_hdr, a_ctx->cur + VBK$K_HDRSZ, a_ctx->psize);
 
 	vbk$bhdr_put(&l_hdr, a_ctx->cur);
-	vbk$blk_seal(a_ctx->cur, a_ctx->bsize);
+
+	if ( !a_ctx->spipe )
+		vbk$blk_seal(a_ctx->cur, a_ctx->bsize);
 
 	a_ctx->curopen	= 0;
 
@@ -627,7 +737,7 @@ int		l_status;
 		l_x	= (uint64_t *) a_ctx->xor;
 		l_p	= (uint64_t *) (a_ctx->cur + VBK$K_HDRSZ);
 
-		for ( uint32_t i = 0; i < (a_ctx->psize / sizeof(uint64_t)); i++ )
+		for ( uint32_t i = 0; !a_ctx->spipe && (i < (a_ctx->psize / sizeof(uint64_t))); i++ )
 			l_x [i] ^= l_p [i];
 
 		a_ctx->prvrecoff = a_ctx->recoff;
@@ -742,6 +852,21 @@ int	l_status;
 		pthread_mutex_init(&a_ctx->mtx, NULL);
 		pthread_cond_init(&a_ctx->cvfull, NULL);
 		pthread_cond_init(&a_ctx->cvfree, NULL);
+
+		/* Encrypted, and cores to share it: the queue seals (the sealers start before the writer reads a slot) */
+		if ( a_ctx->keys && (vbk$crp_nthr() > 1) && (a_ctx->rstate = calloc(a_ctx->nbufs, 1)) )
+			{
+			pthread_cond_init(&a_ctx->cvseal, NULL);
+			pthread_cond_init(&a_ctx->cvsealed, NULL);
+			a_ctx->spipe	= 1;
+
+			for ( a_ctx->nsthr = 0; (a_ctx->nsthr < (vbk$crp_nthr() - 1)) && (a_ctx->nsthr < 8); a_ctx->nsthr++ )
+				if ( pthread_create(&a_ctx->sthr [a_ctx->nsthr], NULL, s_vbk$sealer, a_ctx) )
+					break;
+
+			if ( !a_ctx->nsthr )
+				a_ctx->spipe = 0;
+			}
 
 		if ( !(a_ctx->thron = !pthread_create(&a_ctx->thr, NULL, s_vbk$writer, a_ctx)) )
 			{
@@ -1028,6 +1153,21 @@ void	vbk$wrt_abort	(
 
 		pthread_join(a_ctx->thr, NULL);
 
+		/* The sealers: nothing is left to seal once the writer has drained the queue */
+		if ( a_ctx->nsthr )
+			{
+			pthread_mutex_lock(&a_ctx->mtx);
+			pthread_cond_broadcast(&a_ctx->cvseal);
+			pthread_mutex_unlock(&a_ctx->mtx);
+
+			for ( uint32_t i = 0; i < a_ctx->nsthr; i++ )
+				pthread_join(a_ctx->sthr [i], NULL);
+
+			pthread_cond_destroy(&a_ctx->cvseal);
+			pthread_cond_destroy(&a_ctx->cvsealed);
+			a_ctx->nsthr	= 0;
+			}
+
 		pthread_cond_destroy(&a_ctx->cvfree);
 		pthread_cond_destroy(&a_ctx->cvfull);
 		pthread_mutex_destroy(&a_ctx->mtx);
@@ -1041,6 +1181,9 @@ void	vbk$wrt_abort	(
 	free(a_ctx->bufs);
 	free(a_ctx->freel);
 	free(a_ctx->ring);
+	free(a_ctx->rstate);
+	a_ctx->rstate	= NULL;
+	a_ctx->spipe	= 0;
 	free(a_ctx->xor);
 	free(a_ctx->vhdr);
 

@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-06"
+#define	__IDENT__	"X01-11"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.6.0"
+#define	__REV__		"1.11.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		SPIPE, RSTATE, the sealers.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		KEYS, set by the caller: the saveset is encrypted; CAP.
@@ -102,6 +105,12 @@ typedef struct vbk_wctx_t
 	int		busy;			/* The thread is writing a block		*/
 	int		stop;
 	int		werr;			/* errno of a write of the thread, 0 - none	*/
+
+	int		spipe;			/* Encrypted, on several cores: the queue seals	*/
+	uint8_t *	rstate;			/* ... per slot of RING: 0 ready, 1 to seal, 2 being sealed */
+	pthread_t	sthr [8];		/* ... the threads that seal			*/
+	uint32_t	nsthr;
+	pthread_cond_t	cvseal, cvsealed;	/* ... a block to seal; a block sealed		*/
 
 	int		isreg;			/* The volume is a regular file: writeback	*/
 	uint64_t	wroff;			/* Octets written into the volume		*/
