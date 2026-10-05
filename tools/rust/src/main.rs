@@ -86,10 +86,11 @@
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
-**		is kept as far as it got and named: "<name> is incomplete".
-**		A file whose records were lost entirely is named from the
-**		catalog: "<name> was not extracted"; without a readable
-**		catalog that is said once ("... cannot all be named").  A
+**		is kept as far as it got and named: "File: <name> - is
+**		incomplete".  A file whose records were lost entirely is
+**		named from the catalog: "File: <name> - not extracted";
+**		without a readable catalog that is said once ("Saveset:
+**		<saveset> - files missing ... cannot all be named").  A
 **		missing or cut volume is skipped, the next one is read.  A
 **		volume 1 whose first block (VHDR) is bad is still read: the
 **		block size is found by trying every legal size against the
@@ -113,6 +114,11 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		The messages in the form of vbkx and VBACKUP: what they are
+**		about first, as "Label: value", then " - " and the words;
+**		an error of the system as "errno: N - words (its text)".
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets (format.md 6.10): EDATA and ETRAILER,
@@ -926,7 +932,7 @@ fn summary_group(blk: &[u8], h: &Bhdr) -> Option<(u32, Option<Vcrypt>)> {
 
 impl Reader {
     fn open(spec: &str) -> Result<Reader, String> {
-        let mut f = File::open(spec).map_err(|e| format!("{}: {}", spec, e))?;
+        let mut f = File::open(spec).map_err(|e| oserr(&format!("File: {}", spec), &e, "cannot be opened"))?;
         let mut r = Reader {
             crc: Crc::new(),
             spec: spec.to_string(),
@@ -976,7 +982,7 @@ impl Reader {
             }
         }
         if !found && !r.guess(&f) {
-            return Err(format!("{} is not a saveset", spec));
+            return Err(format!("File: {} - is not a saveset", spec));
         }
         let n1 = blocks_in(&f, r.bsize);
         r.vols.push(Volume { f: Some(f), firstblk: 0, nblk: n1 });
@@ -1007,7 +1013,7 @@ impl Reader {
                 }
                 _ => match check(&r.crc, &read_block(Some(&vf), r.bsize, 1), r.bsize, Some(&r.uuid)) {
                     Some(h) if h.volno == n && h.blkno > 0 => {
-                        msg!("volume {}: its first block is bad, it is read all the same", n);
+                        msg!("Volume: {} - its first block is bad, it is read all the same", n);
                         first = Some(h.blkno - 1)
                     }
                     _ => first = None,
@@ -1023,7 +1029,7 @@ impl Reader {
                     miss = 0;
                 }
                 None => {
-                    msg!("volume {} belongs to another saveset, or is none", n);
+                    msg!("Volume: {} - belongs to another saveset, or is none", n);
                     miss += 1;
                 }
             }
@@ -1040,13 +1046,13 @@ impl Reader {
                 || vc.salt.len() != 32
                 || vc.check.len() != 32
             {
-                return Err(format!("{}: an encryption this extractor does not know - it cannot be read", spec));
+                return Err(format!("Saveset: {} - an encryption this extractor does not know: it cannot be read", spec));
             }
             r.dtype = BT_EDATA;
             r.ttype = BT_ETRAILER;
             r.cap -= TAGSZ as u32;
         } else if r.enc_seen {
-            return Err(format!("{} is encrypted, and no volume has a readable VHDR to give its keys", spec));
+            return Err(format!("Saveset: {} - is encrypted, and no volume has a readable VHDR to give its keys", spec));
         }
 
         /* The TRAILER, last block of the last volume: it is not part of the groups */
@@ -1086,7 +1092,7 @@ impl Reader {
                 None => false,
             };
             if !good {
-                msg!("{}: its trailer fails its authentication - read as a saveset without a catalog", self.spec);
+                msg!("Saveset: {} - its trailer fails its authentication: read as a saveset without a catalog", self.spec);
                 self.bad = true;
             }
         }
@@ -1120,7 +1126,7 @@ impl Reader {
                         }
                     }
                 }
-                msg!("{}: the first block is bad; block size {} and group size {} found by trying", self.spec, bs, self.grpsz);
+                msg!("Saveset: {} - its first block is bad: block size {} and group size {} found by trying", self.spec, bs, self.grpsz);
                 return true;
             }
             bs += 512;
@@ -1148,7 +1154,7 @@ impl Reader {
                 return false;
             }
             if self.vols[self.curvol - 1].f.is_none() {
-                msg!("volume {} is missing", self.curvol);
+                msg!("Volume: {} - is missing", self.curvol);
                 self.bad = true;
                 self.gap = true;
                 self.curvol += 1;
@@ -1217,7 +1223,7 @@ impl Reader {
                     if !tag_ok(k, self.bsize, &hdrs[i], &blks[i][HDR..]) {
                         ok[i] = false;
                         msg!(
-                            "block {} of volume {} is not what was written: its CRC is right, its authentication fails",
+                            "Block: {}, Volume: {} - is not what was written: its CRC is right, its authentication fails",
                             hdrs[i].blkno,
                             self.curvol
                         );
@@ -1261,7 +1267,7 @@ impl Reader {
                 blks[badi][HDR..].copy_from_slice(&d);
                 hdrs[badi] = h;
                 ok[badi] = true;
-                msg!("block {} of volume {} was bad and has been repaired", h.blkno, self.curvol);
+                msg!("Block: {}, Volume: {} - was bad, rebuilt from its group", h.blkno, self.curvol);
             }
         }
 
@@ -1280,7 +1286,7 @@ impl Reader {
         for i in 0..gdata {
             let b = firstblk.wrapping_add(self.curpos + i as u64);
             if !ok[i] {
-                msg!("block {} of volume {} is bad and cannot be repaired", b, self.curvol);
+                msg!("Block: {}, Volume: {} - is bad and cannot be rebuilt", b, self.curvol);
                 self.bad = true;
                 self.pays.push(None);
             } else {
@@ -1361,7 +1367,7 @@ impl Reader {
                 }
             }
             if typ == 0 || length > MAXREC {
-                msg!("a bad record in block {} of volume {}", self.payblk, self.payvol);
+                msg!("Block: {}, Volume: {} - an invalid record, skipped", self.payblk, self.payvol);
                 self.bad = true;
                 self.gap = true;
                 self.pay = None;
@@ -1390,7 +1396,7 @@ impl Reader {
                 continue;
             }
             if st == 2 {
-                msg!("the saveset ends inside a record");
+                msg!("Saveset: {} - ends inside a record", self.spec);
                 self.bad = true;
                 self.resync = true;
                 return None;
@@ -1414,7 +1420,7 @@ fn join(out: &Path, name: &[u8]) -> PathBuf {
 }
 
 /* The directories a name lies in, below OUT, made if CREATE; a symbolic link on the way is refused */
-fn parents(out: &Path, name: &[u8], create: bool) -> Result<(), String> {
+fn parents(out: &Path, name: &[u8], create: bool) -> io::Result<()> {
     let comps: Vec<&[u8]> = name.split(|&c| c == b'/').collect();
     let mut p = out.to_path_buf();
     for c in comps.iter().take(comps.len().saturating_sub(1)) {
@@ -1422,14 +1428,14 @@ fn parents(out: &Path, name: &[u8], create: bool) -> Result<(), String> {
         match fs::symlink_metadata(&p) {
             Ok(m) => {
                 if !m.is_dir() {
-                    return Err("a directory on the way is a link, or no directory".to_string());
+                    return Err(io::Error::from_raw_os_error(20)); // ENOTDIR: a link, or no directory
                 }
             }
             Err(e) => {
                 if !create {
-                    return Err(e.to_string());
+                    return Err(e);
                 }
-                fs::create_dir(&p).map_err(|e| e.to_string())?;
+                fs::create_dir(&p)?;
                 let _ = fs::set_permissions(&p, fs::Permissions::from_mode(0o700));
             }
         }
@@ -1510,7 +1516,7 @@ impl Extractor {
         let e = match parse_entry(body) {
             Some(e) => e,
             None => {
-                msg!("a FILE record that makes no sense is skipped");
+                msg!("Record: FILE - makes no sense, skipped");
                 r.bad = true;
                 return;
             }
@@ -1523,12 +1529,12 @@ impl Extractor {
             return;
         }
         if !name_ok(&e.path) {
-            msg!("{} was not extracted: a name that leads out of the output directory", name);
+            msg!("File: {} - its name leads out of the output directory, not extracted", name);
             r.bad = true;
             return;
         }
         if let Err(err) = parents(&self.out, &e.path, true) {
-            msg!("{} was not extracted: {}", name, err);
+            msg!("{}", oserr(&format!("File: {}", name), &err, "a directory on the way cannot be made, or is a link, not extracted"));
             r.bad = true;
             return;
         }
@@ -1536,7 +1542,7 @@ impl Extractor {
         if e.ftype == FT_DIR {
             if let Err(err) = fs::create_dir(&path) {
                 if err.kind() != io::ErrorKind::AlreadyExists {
-                    msg!("{} was not extracted: {}", name, err);
+                    msg!("{}", oserr(&format!("File: {}", name), &err, "cannot be made, not extracted"));
                     r.bad = true;
                     return;
                 }
@@ -1545,10 +1551,13 @@ impl Extractor {
             return;
         }
         if fs::symlink_metadata(&path).is_ok() {
-            msg!("{} was not extracted: it exists, and is never overwritten", name);
+            msg!("File: {} - already exists, not extracted (never overwritten)", name);
             r.bad = true;
             return;
         }
+        /* Err: the message, whole */
+        let what = format!("File: {}", name);
+        let made = |err: io::Error| oserr(&what, &err, "cannot be made, not extracted");
         let res: Result<(), String> = match e.ftype {
             FT_REG => match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(f) => {
@@ -1557,34 +1566,38 @@ impl Extractor {
                     self.path = path.clone();
                     Ok(())
                 }
-                Err(err) => Err(err.to_string()),
+                Err(err) => Err(made(err)),
             },
             FT_SYMLINK => match std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(&e.link), &path) {
                 Ok(()) => {
                     set_times(&path, &e, true);
                     Ok(())
                 }
-                Err(err) => Err(err.to_string()),
+                Err(err) => Err(made(err)),
             },
             FT_HARDLINK => {
                 if !name_ok(&e.link) {
-                    Err("a link that leads out of the output directory".to_string())
+                    Err(format!("{} - a link that leads out of the output directory, not extracted", what))
                 } else {
-                    parents(&self.out, &e.link, false).and_then(|_| fs::hard_link(join(&self.out, &e.link), &path).map_err(|err| err.to_string()))
+                    parents(&self.out, &e.link, false).and_then(|_| fs::hard_link(join(&self.out, &e.link), &path)).map_err(made)
                 }
             }
             FT_FIFO => match CString::new(path.as_os_str().as_bytes()) {
-                Ok(c) if sys::make_fifo(&c) => {
-                    set_mode(&path, e.mode);
-                    set_times(&path, &e, false);
-                    Ok(())
+                Ok(c) => {
+                    if sys::make_fifo(&c) {
+                        set_mode(&path, e.mode);
+                        set_times(&path, &e, false);
+                        Ok(())
+                    } else {
+                        Err(made(io::Error::last_os_error()))
+                    }
                 }
-                _ => Err("cannot be made".to_string()),
+                Err(_) => Err(format!("{} - a FIFO, cannot be made, not extracted", what)),
             },
             _ => Ok(()), // devices and sockets are not made
         };
         if let Err(err) = res {
-            msg!("{} was not extracted: {}", name, err);
+            msg!("{}", err);
             r.bad = true;
         }
     }
@@ -1601,7 +1614,7 @@ impl Extractor {
         let (fileno, off, view) = match data_view(typ, body) {
             Some(v) => v,
             None => {
-                msg!("{}: a data record that makes no sense", shown(&self.e.path));
+                msg!("File: {} - a data record that makes no sense", shown(&self.e.path));
                 self.damaged = true;
                 return;
             }
@@ -1615,7 +1628,7 @@ impl Extractor {
             if off > 1 << 62 {
                 self.damaged = true;
             } else if let Err(err) = f.write_all_at(d, off) {
-                msg!("{}: {}", shown(&self.e.path), err);
+                msg!("{}", oserr(&format!("File: {}", shown(&self.e.path)), &err, "cannot be written"));
                 self.damaged = true;
             }
         }
@@ -1644,23 +1657,23 @@ impl Extractor {
         if body.is_none() || fileno != self.e.fileno {
             self.damaged = true;
         } else if has_crc && crc != self.crc {
-            msg!("{}: the checksum does not match", name);
+            msg!("File: {} - checksum mismatch: the data differ from what was saved", name);
             self.damaged = true;
         }
         if self.damaged {
-            msg!("{} is incomplete: its data was lost in bad blocks", name);
+            msg!("File: {} - is incomplete: its data was lost in bad blocks", name);
             r.bad = true;
         } else if status == FS_CHANGED {
-            msg!("{} changed while it was saved: the copy may be a mix", name);
+            msg!("File: {} - changed while it was saved: the copy may be a mix", name);
         } else if status == FS_READERR {
-            msg!("{} could not be read whole when it was saved", name);
+            msg!("File: {} - could not be read whole when it was saved", name);
         }
         if let Some(f) = self.f.take() {
             if size <= 1 << 62 {
                 let _ = f.set_len(size);
             }
             if let Err(err) = f.sync_all() {
-                msg!("{}: {}", name, err);
+                msg!("{}", oserr(&format!("File: {}", name), &err, "cannot be written"));
                 r.bad = true;
             }
             drop(f);
@@ -1685,7 +1698,7 @@ impl Extractor {
             };
             if let Some(e) = parse_entry(ent) {
                 if e.status != FS_PRESENT && !self.seen.contains(&e.fileno) {
-                    msg!("{} was not extracted: its records were lost in bad blocks", shown(&e.path));
+                    msg!("File: {} - not extracted: its records were lost in bad blocks", shown(&e.path));
                     r.bad = true;
                 }
             }
@@ -1751,7 +1764,7 @@ fn run(r: &mut Reader, x: &mut Extractor) {
     }
     /* Blocks were lost, and the catalog could not tell every name */
     if r.bad && (!x.cat_seen || x.cat_hole || !ended) {
-        msg!("{}: files missing from the output cannot all be named", r.spec);
+        msg!("Saveset: {} - files missing from the output cannot all be named", r.spec);
     }
 }
 
@@ -1803,6 +1816,14 @@ fn syserr(e: &io::Error) -> String {
     }
 }
 
+/* "Label: value, errno: N - words (text)"; an error without a number: "Label: value - words (text)" */
+fn oserr(label: &str, e: &io::Error, words: &str) -> String {
+    match e.raw_os_error() {
+        Some(n) => format!("{}, errno: {} - {} ({})", label, n, words, syserr(e)),
+        None => format!("{} - {} ({})", label, words, syserr(e)),
+    }
+}
+
 /*
 ** The passphrase of an encrypted saveset: the first line of the key file
 ** (-k, else VBACKUP_KEY_FILE) - one only its owner may read or write -
@@ -1822,14 +1843,14 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
         let mut f = match File::open(&kf) {
             Ok(f) => f,
             Err(e) => {
-                msg!("{}: {}", name, syserr(&e));
+                msg!("{}", oserr(&format!("Key file: {}", name), &e, "cannot be read"));
                 return None;
             }
         };
         match f.metadata() {
             Ok(m) if m.is_file() && m.mode() & 0o077 == 0 => {}
             _ => {
-                msg!("{}: not a regular file, or others may read it - chmod 600 it", name);
+                msg!("Key file: {} - not a regular file, or others may read it: chmod 600 it", name);
                 return None;
             }
         }
@@ -1854,14 +1875,14 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
         let mut t = match tty {
             Ok(t) => t,
             Err(_) => {
-                msg!("{} is encrypted: no terminal to ask the passphrase on - give -k file", spec);
+                msg!("Saveset: {} - is encrypted, and there is no terminal to ask the passphrase on: give -k file", spec);
                 return None;
             }
         };
         let saved = match stty("-g", &t) {
             Some(g) => String::from_utf8_lossy(&g).trim().to_string(),
             None => {
-                msg!("{} is encrypted: no terminal to ask the passphrase on - give -k file", spec);
+                msg!("Saveset: {} - is encrypted, and there is no terminal to ask the passphrase on: give -k file", spec);
                 return None;
             }
         };
@@ -1886,7 +1907,7 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
         line.pop();
     }
     if line.is_empty() || line.len() > PASSMAX {
-        msg!("no passphrase, or one longer than {} bytes", PASSMAX);
+        msg!("Passphrase: none - empty, or longer than {} bytes", PASSMAX);
         return None;
     }
     Some(line)
@@ -1894,7 +1915,7 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
 
 fn usage() -> i32 {
     eprintln!(
-        "vbkx-rs X01-06 - the extractor of last resort for VBACKUP savesets\n\n  \
+        "vbkx-rs X01-08 - the extractor of last resort for VBACKUP savesets\n\n  \
          vbkx-rs l saveset [-k file]           list the files (times in UTC)\n  \
          vbkx-rs x saveset [-C dir] [-k file]  extract them all\n  \
          vbkx-rs t saveset [-k file]           read it all, check the checksums\n  \
@@ -1944,7 +1965,7 @@ fn main1() -> i32 {
             None => return 2,
         };
         if !r.setkey(&pass) {
-            msg!("the passphrase does not open {}", spec);
+            msg!("Saveset: {} - the passphrase does not open it", spec);
             return 2;
         }
     }
@@ -1953,7 +1974,7 @@ fn main1() -> i32 {
         "x" => {
             if let Err(e) = fs::create_dir(&out) {
                 if e.kind() != io::ErrorKind::AlreadyExists {
-                    msg!("{}: {}", out, e);
+                    msg!("{}", oserr(&format!("Directory: {}", out), &e, "cannot be made or entered"));
                     return 2;
                 }
             }

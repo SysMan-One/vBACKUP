@@ -84,10 +84,10 @@
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
-**		is kept as far as it got and named: "<name> is incomplete".
-**		A file whose records were lost entirely is named from the
-**		catalog: "<name> was not extracted"; without a readable
-**		catalog that is said once ("... cannot all be named").  A
+**		is kept as far as it got and named: "File: <name> - is
+**		incomplete".  A file whose records were lost entirely is named
+**		from the catalog: "File: <name> - not extracted"; without a
+**		readable catalog that is said once ("... cannot all be named").  A
 **		missing or cut volume is skipped, the next one is read.  A
 **		volume 1 whose first block (VHDR) is bad is still read: the
 **		block size is found by trying every legal size against the
@@ -105,6 +105,13 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		The messages in the form of vbkx and VBACKUP: what a message is
+**		about first, as "Label: value" pairs, then " - " and the words
+**		("File: tree/a.txt - is incomplete: ...", "Block: 2, Volume: 1
+**		- was bad, rebuilt from its group"); an error of the system as
+**		"File: name, errno: N - words (its text)".
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets (format.md 6.10): EDATA and ETRAILER
@@ -129,6 +136,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"os"
@@ -170,7 +178,7 @@ const (
 	rtEnd     = 6
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
 
-	ident = "X01-06"
+	ident = "X01-08"
 
 	maxData  = 1 << 20 // the most octets a DATA or DATAZ record holds
 	codecLZ4 = 1
@@ -193,6 +201,23 @@ var (
 
 func msg(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, "vbkx-go: "+format+"\n", a...)
+}
+
+/*
+** A message on an error of the system in the form of vbkx: "Label: name,
+** errno: N - words (its text)"; an error without an errno number -
+** "Label: name - words (its text)".
+ */
+func syserr(label, name, words string, err error) string {
+	var en syscall.Errno
+	if errors.As(err, &en) {
+		t := en.Error()
+		if t != "" {
+			t = strings.ToUpper(t[:1]) + t[1:]
+		}
+		return fmt.Sprintf("%s: %s, errno: %d - %s (%s)", label, name, int(en), words, t)
+	}
+	return fmt.Sprintf("%s: %s - %s (%v)", label, name, words, err)
 }
 
 func u16(b []byte, off int) uint16 {
@@ -474,7 +499,7 @@ func guess(r *reader, f *os.File) bool {
 					break
 				}
 			}
-			msg("%s: the first block is bad; block size %d and group size %d found by trying", r.spec, bs, r.grpsz)
+			msg("Saveset: %s - its first block is bad: block size %d and group size %d found by trying", r.spec, bs, r.grpsz)
 			return true
 		}
 	}
@@ -485,7 +510,7 @@ func open(spec string) (*reader, error) {
 	r := &reader{spec: spec, curvol: 1, curpos: 1}
 	f, err := os.Open(spec)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s", syserr("File", spec, "cannot be opened", err))
 	}
 	/* The block size comes from the first header; it is believed only when the block checks */
 	head := make([]byte, hdrSize)
@@ -501,7 +526,7 @@ func open(spec string) (*reader, error) {
 	}
 	if !found && !guess(r, f) {
 		f.Close()
-		return nil, fmt.Errorf("%s is not a saveset", spec)
+		return nil, fmt.Errorf("File: %s - is not a saveset", spec)
 	}
 	r.vols = append(r.vols, volume{f, 0, blocksIn(f, r.bsize)})
 
@@ -524,9 +549,9 @@ func open(spec string) (*reader, error) {
 			}
 		} else if h, ok = check(readBlock(vf, r.bsize, 1), r.bsize, &r.uuid); ok && h.volno == uint32(n) && h.blkno > 0 {
 			first = h.blkno - 1
-			msg("volume %d: its first block is bad, it is read all the same", n)
+			msg("Volume: %d - its first block is bad, it is read all the same", n)
 		} else {
-			msg("volume %d belongs to another saveset, or is none", n)
+			msg("Volume: %d - belongs to another saveset, or is none", n)
 			vf.Close()
 			miss++
 			continue
@@ -544,11 +569,11 @@ func open(spec string) (*reader, error) {
 		r.dtype, r.ttype, r.cap = btEdata, btEtrlr, r.bsize-hdrSize-tagSize
 		if r.cipher == 0 && r.salt == nil && r.keycheck == nil {
 			r.close()
-			return nil, fmt.Errorf("%s is encrypted, and no volume has a readable VHDR to give its keys", spec)
+			return nil, fmt.Errorf("Saveset: %s - is encrypted, and no volume has a readable VHDR to give its keys", spec)
 		}
 		if r.cipher != 1 || r.kdf != 1 || r.kdfiter < kdfMin || r.kdfiter > 0xFFFFFFFF || len(r.salt) != 32 || len(r.keycheck) != 32 {
 			r.close()
-			return nil, fmt.Errorf("%s: an encryption this extractor does not know - it cannot be read", spec)
+			return nil, fmt.Errorf("Saveset: %s - an encryption this extractor does not know: it cannot be read", spec)
 		}
 	}
 
@@ -586,7 +611,7 @@ func (r *reader) setkey(pass []byte) int {
 	if r.trlblk != nil {
 		th, _ := check(r.trlblk, r.bsize, &r.uuid)
 		if !r.k.tagOK(&th, r.trlblk[hdrSize:]) {
-			msg("%s: its trailer fails its authentication - read as a saveset without a catalog", r.spec)
+			msg("Saveset: %s - its trailer fails its authentication: read as a saveset without a catalog", r.spec)
 			bad = true
 			return 1
 		}
@@ -617,7 +642,7 @@ func (r *reader) loadGroup() bool {
 		}
 		v = r.vols[r.curvol-1]
 		if v.f == nil {
-			msg("volume %d is missing", r.curvol)
+			msg("Volume: %d - is missing", r.curvol)
 			bad = true
 			r.gap = true
 			r.curvol++
@@ -674,7 +699,7 @@ func (r *reader) loadGroup() bool {
 		/* A good CRC and a wrong TAG: changed on purpose - a bad block all the same, repairable as any */
 		if ok[i] && r.crypt && !r.k.tagOK(&hdrs[i], blks[i][hdrSize:]) {
 			ok[i] = false
-			msg("block %d of volume %d is not what was written: its CRC is right, its authentication fails", hdrs[i].blkno, r.curvol)
+			msg("Block: %d, Volume: %d - is not what was written: its CRC is right, its authentication fails", hdrs[i].blkno, r.curvol)
 		}
 		if !ok[i] {
 			nbad++
@@ -702,7 +727,7 @@ func (r *reader) loadGroup() bool {
 			recoff: s.prvrecoff, paylen: s.prvpaylen, blkno: v.firstblk + r.curpos + uint64(badi)}
 		if h.paylen <= r.cap && (h.recoff == none || h.recoff < h.paylen) && (!r.crypt || r.k.tagOK(&h, d)) {
 			hdrs[badi], ok[badi] = h, true
-			msg("block %d of volume %d was bad and has been repaired", h.blkno, r.curvol)
+			msg("Block: %d, Volume: %d - was bad, rebuilt from its group", h.blkno, r.curvol)
 		}
 	}
 
@@ -717,7 +742,7 @@ func (r *reader) loadGroup() bool {
 	for i := 0; i < gdata; i++ {
 		b := v.firstblk + r.curpos + uint64(i)
 		if !ok[i] {
-			msg("block %d of volume %d is bad and cannot be repaired", b, r.curvol)
+			msg("Block: %d, Volume: %d - is bad and cannot be rebuilt", b, r.curvol)
 			bad = true
 			r.pays = append(r.pays, nil)
 		} else {
@@ -785,7 +810,7 @@ func (r *reader) nextRecord() (uint16, []byte, bool) {
 			length = uint64(u32(r.pay, r.payoff+4))
 		}
 		if typ == 0 || length > maxRec {
-			msg("a bad record in block %d of volume %d", r.payblk, r.payvol)
+			msg("Block: %d, Volume: %d - an invalid record, skipped", r.payblk, r.payvol)
 			bad = true
 			r.gap, r.pay = true, nil
 			continue
@@ -812,7 +837,7 @@ func (r *reader) nextRecord() (uint16, []byte, bool) {
 			continue
 		}
 		if st == 2 {
-			msg("the saveset ends inside a record")
+			msg("Saveset: %s - ends inside a record", r.spec)
 			bad = true
 			r.resync = true
 			return 0, nil, false
@@ -948,12 +973,12 @@ func passphrase(keyfile, spec string) []byte {
 	if keyfile != "" {
 		f, err := os.Open(keyfile)
 		if err != nil {
-			msg("%v", err)
+			msg("%s", syserr("Key file", keyfile, "cannot be read", err))
 			return nil
 		}
 		defer f.Close()
 		if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&077 != 0 {
-			msg("%s: not a regular file, or others may read it - chmod 600 it", keyfile)
+			msg("Key file: %s - not a regular file, or others may read it: chmod 600 it", keyfile)
 			return nil
 		}
 		line, _ = bufio.NewReaderSize(f, passMax+16).ReadSlice('\n')
@@ -961,7 +986,7 @@ func passphrase(keyfile, spec string) []byte {
 	} else {
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			msg("%s is encrypted: no terminal to ask the passphrase on - give -k file", spec)
+			msg("Saveset: %s - is encrypted, and there is no terminal to ask the passphrase on: give -k file", spec)
 			return nil
 		}
 		defer tty.Close()
@@ -971,7 +996,7 @@ func passphrase(keyfile, spec string) []byte {
 			return c.Run()
 		}
 		if stty("-echo") != nil {
-			msg("%s is encrypted: no terminal to ask the passphrase on - give -k file", spec)
+			msg("Saveset: %s - is encrypted, and there is no terminal to ask the passphrase on: give -k file", spec)
 			return nil
 		}
 		fmt.Fprintf(tty, "Passphrase for %s: ", spec)
@@ -987,7 +1012,7 @@ func passphrase(keyfile, spec string) []byte {
 		line = line[:n-1]
 	}
 	if len(line) == 0 || len(line) > passMax {
-		msg("no passphrase, or one longer than %d bytes", passMax)
+		msg("Passphrase: none - empty, or longer than %d bytes", passMax)
 		return nil
 	}
 	return line
@@ -1079,7 +1104,7 @@ func parents(out, name string, create bool) error {
 		st, err := os.Lstat(p)
 		if err == nil {
 			if !st.IsDir() {
-				return fmt.Errorf("a directory on the way is a link, or no directory")
+				return syscall.ENOTDIR
 			}
 			continue
 		}
@@ -1129,7 +1154,7 @@ func (x *extractor) begin(body []byte) {
 	x.active, x.f, x.crc, x.damaged = false, nil, 0, false
 	e, ok := parseEntry(body)
 	if !ok {
-		msg("a FILE record that makes no sense is skipped")
+		msg("Record: FILE - makes no sense, skipped")
 		bad = true
 		return
 	}
@@ -1140,19 +1165,19 @@ func (x *extractor) begin(body []byte) {
 		return
 	}
 	if !nameOK(e.path) {
-		msg("%s was not extracted: a name that leads out of the output directory", e.path)
+		msg("File: %s - its name leads out of the output directory, not extracted", e.path)
 		bad = true
 		return
 	}
 	if err := parents(x.out, e.path, true); err != nil {
-		msg("%s was not extracted: %v", e.path, err)
+		msg("%s", syserr("File", e.path, "a directory on the way cannot be made, or is a link, not extracted", err))
 		bad = true
 		return
 	}
 	path := filepath.Join(x.out, e.path)
 	if e.ftype == ftDir {
 		if err := os.Mkdir(path, 0700); err != nil && !os.IsExist(err) {
-			msg("%s was not extracted: %v", e.path, err)
+			msg("%s", syserr("File", e.path, "cannot be made, not extracted", err))
 			bad = true
 			return
 		}
@@ -1160,7 +1185,7 @@ func (x *extractor) begin(body []byte) {
 		return
 	}
 	if _, err := os.Lstat(path); err == nil {
-		msg("%s was not extracted: it exists, and is never overwritten", e.path)
+		msg("File: %s - already exists, not extracted (never overwritten)", e.path)
 		bad = true
 		return
 	}
@@ -1176,8 +1201,11 @@ func (x *extractor) begin(body []byte) {
 		}
 	case ftHardlink:
 		if !nameOK(e.link) {
-			err = fmt.Errorf("a link that leads out of the output directory")
-		} else if err = parents(x.out, e.link, false); err == nil {
+			msg("File: %s - a link that leads out of the output directory, not extracted", e.path)
+			bad = true
+			return
+		}
+		if err = parents(x.out, e.link, false); err == nil {
 			err = os.Link(filepath.Join(x.out, e.link), path)
 		}
 	case ftFifo:
@@ -1189,7 +1217,7 @@ func (x *extractor) begin(body []byte) {
 		return // devices and sockets are not made
 	}
 	if err != nil {
-		msg("%s was not extracted: %v", e.path, err)
+		msg("%s", syserr("File", e.path, "cannot be made, not extracted", err))
 		bad = true
 	}
 }
@@ -1299,7 +1327,7 @@ func (x *extractor) data(typ uint16, body []byte) {
 	}
 	fileno, off, d, ok := dataView(typ, body)
 	if !ok {
-		msg("%s: a data record that makes no sense", x.e.path)
+		msg("File: %s - a data record that makes no sense", x.e.path)
 		x.damaged = true
 		return
 	}
@@ -1315,7 +1343,7 @@ func (x *extractor) data(typ uint16, body []byte) {
 		return
 	}
 	if _, err := x.f.WriteAt(d, int64(off)); err != nil {
-		msg("%s: %v", x.e.path, err)
+		msg("%s", syserr("File", x.e.path, "cannot be written", err))
 		x.damaged = true
 	}
 }
@@ -1347,17 +1375,17 @@ func (x *extractor) end(body []byte) {
 	if body == nil || fileno != x.e.fileno {
 		x.damaged = true
 	} else if hasCRC && crc != x.crc {
-		msg("%s: the checksum does not match", x.e.path)
+		msg("File: %s - checksum mismatch: the data differ from what was saved", x.e.path)
 		x.damaged = true
 	}
 	switch {
 	case x.damaged:
-		msg("%s is incomplete: its data was lost in bad blocks", x.e.path)
+		msg("File: %s - is incomplete: its data was lost in bad blocks", x.e.path)
 		bad = true
 	case status == fsChanged:
-		msg("%s changed while it was saved: the copy may be a mix", x.e.path)
+		msg("File: %s - changed while it was saved: the copy may be a mix", x.e.path)
 	case status == fsReaderr:
-		msg("%s could not be read whole when it was saved", x.e.path)
+		msg("File: %s - could not be read whole when it was saved", x.e.path)
 	}
 	if x.f == nil {
 		return
@@ -1366,7 +1394,7 @@ func (x *extractor) end(body []byte) {
 		x.f.Truncate(int64(size))
 	}
 	if err := x.f.Close(); err != nil {
-		msg("%s: %v", x.e.path, err)
+		msg("%s", syserr("File", x.e.path, "cannot be written", err))
 		bad = true
 	}
 	x.f = nil
@@ -1385,7 +1413,7 @@ func (x *extractor) catalog(body []byte) {
 			break
 		}
 		if e, ok := parseEntry(body[off+4 : off+4+elen]); ok && e.status != fsPresent && !x.seen[e.fileno] {
-			msg("%s was not extracted: its records were lost in bad blocks", e.path)
+			msg("File: %s - not extracted: its records were lost in bad blocks", e.path)
 			bad = true
 		}
 		off += 4 + elen
@@ -1447,7 +1475,7 @@ func run(r *reader, x *extractor) {
 	}
 	/* Blocks were lost, and the catalog could not tell every name */
 	if bad && (!x.catSeen || x.catHole || !ended) {
-		msg("%s: files missing from the output cannot all be named", r.spec)
+		msg("Saveset: %s - files missing from the output cannot all be named", r.spec)
 	}
 }
 
@@ -1523,7 +1551,7 @@ func main1() int {
 			return 2
 		}
 		if r.setkey(pass) == 2 {
-			msg("the passphrase does not open %s", spec)
+			msg("Saveset: %s - the passphrase does not open it", spec)
 			return 2
 		}
 	}
@@ -1532,7 +1560,7 @@ func main1() int {
 		list(r)
 	case 'x':
 		if err := os.Mkdir(out, 0755); err != nil && !os.IsExist(err) {
-			msg("%s: %v", out, err)
+			msg("%s", syserr("Directory", out, "cannot be made or entered", err))
 			return 2
 		}
 		syscall.Umask(0)
@@ -1555,7 +1583,7 @@ func main() {
 	/* The last line of defence: whatever slipped through is a message, not a trace */
 	defer func() {
 		if p := recover(); p != nil {
-			msg("internal error: %v", p)
+			msg("Error: %v - internal error", p)
 			os.Exit(2)
 		}
 	}()
