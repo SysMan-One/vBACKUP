@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-09"
+#define	__REV__		"1.9.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-09		 5-OCT-2026	RRL
+**		Every message in the form "Label: value - words" (vbkx and the
+**		geeks' extractors too); a save to the standard output refuses
+**		/VERIFY and /LIST; STARTED names every input; /LIST honours
+**		/SELECT and /EXCLUDE; the reference manual (doc/ref).
 **
 **	X01-08		 5-OCT-2026	RRL
 **		Stage 7: "-" as the input - a saveset from a pipe; the pool of the
