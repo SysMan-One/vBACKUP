@@ -1,5 +1,7 @@
 # VBACKUP
 
+Русская версия: [README_ru.md](README_ru.md)
+
 An OpenVMS BACKUP-style saveset utility for Linux: save files into a
 saveset, restore them, list and compare them -- one command, the
 qualifiers of BACKUP.
