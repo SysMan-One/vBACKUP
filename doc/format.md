@@ -202,6 +202,11 @@ a block whose CRC is right and whose contents are not (a forged or
 mis-written parity or DATA block); the reader reports it and does not
 deliver the group's repaired blocks.
 
+The parity is looked at only when a group has bad blocks: a DATA block
+of an unencrypted saveset whose CRC is right and whose bytes are not,
+with nothing else bad in its group, is not found - as with m = 1.  The
+TAG of an encrypted saveset finds it.
+
 n is in `gindex` of every parity block, j in its high byte.  A reader
 that lost every parity block of a short group (the last of a volume)
 takes n as the number of its blocks less m.

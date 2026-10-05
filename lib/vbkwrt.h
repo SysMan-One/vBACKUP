@@ -56,6 +56,7 @@
 #include	<pthread.h>
 
 #include	"vbkfmt.h"
+#include	"vbkrs.h"
 #include	"vbkcrp.h"
 
 #ifdef	__cplusplus
@@ -136,7 +137,7 @@ typedef struct vbk_wctx_t
 
 	uint8_t *	xor;			/* XOR of the payloads of the current group	*/
 	uint8_t *	par;			/* Rows 1 .. parity - 1 of it, psize each	*/
-	uint8_t		hpar [8] [8];		/* The header parity of every row (4.1)		*/
+	uint8_t		hpar [VBK$K_MAXPAR] [VBK$K_HPARSZ];	/* The header parity of every row (4.1)	*/
 	uint32_t	gcnt;			/* DATA blocks in the current group		*/
 	uint32_t	prvrecoff, prvpaylen;	/* Of the previous DATA block of the group	*/
 
