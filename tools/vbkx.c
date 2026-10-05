@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -23,6 +23,8 @@
 **		    vbkx x saveset [-C dir] [-f] [-j] [name...] extract (-j: no dirs)
 **		    vbkx p saveset name			a file to stdout
 **		    vbkx t saveset			test: read all, check CRCs
+**		    ... [-k keyfile] [-n]		an encrypted saveset; -n: never
+**							ask on the terminal (programs)
 **
 **		A name is a stored name as the listing shows it; a directory
 **		name takes what is below it.  Without names the whole saveset
@@ -64,14 +66,14 @@
 **		Build on Linux: with the product (CMake), or by hand -
 **
 **		    gcc -O2 -D_GNU_SOURCE -Ilib -I/usr/local/include \
-**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c \
+**			tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c \
 **			/usr/local/lib/libstarlet.a -static -o vbkx
 **
 **		Build on Windows / cross, from the top of the source tree -
 **		no StarLet, no CMake, one command:
 **
 **		    x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c -static -lshell32
+**			lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
 **
 **		(make -f tools/Makefile.win does the same; on Windows itself
 **		gcc of MinGW-w64 or MSYS2 takes the same line.)
@@ -81,6 +83,13 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		Encrypted savesets (format.md 6.10): -k keyfile, VBACKUP_KEY_FILE,
+**		or the passphrase asked on the terminal (the console on Windows,
+**		taken as UTF-8), -n never; a block whose authentication fails
+**		is said.  A stream that ends before its catalog (a saveset cut
+**		down to its VHDR) is no longer "all files read": said, code 1.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the data compressed with /DATA_FORMAT=COMPRESSED.  l -m:
@@ -116,6 +125,7 @@
 #include	<io.h>
 #else
 #include	<unistd.h>
+#include	<termios.h>
 #include	<sys/sysmacros.h>
 #endif
 
@@ -222,6 +232,11 @@ static	void	s_vbkx$event	(
 		case	VBK$K_EV_BADREC:
 			s_vbkx$msg("a bad record in block %llu of volume %u", (unsigned long long) a_blk, a_vol);
 			s_bad	= 1;
+			break;
+
+		case	VBK$K_EV_BADTAG:
+			s_vbkx$msg("block %llu of volume %u is not what was written: its CRC is right, its authentication fails",
+				(unsigned long long) a_blk, a_vol);
 			break;
 		}
 }
@@ -1536,7 +1551,7 @@ static	void	s_vbkx$stream	(
 const uint8_t *	l_body;
 uint32_t	l_len;
 uint16_t	l_type;
-int		l_files = 0;
+int		l_files = 0, l_ended = 0;
 
 	while ( 1 & vbk$rd_next(a_rctx, &l_type, &l_body, &l_len, NULL) )
 		{
@@ -1563,11 +1578,21 @@ int		l_files = 0;
 				return;
 			}
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
+			{
+			l_ended	= 1;
 			break;
+			}
 		}
 
 	if ( a_out->active )
 		s_vbkx$end(a_out, NULL, 0);
+
+	/* The whole stream read, and no CATALOG or END at its end: what follows is not there - never "all done" */
+	if ( !a_one && !l_ended )
+		{
+		s_vbkx$msg("%s ends before its catalog: the save did not complete, or its last volumes are missing", s_spec);
+		s_bad	= 1;
+		}
 }
 
 
@@ -1911,6 +1936,113 @@ int		l_hole, l_found = 0;
 }
 
 
+/*
+**  The passphrase of an encrypted saveset: the first line of the key file
+**  (-k, else VBACKUP_KEY_FILE) - on Linux one only its owner may read -
+**  else asked for on the terminal without echo.  Returns its length, -1 -
+**  none to be had (said).
+*/
+static	int	s_noprompt;			/* -n, VBACKUP_NOPROMPT=1: no questions		*/
+
+static	int	s_vbkx$pass	(
+	const	char *		a_keyfile,
+	const	char *		a_spec,
+		char *		a_buf,
+		size_t		a_size
+			)
+{
+const char *	l_kf = a_keyfile ? a_keyfile : getenv("VBACKUP_KEY_FILE");
+size_t		l_n = 0;
+
+	if ( l_kf && *l_kf )
+		{
+		FILE *		l_fp;
+		struct stat	l_st;
+		int		l_c;
+
+		if ( !(l_fp = fopen(l_kf, "rb")) )
+			return	s_vbkx$msg("%s: %s", l_kf, strerror(errno)), -1;
+#ifndef	_WIN32
+		if ( fstat(fileno(l_fp), &l_st) || !S_ISREG(l_st.st_mode) || (l_st.st_mode & (S_IRWXG | S_IRWXO)) )
+			{
+			fclose(l_fp);
+
+			return	s_vbkx$msg("%s: not a regular file, or others may read it - chmod 600 it", l_kf), -1;
+			}
+#else
+		(void) l_st;
+#endif
+		while ( ((l_c = fgetc(l_fp)) != EOF) && (l_c != '\n') )
+			if ( l_n < a_size )
+				a_buf [l_n++] = (char) l_c;
+
+		fclose(l_fp);
+		}
+	else if ( s_noprompt )
+		return	s_vbkx$msg("%s is encrypted: give -k file or VBACKUP_KEY_FILE (no questions asked: -n)", a_spec), -1;
+	else	{
+#ifdef	_WIN32
+		/* The console, UTF-16 without echo, made UTF-8 - the bytes Linux would have taken */
+		HANDLE	l_in = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+		WCHAR	l_w [1100];
+		DWORD	l_mode, l_got = 0;
+		int	l_u;
+
+		if ( l_in == INVALID_HANDLE_VALUE || !GetConsoleMode(l_in, &l_mode) )
+			return	s_vbkx$msg("%s is encrypted: no console to ask the passphrase on - give -k file", a_spec), -1;
+
+		fprintf(stderr, "Passphrase for %s: ", a_spec);
+		SetConsoleMode(l_in, (l_mode & ~ENABLE_ECHO_INPUT) | ENABLE_LINE_INPUT);
+		ReadConsoleW(l_in, l_w, 1099, &l_got, NULL);
+		SetConsoleMode(l_in, l_mode);
+		CloseHandle(l_in);
+		fprintf(stderr, "\n");
+
+		while ( l_got && ((l_w [l_got - 1] == L'\n') || (l_w [l_got - 1] == L'\r')) )
+			l_got--;
+
+		l_u	= l_got ? WideCharToMultiByte(CP_UTF8, 0, l_w, (int) l_got, a_buf, (int) a_size, NULL, NULL) : 0;
+		SecureZeroMemory(l_w, sizeof(l_w));
+		l_n	= (l_u > 0) ? (size_t) l_u : 0;
+#else
+		struct termios	l_save, l_t;
+		FILE *		l_tty;
+		int		l_c;
+
+		if ( !(l_tty = fopen("/dev/tty", "r+")) || tcgetattr(fileno(l_tty), &l_save) )
+			{
+			if ( l_tty )
+				fclose(l_tty);
+
+			return	s_vbkx$msg("%s is encrypted: no terminal to ask the passphrase on - give -k file", a_spec), -1;
+			}
+
+		fprintf(l_tty, "Passphrase for %s: ", a_spec);
+		fflush(l_tty);
+		l_t		= l_save;
+		l_t.c_lflag	&= ~(tcflag_t) (ECHO | ECHOE | ECHOK | ECHONL);
+		tcsetattr(fileno(l_tty), TCSAFLUSH, &l_t);
+
+		while ( ((l_c = fgetc(l_tty)) != EOF) && (l_c != '\n') )
+			if ( l_n < a_size )
+				a_buf [l_n++] = (char) l_c;
+
+		tcsetattr(fileno(l_tty), TCSAFLUSH, &l_save);
+		fprintf(l_tty, "\n");
+		fclose(l_tty);
+#endif
+		}
+
+	if ( l_n && (a_buf [l_n - 1] == '\r') )
+		l_n--;
+
+	if ( !l_n || (l_n >= a_size) )
+		return	s_vbkx$msg("no passphrase, or one longer than %u bytes", (unsigned) (a_size - 1)), -1;
+
+	return	(int) l_n;
+}
+
+
 static	int	s_vbkx$usage	(void)
 {
 	fprintf(stderr,
@@ -1923,6 +2055,9 @@ static	int	s_vbkx$usage	(void)
 		"\n"
 		"  -C dir  extract into dir (made if missing), default the current one\n"
 		"  -f      overwrite files that are there\n"
+		"  -k file the passphrase of an encrypted saveset: the first line of file\n"
+		"          (else VBACKUP_KEY_FILE, else it is asked for on the terminal)\n"
+		"  -n      no questions: never ask for a passphrase (for programs; so does VBACKUP_NOPROMPT=1)\n"
 		"\n"
 		"Completion: 0 - done; 1 - something damaged or not done; 2 - not usable.\n");
 
@@ -1938,6 +2073,7 @@ int	main	(
 VBK$RCTX	l_rctx = {0};
 char		l_op, **l_names;
 int		l_nnames = 0, l_status, l_rc;
+const char *	l_keyfile = NULL;
 
 #ifdef	_WIN32
 	/* The arguments as the system has them, UTF-16, made UTF-8 - the names of a saveset are */
@@ -1988,6 +2124,10 @@ int		l_nnames = 0, l_status, l_rc;
 			s_bare	= 1;
 		else if ( !strcmp(argv [i], "-j") && (l_op == 'x') )
 			s_junk	= 1;
+		else if ( !strcmp(argv [i], "-k") && ((i + 1) < argc) )
+			l_keyfile = argv [++i];
+		else if ( !strcmp(argv [i], "-n") )
+			s_noprompt = 1;
 		else	l_names [l_nnames++] = argv [i];
 		}
 
@@ -2001,6 +2141,35 @@ int		l_nnames = 0, l_status, l_rc;
 		else	s_vbkx$msg("%s: %s", s_spec, strerror(l_rctx.err ? l_rctx.err : errno));
 
 		return	2;
+		}
+
+	if ( getenv("VBACKUP_NOPROMPT") && !strcmp(getenv("VBACKUP_NOPROMPT"), "1") )
+		s_noprompt = 1;
+
+	/* Encrypted: nothing of it is read before the passphrase is right */
+	if ( l_rctx.crypt )
+		{
+		char	l_pass [VBK$K_PASSMAX + 2];
+		int	l_plen = s_vbkx$pass(l_keyfile, s_spec, l_pass, sizeof(l_pass));
+
+		l_status = (l_plen > 0) ? vbk$rd_setkey(&l_rctx, l_pass, (size_t) l_plen) : STS$K_ERROR;
+		vbk$crp_wipe(l_pass, sizeof(l_pass));
+
+		if ( (l_plen > 0) && (l_status == STS$K_ERROR) )
+			s_vbkx$msg("the passphrase does not open %s", s_spec);
+
+		if ( l_status == STS$K_ERROR )
+			{
+			vbk$rd_close(&l_rctx);
+
+			return	2;
+			}
+
+		if ( l_status == STS$K_WARN )
+			{
+			s_vbkx$msg("%s: its trailer fails its authentication - read as a saveset without a catalog", s_spec);
+			s_bad	= 1;
+			}
 		}
 
 	switch ( l_op )

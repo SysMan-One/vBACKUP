@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -23,6 +23,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		The heading says how a saveset is encrypted.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		The heading says PHYSICAL, the device size and sector, and
@@ -223,6 +226,8 @@ VBK$TIME	l_t;
 			case	VBK$K_TAG_DEVSIZE:	fprintf(a_lst->out, "Device size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
 			case	VBK$K_TAG_SECTORSIZE:	fprintf(a_lst->out, "Sector size:       %llu bytes\n", (unsigned long long) vbk$tlv_getu(l_vlen, l_val)); break;
 			case	VBK$K_TAG_COMPRESS:	fprintf(a_lst->out, "Data format:       compressed (LZ4)\n");				break;
+			case	VBK$K_TAG_KDFITER:	fprintf(a_lst->out, "Encryption:        ChaCha20, HMAC-SHA256; PBKDF2-HMAC-SHA256, %llu iterations\n",
+							(unsigned long long) vbk$tlv_getu(l_vlen, l_val));					break;
 			case	VBK$K_TAG_IMAGE:	fprintf(a_lst->out, "Image:             a whole file system (/IMAGE)\n");			break;
 			case	VBK$K_TAG_FSTYPE:	fprintf(a_lst->out, "File system:       %.*s\n", (int) l_vlen, l_val);			break;
 			case	VBK$K_TAG_FSLABEL:	fprintf(a_lst->out, "Label:             %.*s\n", (int) l_vlen, l_val);			break;
@@ -394,6 +399,15 @@ int		l_status;
 
 		return	$VBKMSG(VBACKUP$_OPENIN, l_spec, l_rctx.err, strerror(l_rctx.err));
 		}
+
+	/* Encrypted: the passphrase first - nothing of it can be read before */
+	if ( !(1 & vbk$key_unlock(a_opts, &l_rctx, l_spec)) )
+		{
+		vbk$rd_close(&l_rctx);
+
+		return	STS$K_ERROR;
+		}
+
 
 	if ( a_opts->lstfile [0] && !(l_lst.out = fopen(a_opts->lstfile, "w")) )
 		{

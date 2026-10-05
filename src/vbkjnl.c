@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKJNL"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		An encrypted saveset: VBK$KEY_UNLOCK before its catalog is read.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The FSTATE records are written in the order of their names.
@@ -784,6 +787,15 @@ uint64_t	l_nrec = 0;
 
 			continue;
 			}
+
+		/* Encrypted: the passphrase first - nothing of it can be read before */
+		if ( !(1 & vbk$key_unlock(a_opts, &l_rctx, l_spec)) )
+			{
+			vbk$rd_close(&l_rctx);
+
+			continue;
+			}
+
 
 		if ( !l_rctx.trailer )
 			{

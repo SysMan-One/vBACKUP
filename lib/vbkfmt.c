@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKFMT"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -18,6 +18,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		VBK$BLK_CHECK takes the block types EDATA and ETRAILER.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		VBK$VOLSPEC, from VBKWRT.C: the names of the volumes are part
@@ -188,7 +191,7 @@ uint32_t	l_crc, l_psize = a_bsize - VBK$K_HDRSZ;
 	if ( (a_hdr->bsize != a_bsize) || (a_ssuuid && memcmp(a_hdr->ssuuid, a_ssuuid, VBK$K_UUIDSZ)) )
 		return	STS$K_ERROR;
 
-	if ( (a_hdr->type < VBK$K_BT_DATA) || (a_hdr->type > VBK$K_BT_TRAILER) || (a_hdr->paylen > l_psize) )
+	if ( (a_hdr->type < VBK$K_BT_DATA) || (a_hdr->type > VBK$K_BT_ETRAILER) || (a_hdr->paylen > l_psize) )
 		return	STS$K_ERROR;
 
 	if ( (a_hdr->recoff != VBK$K_NONE) && (a_hdr->recoff >= l_psize) )

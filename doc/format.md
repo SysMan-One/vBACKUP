@@ -23,6 +23,10 @@ skips them by the rules of sections 5 and 6:
 - the DATAZ record (type 7) and the SUMMARY tag COMPRESS (6.7): data
   compressed in the LZ4 block format, since X01-04; a reader of an
   earlier version skips it and reports the files damaged;
+- encryption (6.10): the block types EDATA and ETRAILER, the tags
+  CIPHER, KDF, KDFITER, SALT, KEYCHECK, since X01-06; a reader of an
+  earlier version sees every block of such a saveset as bad and
+  restores nothing from it;
 - the XATTR value (6.1) carries a counted name (u8 length, name) since
   X01-03; before it the name was ended by a NUL.  No saveset of the
   earlier form was ever given out: the change is made within version 1,
@@ -91,7 +95,7 @@ G (group) = DATA x n, then XOR        (n = gcount, 1 <= n <= N)
 | 4 | 2 | hdrlen | 64 |
 | 6 | 2 | version | 1 |
 | 8 | 4 | bsize | B |
-| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER |
+| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER; 5 EDATA, 6 ETRAILER - those two of an encrypted saveset (6.10) |
 | 13 | 1 | flags | bit 0 LASTINVOL: last block of this volume; bit 1 LASTINSET: last block of the saveset |
 | 14 | 2 | gindex | DATA: position in its group, 0-based; XOR: n, the number of DATA blocks it covers; else 0 |
 | 16 | 16 | ssuuid | UUID of the saveset |
@@ -378,6 +382,109 @@ label and UUID (the format does not say how; VBACKUP runs mkfs), restores
 the files into it, then applies ROOTATTR to its root directory.  Inode
 numbers, the layout on the disk and anything outside the file system
 (boot sectors, the partition table) are not part of it - that is 6.8.
+
+### 6.10 An encrypted saveset (/ENCRYPT)
+
+An encrypted saveset is an ordinary saveset whose DATA and TRAILER
+blocks carry their payload encrypted and authenticated.  Everything
+below the payload stays as it is: block headers, CRCs and XOR blocks
+are computed over the bytes as they lie on the medium (the ciphertext),
+so a reader checks, repairs (section 4) and resynchronizes a saveset
+without the passphrase; it needs the passphrase only to read records.
+
+**Primitives.**  Two, both public and fixed: ChaCha20 (RFC 8439, section
+2.4: 256-bit key, 96-bit nonce, 32-bit block counter) and SHA-256
+(FIPS 180-4), with HMAC-SHA256 (RFC 2104) and PBKDF2-HMAC-SHA256
+(RFC 8018) built from it.  No other algorithm is involved.
+
+**Block types.**  5 EDATA - a DATA block of an encrypted saveset; 6
+ETRAILER - its TRAILER.  The header fields mean what they mean for
+types 1 and 4 (`paylen` is the length of the plaintext, which is also
+the length of the ciphertext).  XOR (2) and VHDR (3) blocks are not
+encrypted.  A reader that does not know types 5 and 6 sees every block
+of the stream as a bad block and no TRAILER: it reports the blocks lost
+and restores nothing - it never reads ciphertext as records.  In the
+repair of section 4, the rebuilt header of a DATA block of an encrypted
+saveset has type EDATA.
+
+**Payload area of EDATA and ETRAILER** (P bytes):
+
+| Offset | Length | Contents |
+|---|---|---|
+| 0 | `paylen` | the ciphertext |
+| `paylen` | P - 32 - `paylen` | zeros |
+| P - 32 | 32 | TAG |
+
+So `paylen` is at most P - 32: writer rule 2 applies with P - 32 in
+place of P.
+
+**Keys.**  The passphrase is a string of bytes, taken as it is (no
+encoding, no normalization; from a key file, its first line without
+the line end - LF or CR LF).
+
+```
+MK    = PBKDF2-HMAC-SHA256(passphrase, SALT, KDFITER, 32 bytes)
+KENC  = HMAC-SHA256(MK, "VBACKUP ENC")
+KMAC  = HMAC-SHA256(MK, "VBACKUP MAC")
+CHECK = HMAC-SHA256(MK, "VBACKUP CHECK")
+```
+
+The labels are the ASCII bytes shown, without quotes and without a NUL.
+SALT is 32 random bytes (getrandom(2)) taken anew for every saveset, so
+no two savesets share keys even under one passphrase.
+
+**Encryption.**  ciphertext = plaintext XOR ChaCha20(KENC, nonce, counter
+0 ...), where the nonce is 12 bytes: u32 0, then u64 `blkno` (both
+little-endian).  `blkno` is unique within a saveset and a payload is at
+most 1048512 bytes = 16383 ChaCha20 blocks, so no nonce and counter are
+ever used twice under one key.
+
+**TAG** = HMAC-SHA256(KMAC, M), all 32 bytes, where M is
+
+```
+ssuuid (16)  bsize (u32)  blkno (u64)  volno (u32)  type (u8)
+gindex (u16)  recoff (u32)  paylen (u32)  ciphertext (paylen bytes)
+```
+
+- the fields of the block header, little-endian, in this order.  The
+`flags`, `prvrecoff`, `prvpaylen` and `crc` fields are not part of it:
+the repair of section 4 rebuilds `flags` as 0.  A block whose CRC is good
+but whose TAG is wrong (compare all 32 bytes) is a bad block, exactly as
+if its CRC were wrong: it is repaired from its group when it can be,
+else it is lost.  A repaired block must pass its TAG too.  A reader
+checks the TAG before it decrypts, and decrypts only blocks that passed.
+
+**VHDR.**  The VHDR of an encrypted saveset carries a short SUMMARY in
+the clear, the same in every volume - so that any one volume can be
+opened by itself - and nothing that names the system or the files:
+PRODUCT, BLOCKSIZE, GROUPSIZE, VOLSIZE and
+
+| Tag | Name | Type | Meaning |
+|---|---|---|---|
+| 88 | CIPHER | u8 | 1: ChaCha20 and HMAC-SHA256 as above |
+| 89 | KDF | u8 | 1: PBKDF2-HMAC-SHA256 |
+| 90 | KDFITER | u32 | its iteration count, at least 1000 |
+| 91 | SALT | STR | 32 bytes |
+| 92 | KEYCHECK | STR | CHECK, 32 bytes |
+
+A reader that finds CIPHER derives the keys and compares CHECK with
+KEYCHECK before anything else: a mismatch means a wrong passphrase, not
+a damaged saveset.  A CIPHER or KDF value it does not know: it does not
+read the saveset.  The complete SUMMARY is the first record of the
+(encrypted) stream, as in any saveset, and repeats these tags.
+
+**What stays visible** without the passphrase: the block size, group
+size, volume size and number of volumes; the length of the stream and
+where records begin in each block (`paylen`, `recoff`); when the save was
+made only by the file times of the volumes.  Not visible: names, sizes
+and attributes of the files, their contents, the host, the user, the
+command, the counts of the TRAILER.
+
+**Strength.**  The passphrase is the key: PBKDF2 slows down every guess
+by KDFITER (default 600000) HMAC computations, it does not make a weak
+passphrase strong.  A passphrase of five or more random words is
+advised.  The format does not encrypt the journal (section 9), which is
+a file of the saving system.
 
 ## 7. Writer rules
 

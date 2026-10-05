@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCMP"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -27,6 +27,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		An encrypted saveset: VBK$KEY_UNLOCK before anything is read.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ records are compared as DATA ones; a /PHYSICAL file
@@ -348,6 +351,17 @@ int		l_status;
 
 		return	l_status;
 		}
+
+	/* Encrypted: the passphrase first - nothing of it can be read before */
+	if ( !(1 & vbk$key_unlock(a_opts, &l_cmp->rctx, a_saveset)) )
+		{
+		vbk$rd_close(&l_cmp->rctx);
+		free(l_cmp->buf);
+		free(l_cmp);
+
+		return	STS$K_ERROR;
+		}
+
 
 	/* Where the files came from, by the index their FILE records carry */
 	while ( (1 & vbk$tlv_next(l_cmp->rctx.summary, l_cmp->rctx.sumlen, &l_pos, &l_tag, &l_vlen, &l_val)) && (l_cmp->nbase < VBK$K_MAXBASE) )

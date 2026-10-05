@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-04"
+#define	__IDENT__	"X01-06"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.4.0"
+#define	__REV__		"1.6.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		/ENCRYPT, /KEY_FILE; the messages of the encryption, MAXPARM,
+**		GLUED; VBKKEY.C.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		COMPRESS: /DATA_FORMAT=COMPRESSED.  PHYSICAL and its messages.
@@ -166,6 +170,14 @@ enum	{
 	VBACKUP$K_MSG_SRCKEPT,			/* ... kept: changed since, or not verified	*/
 	VBACKUP$K_MSG_DELSUMM,			/* ... the totals				*/
 	VBACKUP$K_MSG_QUALUSE,			/* A qualifier used where it cannot be		*/
+	VBACKUP$K_MSG_MAXPARM,			/* More words than input and output		*/
+	VBACKUP$K_MSG_NOKEY,			/* Encrypted, and no passphrase to be had	*/
+	VBACKUP$K_MSG_WRONGKEY,			/* ... the passphrase does not open it		*/
+	VBACKUP$K_MSG_KEYFILE,			/* ... the key file cannot be used		*/
+	VBACKUP$K_MSG_KEYMATCH,			/* ... the two passphrases of a save differ	*/
+	VBACKUP$K_MSG_BLKFORGED,		/* ... a block whose CRC is right, its TAG not	*/
+	VBACKUP$K_MSG_ENCRYPTED,		/* ... a saveset made encrypted, /LOG		*/
+	VBACKUP$K_MSG_GLUED,			/* Qualifiers glued to a parameter, taken apart	*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -251,6 +263,14 @@ enum	{
 #define	VBACKUP$_SRCKEPT	$VBKSTS(VBACKUP$K_MSG_SRCKEPT,		STS$K_WARN)
 #define	VBACKUP$_DELSUMM	$VBKSTS(VBACKUP$K_MSG_DELSUMM,		STS$K_INFO)
 #define	VBACKUP$_QUALUSE	$VBKSTS(VBACKUP$K_MSG_QUALUSE,		STS$K_ERROR)
+#define	VBACKUP$_MAXPARM	$VBKSTS(VBACKUP$K_MSG_MAXPARM,		STS$K_ERROR)
+#define	VBACKUP$_NOKEY		$VBKSTS(VBACKUP$K_MSG_NOKEY,		STS$K_ERROR)
+#define	VBACKUP$_WRONGKEY	$VBKSTS(VBACKUP$K_MSG_WRONGKEY,		STS$K_ERROR)
+#define	VBACKUP$_KEYFILE	$VBKSTS(VBACKUP$K_MSG_KEYFILE,		STS$K_ERROR)
+#define	VBACKUP$_KEYMATCH	$VBKSTS(VBACKUP$K_MSG_KEYMATCH,		STS$K_ERROR)
+#define	VBACKUP$_BLKFORGED	$VBKSTS(VBACKUP$K_MSG_BLKFORGED,	STS$K_WARN)
+#define	VBACKUP$_ENCRYPTED	$VBKSTS(VBACKUP$K_MSG_ENCRYPTED,	STS$K_INFO)
+#define	VBACKUP$_GLUED		$VBKSTS(VBACKUP$K_MSG_GLUED,		STS$K_INFO)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -372,6 +392,8 @@ typedef struct vbk_opts_t
 	uint64_t	rstfiles, rstbytes;	/* The totals of the last restore		*/
 	int		original;		/* /ORIGINAL: back where the files came from	*/
 	int		delete;			/* /DELETE: the files saved and verified go	*/
+	int		encrypt;		/* /ENCRYPT: the saveset is made encrypted	*/
+	char		keyfile [VBACKUP$K_SZ_PATH];	/* /KEY_FILE=file: the passphrase	*/
 	struct vbk_pre_t *pre;			/* The read-ahead of files, NULL - none		*/
 	char		jnlspec [VBACKUP$K_SZ_PATH];	/* /JOURNAL=file, "" - the default	*/
 	struct vbk_jnl_t *jnl;			/* The journal, when one is open		*/
@@ -575,6 +597,16 @@ int	vbk$rst_write	(struct vbk_rest_t *a_rst, uint64_t a_off, const uint8_t *a_da
 int	vbk$rst_end	(struct vbk_rest_t *a_rst, uint64_t a_size, uint32_t a_crc, uint8_t a_status, int a_checkcrc);
 int	vbk$rst_finish	(struct vbk_rest_t *a_rst, uint64_t *a_nfiles, uint64_t *a_nbytes);
 const char *	vbk$rst_path	(const struct vbk_rest_t *a_rst);
+
+/*
+**  VBKKEY.C - the passphrase of an encrypted saveset
+*/
+struct	vbk_rctx_t;
+
+int	vbk$key_get	(VBK$OPTS *a_opts, const char *a_what, int a_confirm, const char **a_pass, size_t *a_plen);
+int	vbk$key_unlock	(VBK$OPTS *a_opts, struct vbk_rctx_t *a_rctx, const char *a_spec);
+uint32_t vbk$key_iter	(void);
+void	vbk$key_wipe	(void);
 
 /*
 **  VBKHLP.C - /HELP out of the help library, a stand-in reporting

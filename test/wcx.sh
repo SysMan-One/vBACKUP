@@ -28,6 +28,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-06 : An encrypted saveset: through VBACKUP_KEY_FILE, not
+#					without it, not with a wrong passphrase.
+#
 #		 4-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
@@ -135,6 +138,11 @@ $VB src/tree plain.bck > /dev/null 2>&1
 $VB src/tree packed.bck /DATA_FORMAT=COMPRESSED > /dev/null 2>&1
 $VB src/tree vols.bck /BLOCK_SIZE=16384 /GROUP_SIZE=5 /VOLUME_SIZE=1048576 > /dev/null 2>&1
 [ -e plain.bck ] && [ -e packed.bck ] && [ -e vols.bck.003 ] || bail "the savesets could not be made"
+
+#	Encrypted (format.md 6.10): the plugin takes the passphrase from VBACKUP_KEY_FILE only
+printf 'wcx passphrase\n' > key && chmod 600 key && printf 'not it\n' > badkey && chmod 600 badkey
+VBACKUP_KDFITER=1000 VBACKUP_KEY_FILE=$S/key $VB src/tree enc.bck /ENCRYPT /DATA_FORMAT=COMPRESSED > /dev/null 2>&1
+[ -e enc.bck ] || bail "the encrypted saveset could not be made"
 
 #	No catalog: the TRAILER, the last block, cut off - the stream is read
 cp plain.bck nocat.bck
@@ -315,6 +323,15 @@ while [ $# -ge 2 ]; do
 	RC=$?
 	check '[ ! -e evil/inside ] && { [ -n "$WIN" ] || { [ $RC = 1 ] && [ -L evil/out2/l ] && grep -q "^ERR 16 l/inside$" $R/evil3.log; }; }' \
 		"$N: forged, two runs ($RC): written through a link of the first: $(cat $R/evil3.log)"
+
+	#	7. Encrypted: with the key file - as the plain one; without - not opened; a wrong passphrase - a bad archive
+	VBACKUP_KEY_FILE="$(wp $S/key)" wh x "$(wp $S/enc.bck)" "$(wp $S/$R/enc.out)" > $R/enc.log 2>&1
+	RC=$?
+	check '[ $RC = 0 ] && python3 judge.py ref.plain $R/enc.out $R/enc.log strict $WIN' "$N: an encrypted saveset ($RC): $(head -3 $R/enc.log)"
+	env -u VBACKUP_KEY_FILE timeout 300 $WINE "$H" "$(wp "$P")" l "$(wp $S/enc.bck)" > $R/enc0.log 2>&1
+	check 'grep -q "^OPEN 15$" $R/enc0.log' "$N: an encrypted saveset opened without a key: $(head -2 $R/enc0.log)"
+	VBACKUP_KEY_FILE="$(wp $S/badkey)" wh l "$(wp $S/enc.bck)" > $R/encb.log 2>&1
+	check 'grep -q "^OPEN 13$" $R/encb.log' "$N: an encrypted saveset opened with a wrong passphrase: $(head -2 $R/encb.log)"
 
 	wh l "$(wp $S/evil.bck)" > $R/evil.l 2>&1
 	check '! grep -qE "\.\./evil|vbackup-evil|evil2|evil4" $R/evil.l && { [ -z "$WIN" ] || ! grep -q evil3 $R/evil.l; }' \

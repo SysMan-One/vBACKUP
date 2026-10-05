@@ -12,6 +12,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 5-OCT-2026	RRL	X-06 : -k keyfile, -n: encrypted savesets.
+.\"
 .\"		 3-OCT-2026	RRL	X-01 : Initial version.
 .\"
 .\"---
@@ -34,6 +36,10 @@ vbkx \- the stand-alone extractor of VBACKUP savesets
 .br
 .B vbkx t
 .I saveset
+.br
+.RB "... [" \-k
+.IR keyfile ]
+.RB [ \-n ]
 .SH DESCRIPTION
 .B vbkx
 reads savesets made by
@@ -56,6 +62,17 @@ Write one file to the standard output.
 .TP
 .B t
 Read the whole saveset and check every checksum.
+.TP
+.BI \-k " keyfile"
+An encrypted saveset: its passphrase is the first line of
+.IR keyfile ,
+which only its owner may read.  Without it VBACKUP_KEY_FILE is taken,
+else the passphrase is asked for on the terminal (the console on
+Windows).
+.TP
+.B \-n
+Never ask for a passphrase (for programs, as MultiArc); so does
+VBACKUP_NOPROMPT=1.
 .PP
 Put back: data, holes, mode, times, symbolic and hard links, FIFOs; as
 root the owner (by number) and device files.  Not put back: ACLs,

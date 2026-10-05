@@ -29,6 +29,13 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-06 : /ENCRYPT: save, list, restore, compare, /VERIFY,
+#					volumes and compression; a wrong passphrase, no
+#					key, a key file others may read; a forged block
+#					(CRC right) rebuilt; vbkx -k.  The words of the
+#					command: MAXPARM, glued qualifiers, wildcards,
+#					.sav, a copy not into itself.
+#
 #		 4-OCT-2026	RRL	X-04 : /PHYSICAL: an image file, and loop devices as root
 #					(the guards, the gaps zeroed, nothing beyond).
 #					/IMAGE: an ext4 volume made again on a loop
@@ -593,6 +600,11 @@ if [ -n "$VX" ]; then
 	done
 	check '[ $WRONG = 0 ]' "vbkx p after a lost block: the data of another file, $WRONG times"
 
+	#	A saveset cut down to its VHDR: nothing to read is not "all files read"
+	head -c 65536 x.bck > vhdronly.bck
+	$VX t vhdronly.bck > vh.log 2>&1
+	check '[ $? = 1 ] && grep -q "ends before its catalog" vh.log' "vbkx t of a saveset cut down to its VHDR: $(tail -1 vh.log)"
+
 fi
 
 #
@@ -602,5 +614,80 @@ $VB > /dev/null 2>&1
 check '[ $? = 0 ]' "no parameters: the summary, completion code 0"
 $VB src/tree x2.bck /BLOCK_SIZE=1000 > bs.log 2>&1
 check '[ $? = 2 ] && grep -q IVQUAL bs.log' "/BLOCK_SIZE=1000 accepted"
+
+#	The words of the command: a third parameter, qualifiers glued to one, wildcards, .sav
+$VB src/tree w1.sav .log > w1.log 2>&1
+check '[ $? = 2 ] && grep -q MAXPARM w1.log && [ ! -e w1.sav ]' "a third parameter (.log for /LOG) was not refused"
+$VB 'src/tree/.../*.txt' w2.sav/sav/log > w2.log 2>&1
+check '[ $? = 0 ] && grep -q GLUED w2.log && grep -q SAVESUMM w2.log && [ -s w2.sav ]' "w2.sav/sav/log: the glued qualifiers not taken: $(head -2 w2.log)"
+$VB w2.sav /LIST /FORMAT=LS > w2.lst 2> /dev/null
+check 'grep -q "\.txt$" w2.lst && [ -z "$(grep "^-" w2.lst | grep -v "\.txt$")" ]' "a pattern saved more than its files: $(grep "^-" w2.lst | grep -v "\.txt$" | head -2)"
+mkdir -p wsav/sav && echo x > wsav/sav/f
+$VB wsav/sav w3.bck > w3.log 2>&1
+check '[ $? = 0 ] && ! grep -q GLUED w3.log' "a directory named sav taken for /SAVE_SET"
+rm -rf wcp; $VB 'src/tree/.../*.txt' wcp > wcp.log 2>&1 && $VB 'src/tree/.../*.txt' src/tree/wcp2 > wcp2.log 2>&1
+check '[ -z "$(find src/tree/wcp2 -path "*wcp2/*wcp2*" 2>/dev/null)" ] && [ -n "$(find wcp -name "*.txt")" ]' "a copy with a pattern copied into itself"
+rm -rf src/tree/wcp2
+
+#
+#	14. /ENCRYPT (format.md 6.10): the passphrase from a key file
+#
+VBACKUP_KDFITER=1000
+export VBACKUP_KDFITER
+rm -rf etree; mkdir -p etree/sub/deeper
+echo "секрет-имя" > "etree/sub/plaintext-marker-name.txt"; seq 1 20000 > etree/sub/deeper/numbers.txt
+head -c 1500000 /dev/urandom > etree/random.bin; ln -s sub/deeper/numbers.txt etree/link
+printf 'correct horse battery staple\n' > key && chmod 600 key
+printf 'Correct horse battery staple\r\n' > bad && chmod 600 bad
+$VB etree e1.bck /ENCRYPT /KEY_FILE=key /VERIFY /LOG > e1.log 2>&1
+check '[ $? = 0 ] && grep -q ENCRYPTED e1.log && grep -q VERIFYING e1.log' "an encrypted save /VERIFY: $(grep -- -E- e1.log | head -2)"
+check '! grep -q "plaintext-marker-name" e1.bck && ! grep -q "numbers.txt" e1.bck && ! grep -q "correct horse" e1.bck && ! grep -q "$(hostname)" e1.bck' "names, the host or the passphrase are in the clear in an encrypted saveset"
+$VB e1.bck /LIST /KEY_FILE=key > e1.lst 2>&1
+check '[ $? = 0 ] && grep -q "^Encryption: .*1000 iterations" e1.lst' "the listing of an encrypted saveset: $(head -2 e1.lst)"
+check '[ "$($VB e1.bck /LIST /FORMAT=LS /KEY_FILE=key 2>/dev/null)" = "$($VB etree eplain.bck /REPLACE > /dev/null 2>&1; $VB eplain.bck /LIST /FORMAT=LS 2>/dev/null)" ]' "an encrypted saveset lists other than a plain one of the same tree"
+rm -rf eo; $VB e1.bck eo /KEY_FILE=key > eo.log 2>&1
+check '[ $? = 0 ] && diff -r --no-dereference etree eo/etree > /dev/null' "an encrypted saveset restored: $(head -2 eo.log)"
+VBACKUP_KEY_FILE=$S/key $VB e1.bck /COMPARE > ec.log 2>&1
+check '[ $? = 0 ]' "an encrypted saveset compared through VBACKUP_KEY_FILE: $(head -2 ec.log)"
+rm -rf ew; $VB e1.bck ew /KEY_FILE=bad > ew.log 2>&1
+check '[ $? = 2 ] && grep -q WRONGKEY ew.log && [ -z "$(ls -A ew 2>/dev/null)" ]' "a wrong passphrase: $(head -2 ew.log)"
+$VB e1.bck /LIST < /dev/null > en.log 2>&1
+check '[ $? = 2 ] && grep -q NOKEY en.log' "no key and no terminal: $(head -1 en.log)"
+chmod 644 bad; $VB e1.bck /LIST /KEY_FILE=bad > em.log 2>&1
+check '[ $? = 2 ] && grep -q "KEYFILE.*chmod 600" em.log' "a key file others may read was taken"
+$VB e1.bck /LIST /ENCRYPT /KEY_FILE=key > eq.log 2>&1
+check '[ $? = 2 ] && grep -q QUALUSE eq.log' "/ENCRYPT on a listing accepted"
+$VB etree e2.bck /ENCRYPT /KEY_FILE=key /DATA_FORMAT=COMPRESSED /BLOCK_SIZE=16384 /VOLUME_SIZE=600000 > e2.log 2>&1
+check '[ $? = 0 ] && [ -e e2.bck.002 ]' "an encrypted compressed save on volumes: $(head -2 e2.log)"
+rm -rf e2o; VBACKUP_KEY_FILE=$S/key $VB e2.bck e2o > e2o.log 2>&1
+check '[ $? = 0 ] && diff -r --no-dereference etree e2o/etree > /dev/null' "encrypted volumes restored: $(head -2 e2o.log)"
+
+#	Damage: one block zapped and one forged with a right CRC, in other groups - both rebuilt
+python3 - e2.bck 16384 << 'PYEOF'
+import sys, zlib
+f, B = sys.argv[1], int(sys.argv[2])
+d = bytearray(open(f, "rb").read())
+d[3 * B:4 * B] = bytes(B)
+b = 14 * B
+d[b + 64 + 200] ^= 0x20
+h = bytearray(d[b:b + 64]); h[60:64] = bytes(4)
+c = zlib.crc32(bytes(h) + bytes(d[b + 64:b + B])) & 0xffffffff
+d[b + 60:b + 64] = c.to_bytes(4, "little")
+open(f, "wb").write(d)
+PYEOF
+rm -rf e2d; VBACKUP_KEY_FILE=$S/key $VB e2.bck e2d > e2d.log 2>&1
+#	A warning: the saveset was changed by somebody, though nothing of it is lost
+check '[ $? = 1 ] && grep -q BLKFORGED e2d.log && [ "$(grep -c BLKFIXED e2d.log)" = 2 ] && diff -r --no-dereference etree e2d/etree > /dev/null' "a forged and a zapped block: $(grep -- '-[EW]-' e2d.log | head -3)"
+
+if [ -n "$VBKX" ]; then
+	rm -rf ex; $VBKX x e1.bck -C ex -k key > ex.log 2>&1
+	check '[ $? = 0 ] && diff -r --no-dereference etree ex/etree > /dev/null' "vbkx -k: $(head -2 ex.log)"
+	$VBKX t e2.bck -k bad > exb.log 2>&1 || true
+	chmod 600 bad; $VBKX t e2.bck -k bad > exb.log 2>&1
+	check '[ $? = 2 ] && grep -q "does not open" exb.log' "vbkx with a wrong passphrase: $(head -1 exb.log)"
+	VBACKUP_KEY_FILE=$S/key $VBKX t e2.bck > ext.log 2>&1
+	check '[ $? = 0 ] && grep -q "block .* not what was written" ext.log' "vbkx t of the forged saveset: $(head -2 ext.log)"
+fi
+
 
 tap_end

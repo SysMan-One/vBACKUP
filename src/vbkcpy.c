@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCPY"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -27,6 +27,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		What lies under the output directory is not copied: a pattern
+**		with "..." reached it without naming the directory itself.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		The files are read SEQUENTIAL, with the read-ahead of files; a
@@ -215,9 +219,20 @@ uint64_t	l_copied = 0;
 uint8_t		l_fstat = VBK$K_FS_OK;
 int		l_fd = -1, l_status;
 
-	/* The copy is not copied into itself */
+	/*
+	**  The copy is not copied into itself: the output directory is not
+	**  descended into, and what lies under it - a pattern with "..."
+	**  reaches it without ever naming the directory - is not taken.
+	*/
+	{
+	size_t	l_olen = strlen(l_cpy->outabs);
+
 	if ( !strcmp(a_ent->abspath, l_cpy->outabs) )
 		return	STS$K_WARN;
+
+	if ( l_olen && !strncmp(a_ent->abspath, l_cpy->outabs, l_olen) && (a_ent->abspath [l_olen] == '/') )
+		return	STS$K_SUCCESS;
+	}
 
 	/* A time filter chose against it: a copy has no catalog to list it in */
 	if ( a_ent->present )

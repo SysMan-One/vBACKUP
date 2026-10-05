@@ -23,6 +23,12 @@ What a saveset gives you:
   what changed since, and a chain restored `/INCREMENTAL` comes back with
   deleted files gone;
 - a copy disk to disk with everything a restore would give back;
+- compression (`/DATA_FORMAT=COMPRESSED`, LZ4 on all cores), a whole
+  device block by block (`/PHYSICAL`) or a whole file system (`/IMAGE`);
+- encryption (`/ENCRYPT`, `/KEY_FILE`): ChaCha20 and HMAC-SHA256 per
+  block, keys by PBKDF2 - the names of the files hidden too, damage
+  still repaired without the passphrase, a block changed on purpose
+  recognized; no crypto library, so every reader below reads it;
 - `vbkx`, a stand-alone extractor linked statically: list, extract and
   test a saveset where VBACKUP is not installed (`vbackup /HELP VBKX`);
 - no dependency beyond libc, StarLet and HELP.
@@ -48,8 +54,13 @@ UTC), extract (`x`) and test (`t`) a saveset in one pass, repair one bad
 block per group, pick the stream up after a loss, find the block size by
 trying when volume 1 lost its first block, and name every damaged or
 missing file.  They read compressed savesets too (DATAZ, the LZ4 block
-format, each with its own checked decoder).  The head of each source is
-its manual.
+format, each with its own checked decoder) and encrypted ones (`-k
+keyfile`, else `VBACKUP_KEY_FILE`, else the passphrase is asked for on
+the terminal): every block checked by its TAG before it is decrypted, a
+forged block rebuilt from its group like a bad one; what the language
+does not give is written out in each file, and `selftest` checks the
+primitives against the vectors of their standards.  The head of each
+source is its manual.
 
     $ go build -o vbkx-go main.go                         # in tools/go
     $ rustc -O -C strip=symbols -o vbkx-rs src/main.rs    # in tools/rust
@@ -61,7 +72,8 @@ And a third, with nothing to build at all: [tools/perl/vbkx.pl](tools/perl/vbkx.
 `vbkx-pl`.  It needs only the Perl that every Debian and Ubuntu system
 carries (the `perl-base` package: strict, warnings, Fcntl, POSIX), does
 the same as the two above with the same listing, and is slow (a few MB a
-second) and sure.  Copy it next to the saveset:
+second) and sure.  For an encrypted saveset it uses Digest::SHA when it
+is there and its own SHA-256 when it is not.  Copy it next to the saveset:
 
     $ perl vbkx.pl l /mnt/usb/home.bck
     $ perl vbkx.pl x /mnt/usb/home.bck -C /tmp/restore

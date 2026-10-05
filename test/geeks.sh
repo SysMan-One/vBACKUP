@@ -11,7 +11,10 @@
 #			group repaired, more lost and named, anything at all
 #			survived without a crash, a hang or silent damage; a
 #			volume 1 without its first block; a forged saveset;
-#			the same output twice for the same input.
+#			the same output twice for the same input; encrypted
+#			savesets (/ENCRYPT): the same tree, a wrong passphrase
+#			refused, a forged block rebuilt from its group, a forged
+#			trailer said; the self-test of the ciphers.
 #
 #	DESCRIPTION:	VBACKUP and VBKX name the images, VBKXGO and VBKXRS the
 #			extractors, VBKXPL the Perl one (vbkx.pl, run by perl;
@@ -24,6 +27,15 @@
 #	CREATION DATE:	 4-OCT-2026
 #
 #	MODIFICATION HISTORY:
+#
+#		 5-OCT-2026	RRL	X-05 : Encrypted savesets (format.md 6.10): one plain, one
+#					multi-volume compressed of 16 KB blocks, read by
+#					the geeks with -k and VBACKUP_KEY_FILE the same as
+#					vbkx; a wrong passphrase - completion 2, nothing
+#					made; a forged EDATA block (CRC right, TAG wrong)
+#					repaired, two in a group lost and named; a forged
+#					ETRAILER; selftest; the rounds of damage on the
+#					encrypted saveset too (at most 6).
 #
 #		 4-OCT-2026	RRL	X-04 : TAP=1 - the Test Anything Protocol (test/tap.sh).
 #
@@ -222,7 +234,7 @@ def judge(src, out, log):
 	text = open(log, errors="replace").read()
 	named = set(re.findall(r"vbkx-(?:go|rs|pl): (.+?) is incomplete", text))
 	lost = set(re.findall(r"vbkx-(?:go|rs|pl): (.+?) was not extracted", text))
-	unnamed = re.search(r"cannot all be named|is not a saveset", text)
+	unnamed = re.search(r"cannot all be named|is not a saveset|no volume has a readable VHDR", text)
 	bad = []
 	for root, ds, fs in os.walk(src):
 		for f in fs:
@@ -242,7 +254,23 @@ def judge(src, out, log):
 		print("  " + b)
 	return 1 if bad else 0
 
-if sys.argv[1] == "damage" and sys.argv[3] == "ZBODY":
+def forge(path, pos, off):
+	"""One octet of the ciphertext of block <pos> changed and the block sealed again:
+	its CRC is right, only its TAG can tell; the block size is that of its header"""
+	import struct, zlib
+	with open(path, "r+b") as f:
+		f.seek(8); bsz = struct.unpack("<I", f.read(4))[0]
+		f.seek(pos * bsz); b = bytearray(f.read(bsz))
+		if b[:4] != b"VBKB" or b[12] not in (5, 6) or struct.unpack_from("<I", b, 48)[0] <= off:
+			sys.exit("block %d of %s is no EDATA or ETRAILER with %d octets" % (pos, path, off + 1))
+		b[64 + off] ^= 0x20
+		struct.pack_into("<I", b, 60, 0)
+		struct.pack_into("<I", b, 60, zlib.crc32(bytes(b)))
+		f.seek(pos * bsz); f.write(b)
+
+if sys.argv[1] == "forge":
+	forge(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+elif sys.argv[1] == "damage" and sys.argv[3] == "ZBODY":
 	zbody(sys.argv[2], int(sys.argv[4]))
 elif sys.argv[1] == "damage":
 	damage(sys.argv[2], sys.argv[3], int(sys.argv[4]))
@@ -293,6 +321,23 @@ $VX x zbase/x.bck -C zref > zref.log 2>&1
 #	A saveset made by hand from the reference LZ4 compressor, if python3-lz4 is there
 LZREF=0
 python3 -c "import lz4.block" 2>/dev/null && python3 g.py lz4ref lzref.bck lzref.src && LZREF=1
+
+#	The same tree encrypted (/ENCRYPT, format.md 6.10): a key file only its owner may read,
+#	1000 rounds of PBKDF2 to be quick; and one compressed, of 16 KB blocks
+echo "geeks' passphrase" > key && chmod 600 key
+echo "not the passphrase" > badkey && chmod 600 badkey
+mkdir ebase ezbase
+VBACKUP_KDFITER=1000 $VB src/tree ebase/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=200000 /ENCRYPT /KEY_FILE=key > esave.log 2>&1
+[ $? = 0 ] && [ -e ebase/x.bck.003 ] || bail "the encrypted saveset could not be made: $(cat esave.log)"
+VBACKUP_KDFITER=1000 $VB src/tree ezbase/x.bck /BLOCK_SIZE=16384 /GROUP_SIZE=$GRP /VOLUME_SIZE=200000 /DATA_FORMAT=COMPRESSED \
+	/ENCRYPT /KEY_FILE=key > ezsave.log 2>&1
+[ $? = 0 ] && [ -e ezbase/x.bck.002 ] || bail "the encrypted compressed saveset could not be made: $(cat ezsave.log)"
+grep -q "tree/a.txt\|hello" ebase/x.bck && bail "the encrypted saveset shows its names or data"
+TZ=UTC $VX l ebase/x.bck -k key > eref.lst 2>&1
+$VX x ebase/x.bck -C eref -k key > eref.log 2>&1
+$VX x ezbase/x.bck -C ezref -k key > ezref.log 2>&1
+ELAST=$(ls ebase/x.bck* | sort | tail -1)
+EBLKS=$(($(stat -c %s $ELAST) / BSZ))
 
 #	The state of a tree: types, modes, sizes, times, link targets (the top itself left out)
 state () { ( cd "$1" && find . -mindepth 1 -printf '%y %m %s %T@ %l %P\n' | sort ); }
@@ -349,9 +394,17 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	#	3. The rounds of damage: on the plain saveset, then on the compressed one - there also
 	#	   garbage inside the compressed bytes of DATAZ records with the blocks resealed (ZBODY),
 	#	   which the block CRC cannot catch: the decoder and the file CRC must
-	for BASE in base zbase; do
+	#	   On the encrypted saveset (-k key) too, at most 6 rounds: the TAGs and the repair
+	#	   of ciphertext under damage
+	for BASE in base zbase ebase; do
+	KO=
+	RMAX=$ROUNDS
+	if [ $BASE = ebase ]; then
+		KO="-k key"
+		[ "$RMAX" -gt 6 ] && RMAX=6
+	fi
 	r=1
-	while [ $r -le "$ROUNDS" ]; do
+	while [ $r -le "$RMAX" ]; do
 		case $((r % 3)) in
 			1) MODE=FIX ;;
 			2) MODE=LOSE ;;
@@ -363,7 +416,7 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 		cp -r $BASE d
 		python3 g.py damage d $MODE $RS
 
-		timeout 120 $G x d/x.bck -C o > x.log 2>&1
+		timeout 120 $G x d/x.bck -C o $KO > x.log 2>&1
 		RC=$?
 		if crashed $RC x.log; then
 			fail "$N $BASE round $r $MODE seed $RS: crashed or hung, completion code $RC: $(tail -3 x.log)"
@@ -377,12 +430,12 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 
 		#	The same input, the same output: twice, byte for byte (into the same name: errors carry it)
 		rm -rf o
-		timeout 120 $G x d/x.bck -C o > x2.log 2>&1
+		timeout 120 $G x d/x.bck -C o $KO > x2.log 2>&1
 		check 'cmp -s x.log x2.log' "$N $BASE round $r $MODE seed $RS: two runs of x say different things"
 		for Q in l t; do
-			timeout 120 $G $Q d/x.bck > q1.log 2>&1
+			timeout 120 $G $Q d/x.bck $KO > q1.log 2>&1
 			RC=$?
-			timeout 120 $G $Q d/x.bck > q2.log 2>&1
+			timeout 120 $G $Q d/x.bck $KO > q2.log 2>&1
 			if crashed $RC q1.log; then
 				fail "$N $BASE round $r $MODE seed $RS: $Q crashed or hung, completion code $RC"
 			elif ! cmp -s q1.log q2.log; then
@@ -394,6 +447,47 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 		r=$((r + 1))
 	done
 	done
+
+	#	5. Encrypted: the same as VBKX and as the plain saveset, the passphrase from -k or
+	#	   VBACKUP_KEY_FILE; a wrong one refused before anything is made
+	$G selftest > $N.self 2>&1
+	check '[ $? = 0 ] && grep -q "all primitives right" $N.self && ! grep -q FAILED $N.self' "$N selftest: $(grep -v ': ok$' $N.self | head -3)"
+	$G l ebase/x.bck -k key > $N.elst 2> $N.elerr
+	check '[ $? = 0 ] && cmp -s $N.elst eref.lst && cmp -s $N.elst ref.lst' "$N l of the encrypted saveset: $(diff eref.lst $N.elst | head -4) $(head -2 $N.elerr)"
+	$G x ebase/x.bck -C $N.eout -k key > $N.elog 2>&1
+	check '[ $? = 0 ] && same eref $N.eout && same ref $N.eout' "$N x of the encrypted saveset: the tree differs, $(head -3 $N.elog)"
+	VBACKUP_KEY_FILE=key $G t ebase/x.bck > $N.et 2>&1
+	check '[ $? = 0 ] && grep -q "all checksums match" $N.et' "$N t of the encrypted saveset, VBACKUP_KEY_FILE: $(cat $N.et)"
+	if [ $N = vbkx-pl ]; then
+		#	Without Digest::SHA (not in perl-base): its own SHA-256, written out
+		VBKXPL_PURE=1 $G x ebase/x.bck -C $N.epure -k key > $N.epurelog 2>&1
+		check '[ $? = 0 ] && same ref $N.epure' "$N x of the encrypted saveset, pure Perl SHA-256: $(head -3 $N.epurelog)"
+	fi
+	$G x ezbase/x.bck -C $N.ezout -k key > $N.ezlog 2>&1
+	check '[ $? = 0 ] && same ezref $N.ezout && same ref $N.ezout' "$N x of the encrypted saveset in volumes, compressed: $(head -3 $N.ezlog)"
+	$G x ebase/x.bck -C $N.ebad -k badkey > $N.ebadlog 2>&1
+	check '[ $? = 2 ] && [ ! -e $N.ebad ] && grep -q "the passphrase does not open" $N.ebadlog' "$N: a wrong passphrase, $(head -2 $N.ebadlog)"
+	chmod 644 key
+	$G t ebase/x.bck -k key > $N.eperm 2>&1
+	check '[ $? = 2 ] && grep -q "chmod 600" $N.eperm' "$N: a key file others may read, $(head -2 $N.eperm)"
+	chmod 600 key
+
+	#	5f. A forged EDATA block - one octet of its ciphertext, the CRC made right again:
+	#	    the TAG catches it, the XOR block rebuilds it; two of a group are lost and named
+	rm -rf d && cp -r ebase d && python3 g.py forge d/x.bck 2 100
+	$G x d/x.bck -C $N.ef -k key > $N.eflog 2>&1
+	check '[ $? = 0 ] && same ref $N.ef && grep -q "block 2 of volume 1 is not what was written: its CRC is right, its authentication fails" $N.eflog && grep -q "repaired" $N.eflog' \
+		"$N: a forged block not caught or not repaired, $(head -3 $N.eflog)"
+	python3 g.py forge d/x.bck 3 10
+	$G x d/x.bck -C $N.ef2 -k key > $N.ef2log 2>&1
+	RC=$?
+	check '[ $RC = 1 ] && [ $(grep -c "authentication fails" $N.ef2log) = 2 ] && grep -q "cannot be repaired" $N.ef2log && python3 g.py judge src/tree $N.ef2 $N.ef2log' \
+		"$N: two forged blocks of a group, completion code $RC, $(head -3 $N.ef2log)"
+
+	#	5t. A forged ETRAILER: said, and the stream read all the same
+	rm -rf d && cp -r ebase d && python3 g.py forge d/${ELAST#ebase/} $((EBLKS - 1)) 0
+	$G x d/x.bck -C $N.et2 -k key > $N.et2log 2>&1
+	check '[ $? = 1 ] && same ref $N.et2 && grep -q "its trailer fails its authentication" $N.et2log' "$N: a forged trailer, $(head -3 $N.et2log)"
 
 	#	4. A forged saveset: names that climb out, a link to go through
 	mkdir -p evil.$N/out

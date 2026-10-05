@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -19,6 +19,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		MAXPARM, NOKEY, WRONGKEY, KEYFILE, KEYMATCH, BLKFORGED, ENCRYPTED,
+**		GLUED; the event BADTAG.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		FILLOST and UNNAMED: the files a damaged restore lost.  The
@@ -136,7 +140,15 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_SRCDELETED,	"SRCDELETED, !AZ deleted: it is in the saveset and verified"),
 	$VBKREC(VBACKUP$_SRCKEPT,	"SRCKEPT, !AZ not deleted: !AZ"),
 	$VBKREC(VBACKUP$_DELSUMM,	"DELSUMM, !UQ file!%S deleted, !UQ kept"),
-	$VBKREC(VBACKUP$_QUALUSE,	"QUALUSE, /!AZ: !AZ")
+	$VBKREC(VBACKUP$_QUALUSE,	"QUALUSE, /!AZ: !AZ"),
+	$VBKREC(VBACKUP$_MAXPARM,	"MAXPARM, too many parameters: !AZ - only an input and an output are taken; a qualifier begins with /"),
+	$VBKREC(VBACKUP$_NOKEY,		"NOKEY, !AZ needs a passphrase and there is no terminal to ask it on: give /KEY_FILE=file or VBACKUP_KEY_FILE"),
+	$VBKREC(VBACKUP$_WRONGKEY,	"WRONGKEY, the passphrase does not open !AZ"),
+	$VBKREC(VBACKUP$_KEYFILE,	"KEYFILE, passphrase from !AZ: !AZ"),
+	$VBKREC(VBACKUP$_KEYMATCH,	"KEYMATCH, the two passphrases differ: nothing saved"),
+	$VBKREC(VBACKUP$_BLKFORGED,	"BLKFORGED, block !UQ of volume !UL is not what was written: its CRC is right, its authentication fails"),
+	$VBKREC(VBACKUP$_ENCRYPTED,	"ENCRYPTED, !AZ is encrypted: ChaCha20, HMAC-SHA256, PBKDF2 of !UL iterations"),
+	$VBKREC(VBACKUP$_GLUED,		"GLUED, !AZ: the qualifiers glued to it are taken as qualifiers")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {
@@ -459,6 +471,10 @@ const char *	l_spec = (const char *) a_arg;
 
 		case	VBK$K_EV_BADREC:
 			$VBKMSG(VBACKUP$_BADREC, a_blk, a_vol);
+			break;
+
+		case	VBK$K_EV_BADTAG:
+			$VBKMSG(VBACKUP$_BLKFORGED, a_blk, a_vol);
 			break;
 		}
 }

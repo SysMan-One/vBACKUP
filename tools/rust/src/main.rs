@@ -15,10 +15,14 @@
 **  BUILD:	rustc -O -C strip=symbols -o vbkx-rs src/main.rs   (Rust 1.63+)
 **		or: cargo build --release, or: make (the Makefile here).
 **
-**  USAGE:	vbkx-rs l saveset              list the files
-**		vbkx-rs x saveset [-C dir]     extract them all into dir
+**  USAGE:	vbkx-rs l saveset [-k file]    list the files
+**		vbkx-rs x saveset [-C dir] [-k file]
+**					       extract them all into dir
 **						(default: the current directory)
-**		vbkx-rs t saveset              read it all, check the checksums
+**		vbkx-rs t saveset [-k file]    read it all, check the checksums
+**		vbkx-rs selftest               check the primitives of the
+**						encryption against the test
+**						vectors of their standards
 **
 **		saveset is volume 1 (x.bck); volumes 2, 3, ... are looked
 **		for beside it as x.bck.002, x.bck.003, ...
@@ -26,6 +30,7 @@
 **		  $ vbkx-rs l /mnt/usb/home.bck
 **		  $ vbkx-rs x /mnt/usb/home.bck -C /tmp/restore
 **		  $ vbkx-rs t /mnt/usb/home.bck
+**		  $ vbkx-rs x /mnt/usb/secret.bck -k ~/.vbackup.key
 **
 **  LISTING:	one line per file, the time in UTC, always (no time zone
 **		files are needed):
@@ -59,6 +64,25 @@
 **		of the files of the volume - making the file system again is
 **		vbackup's business, not this one's.
 **
+**  ENCRYPTED:	a saveset of vbackup /ENCRYPT (format.md 6.10) is read with
+**		its passphrase: the first line of the key file of -k (the
+**		line end, LF or CR LF, left out; a file that its group or
+**		others may read or write is refused - "chmod 600 it"), else
+**		of the file VBACKUP_KEY_FILE names, else it is asked for on
+**		the terminal without echo (stty; no terminal - give -k).
+**		Its bytes are taken as they are.  The keys come from it by
+**		PBKDF2-HMAC-SHA256 with the SALT and KDFITER of the VHDR; a
+**		wrong passphrase is said ("the passphrase does not open")
+**		and nothing is read or made.  Every block is checked by its
+**		CRC, then by its TAG (HMAC-SHA256): a block whose CRC is
+**		right and whose TAG is not was changed on purpose - it is
+**		said, and it is a bad block like any, rebuilt from its group
+**		(the rebuilt one must pass its TAG too) or lost.  Only then
+**		are the good blocks decrypted (ChaCha20).  SHA-256, HMAC,
+**		PBKDF2 and ChaCha20 are written out in this file from their
+**		standards; "selftest" checks them.  A volume 1 without its
+**		VHDR takes the keys from the VHDR of any other volume.
+**
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
@@ -75,6 +99,8 @@
 **		taken from the saveset is checked, nothing is unwrapped; the
 **		only "unsafe" are the two system calls std of Rust 1.63 does
 **		not offer (utimensat, mkfifo), on names already checked.
+**		(The terminal is set by stty run as a program, for the
+**		same reason: no termios in std.)
 **		Nothing written outside the output directory; no silent
 **		damage - a file that is not named in a message is the file
 **		that was saved.
@@ -87,6 +113,13 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		 5-OCT-2026	RRL
+**		Encrypted savesets (format.md 6.10): EDATA and ETRAILER,
+**		the passphrase from -k, VBACKUP_KEY_FILE or the terminal,
+**		TAG checked before the repair and after it, ChaCha20;
+**		SHA-256, HMAC, PBKDF2, ChaCha20 written out here, std only;
+**		the command selftest.
 **
 **	X01-04		 4-OCT-2026	RRL
 **		DATAZ: the data compressed in the LZ4 block format.
@@ -101,9 +134,10 @@
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{FileExt, PermissionsExt};
+use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
+use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -121,6 +155,20 @@ const BT_DATA: u8 = 1;
 const BT_XOR: u8 = 2;
 const BT_VHDR: u8 = 3;
 const BT_TRAILER: u8 = 4;
+const BT_EDATA: u8 = 5; // DATA of an encrypted saveset: format.md 6.10
+const BT_ETRAILER: u8 = 6; // its TRAILER
+
+/* Encryption, format.md 6.10 */
+const TAG_CIPHER: u16 = 88;
+const TAG_KDF: u16 = 89;
+const TAG_KDFITER: u16 = 90;
+const TAG_SALT: u16 = 91;
+const TAG_KEYCHECK: u16 = 92;
+const CIPHER_CC20HS: u64 = 1; // ChaCha20 and HMAC-SHA256
+const KDF_PBKDF2: u64 = 1; // PBKDF2-HMAC-SHA256
+const KDFMIN: u32 = 1000; // the fewest iterations a reader accepts
+const TAGSZ: usize = 32; // the TAG at the end of a payload area
+const PASSMAX: usize = 1024; // the longest passphrase
 
 const RT_SUMMARY: u16 = 1;
 const RT_FILE: u16 = 2;
@@ -283,6 +331,341 @@ fn data_view(typ: u16, body: &[u8]) -> Option<(u32, u64, std::borrow::Cow<'_, [u
     Some((u32_at(body, 0), u64_at(body, 8), std::borrow::Cow::Owned(d)))
 }
 
+/*
+** The primitives of an encrypted saveset (format.md 6.10), written out
+** here from their standards, std only: SHA-256 (FIPS 180-4), HMAC-SHA256
+** (RFC 2104), PBKDF2-HMAC-SHA256 (RFC 8018) and ChaCha20 (RFC 8439 2.4).
+** All arithmetic modulo 2^32 is wrapping_*: overflow checks stay on.
+*/
+const SHA_K: [u32; 64] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
+    0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+    0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
+    0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+    0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+
+#[derive(Clone)]
+struct Sha256 {
+    h: [u32; 8],
+    buf: [u8; 64],
+    nbuf: usize,
+    total: u64, // octets fed so far
+}
+
+impl Sha256 {
+    fn new() -> Sha256 {
+        Sha256 {
+            h: [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19],
+            buf: [0; 64],
+            nbuf: 0,
+            total: 0,
+        }
+    }
+
+    fn block(&mut self, b: &[u8]) {
+        let mut w = [0u32; 64];
+        for (i, wi) in w.iter_mut().enumerate().take(16) {
+            *wi = u32::from_be_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+        let mut v = self.h;
+        for i in 0..64 {
+            let s1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
+            let ch = (v[4] & v[5]) ^ (!v[4] & v[6]);
+            let t1 = v[7].wrapping_add(s1).wrapping_add(ch).wrapping_add(SHA_K[i]).wrapping_add(w[i]);
+            let s0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
+            let maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+            let t2 = s0.wrapping_add(maj);
+            v[7] = v[6];
+            v[6] = v[5];
+            v[5] = v[4];
+            v[4] = v[3].wrapping_add(t1);
+            v[3] = v[2];
+            v[2] = v[1];
+            v[1] = v[0];
+            v[0] = t1.wrapping_add(t2);
+        }
+        for (h, x) in self.h.iter_mut().zip(v.iter()) {
+            *h = h.wrapping_add(*x);
+        }
+    }
+
+    fn update(&mut self, mut data: &[u8]) {
+        self.total = self.total.wrapping_add(data.len() as u64);
+        while !data.is_empty() {
+            let n = (64 - self.nbuf).min(data.len());
+            self.buf[self.nbuf..self.nbuf + n].copy_from_slice(&data[..n]);
+            self.nbuf += n;
+            data = &data[n..];
+            if self.nbuf == 64 {
+                let b = self.buf;
+                self.block(&b);
+                self.nbuf = 0;
+            }
+        }
+    }
+
+    fn finish(mut self) -> [u8; 32] {
+        let bits = self.total.wrapping_mul(8);
+        self.update(&[0x80]);
+        while self.nbuf != 56 {
+            self.update(&[0]);
+        }
+        self.update(&bits.to_be_bytes());
+        let mut d = [0u8; 32];
+        for (i, h) in self.h.iter().enumerate() {
+            d[4 * i..4 * i + 4].copy_from_slice(&h.to_be_bytes());
+        }
+        d
+    }
+}
+
+/* HMAC-SHA256: the two hash states after the padded key, kept for any number of messages */
+#[derive(Clone)]
+struct Hmac {
+    inner: Sha256,
+    outer: Sha256,
+}
+
+impl Hmac {
+    fn new(key: &[u8]) -> Hmac {
+        let mut k = [0u8; 64];
+        if key.len() > 64 {
+            let mut s = Sha256::new();
+            s.update(key);
+            k[..32].copy_from_slice(&s.finish());
+        } else {
+            k[..key.len()].copy_from_slice(key);
+        }
+        let (mut inner, mut outer) = (Sha256::new(), Sha256::new());
+        let mut pad = [0u8; 64];
+        for (p, x) in pad.iter_mut().zip(k.iter()) {
+            *p = x ^ 0x36;
+        }
+        inner.update(&pad);
+        for (p, x) in pad.iter_mut().zip(k.iter()) {
+            *p = x ^ 0x5c;
+        }
+        outer.update(&pad);
+        Hmac { inner, outer }
+    }
+
+    /* The MAC of the concatenation of the pieces */
+    fn mac(&self, parts: &[&[u8]]) -> [u8; 32] {
+        let mut s = self.inner.clone();
+        for p in parts {
+            s.update(p);
+        }
+        let d = s.finish();
+        let mut o = self.outer.clone();
+        o.update(&d);
+        o.finish()
+    }
+}
+
+fn pbkdf2(pass: &[u8], salt: &[u8], iter: u32, out: &mut [u8]) {
+    let h = Hmac::new(pass);
+    for (i, chunk) in out.chunks_mut(32).enumerate() {
+        let idx = (i as u32).wrapping_add(1).to_be_bytes();
+        let mut u = h.mac(&[salt, &idx]);
+        let mut t = u;
+        for _ in 1..iter {
+            u = h.mac(&[&u]);
+            for (x, y) in t.iter_mut().zip(u.iter()) {
+                *x ^= *y;
+            }
+        }
+        let n = chunk.len();
+        chunk.copy_from_slice(&t[..n]);
+    }
+}
+
+/* ChaCha20 of RFC 8439: buf XOR the key stream from block COUNTER on */
+fn chacha20(key: &[u8; 32], nonce: &[u8; 12], counter: u32, buf: &mut [u8]) {
+    fn qr(s: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+        s[a] = s[a].wrapping_add(s[b]);
+        s[d] = (s[d] ^ s[a]).rotate_left(16);
+        s[c] = s[c].wrapping_add(s[d]);
+        s[b] = (s[b] ^ s[c]).rotate_left(12);
+        s[a] = s[a].wrapping_add(s[b]);
+        s[d] = (s[d] ^ s[a]).rotate_left(8);
+        s[c] = s[c].wrapping_add(s[d]);
+        s[b] = (s[b] ^ s[c]).rotate_left(7);
+    }
+    let mut init = [0u32; 16];
+    init[0..4].copy_from_slice(&[0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574]);
+    for i in 0..8 {
+        init[4 + i] = u32_at(key, 4 * i);
+    }
+    for i in 0..3 {
+        init[13 + i] = u32_at(nonce, 4 * i);
+    }
+    let mut ctr = counter;
+    for chunk in buf.chunks_mut(64) {
+        init[12] = ctr;
+        let mut s = init;
+        for _ in 0..10 {
+            qr(&mut s, 0, 4, 8, 12);
+            qr(&mut s, 1, 5, 9, 13);
+            qr(&mut s, 2, 6, 10, 14);
+            qr(&mut s, 3, 7, 11, 15);
+            qr(&mut s, 0, 5, 10, 15);
+            qr(&mut s, 1, 6, 11, 12);
+            qr(&mut s, 2, 7, 8, 13);
+            qr(&mut s, 3, 4, 9, 14);
+        }
+        for (j, x) in chunk.iter_mut().enumerate() {
+            let w = s[j / 4].wrapping_add(init[j / 4]);
+            *x ^= (w >> (8 * (j % 4))) as u8;
+        }
+        ctr = ctr.wrapping_add(1);
+    }
+}
+
+/* Equal or not, in a time that does not depend on where they differ */
+fn equal(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+/* The keys of a saveset, out of its passphrase: format.md 6.10 */
+struct Keys {
+    enc: [u8; 32],
+    mac: Hmac,
+    check: [u8; 32],
+}
+
+fn derive(pass: &[u8], salt: &[u8], iter: u32) -> Keys {
+    let mut mk = [0u8; 32];
+    pbkdf2(pass, salt, iter, &mut mk);
+    let h = Hmac::new(&mk);
+    Keys { enc: h.mac(&[b"VBACKUP ENC"]), mac: Hmac::new(&h.mac(&[b"VBACKUP MAC"])), check: h.mac(&[b"VBACKUP CHECK"]) }
+}
+
+/* The TAG of a block: the header fields of 6.10, little-endian, then the ciphertext */
+fn tag(k: &Keys, bsize: u32, h: &Bhdr, ct: &[u8]) -> [u8; 32] {
+    let mut m = Vec::with_capacity(39);
+    m.extend_from_slice(&h.uuid);
+    m.extend_from_slice(&bsize.to_le_bytes());
+    m.extend_from_slice(&h.blkno.to_le_bytes());
+    m.extend_from_slice(&h.volno.to_le_bytes());
+    m.push(h.typ);
+    m.extend_from_slice(&h.gindex.to_le_bytes());
+    m.extend_from_slice(&h.recoff.to_le_bytes());
+    m.extend_from_slice(&h.paylen.to_le_bytes());
+    k.mac.mac(&[&m, ct])
+}
+
+/* The TAG of a payload area is right, and PAYLEN leaves room for it */
+fn tag_ok(k: &Keys, bsize: u32, h: &Bhdr, pay: &[u8]) -> bool {
+    if pay.len() < TAGSZ || h.paylen as usize > pay.len() - TAGSZ {
+        return false;
+    }
+    equal(&tag(k, bsize, h, &pay[..h.paylen as usize]), &pay[pay.len() - TAGSZ..])
+}
+
+/* Decrypt PAYLEN octets of a payload in place: the nonce is u32 0, u64 blkno */
+fn decrypt(k: &Keys, h: &Bhdr, pay: &mut [u8]) {
+    let mut nonce = [0u8; 12];
+    nonce[4..].copy_from_slice(&h.blkno.to_le_bytes());
+    let n = (h.paylen as usize).min(pay.len());
+    chacha20(&k.enc, &nonce, 0, &mut pay[..n]);
+}
+
+/* The test vectors of the standards (those of test/units.c): vbkx-rs selftest */
+fn selftest() -> i32 {
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{:02x}", x)).collect()
+    }
+    fn sha(d: &[u8]) -> String {
+        let mut s = Sha256::new();
+        s.update(d);
+        hex(&s.finish())
+    }
+    let mut failed = 0;
+    let mut said = |name: &str, good: bool| {
+        println!("selftest: {}: {}", name, if good { "ok" } else { "FAILED" });
+        if !good {
+            failed += 1;
+        }
+    };
+    said("SHA-256 \"\"", sha(b"") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    said("SHA-256 \"abc\"", sha(b"abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    said(
+        "SHA-256 448 bits",
+        sha(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+    );
+    {
+        /* A million 'a', fed in pieces of every size from 1 up */
+        let m = vec![b'a'; 1_000_000];
+        let mut s = Sha256::new();
+        let (mut o, mut n) = (0usize, 1usize);
+        while o < m.len() {
+            let k = n.min(m.len() - o);
+            s.update(&m[o..o + k]);
+            o += k;
+            n = (n % 131) + 1;
+        }
+        said("SHA-256 a million 'a'", hex(&s.finish()) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    }
+    said(
+        "HMAC-SHA256 RFC 4231 case 1",
+        hex(&Hmac::new(&[0x0b; 20]).mac(&[b"Hi There"])) == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+    );
+    said(
+        "HMAC-SHA256 RFC 4231 case 2",
+        hex(&Hmac::new(b"Jefe").mac(&[b"what do ya want for nothing?"])) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+    );
+    said(
+        "HMAC-SHA256 RFC 4231 case 6",
+        hex(&Hmac::new(&[0xaa; 131]).mac(&[b"Test Using Larger Than Block-Size Key - Hash Key First"]))
+            == "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+    );
+    let mut d = [0u8; 64];
+    pbkdf2(b"passwd", b"salt", 1, &mut d);
+    said(
+        "PBKDF2-HMAC-SHA256 passwd/salt/1",
+        hex(&d) == "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783",
+    );
+    pbkdf2(b"Password", b"NaCl", 80000, &mut d);
+    said(
+        "PBKDF2-HMAC-SHA256 Password/NaCl/80000",
+        hex(&d) == "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d",
+    );
+    let mut d32 = [0u8; 32];
+    pbkdf2(b"password", b"salt", 4096, &mut d32);
+    said("PBKDF2-HMAC-SHA256 password/salt/4096", hex(&d32) == "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a");
+    {
+        let pt: &[u8] = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+        let mut key = [0u8; 32];
+        for (i, k) in key.iter_mut().enumerate() {
+            *k = i as u8;
+        }
+        let nonce = [0, 0, 0, 0, 0, 0, 0, 0x4a, 0, 0, 0, 0];
+        let mut buf = pt.to_vec();
+        chacha20(&key, &nonce, 1, &mut buf);
+        said(
+            "ChaCha20 RFC 8439 2.4.2",
+            hex(&buf)
+                == "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d",
+        );
+        chacha20(&key, &nonce, 1, &mut buf);
+        said("ChaCha20 decrypted back", buf == pt);
+    }
+    if failed == 0 {
+        println!("selftest: all primitives right");
+        0
+    } else {
+        println!("selftest: {} failed", failed);
+        1
+    }
+}
+
 /* The block header, format.md section 3 */
 #[derive(Clone, Copy, Default)]
 struct Bhdr {
@@ -319,7 +702,7 @@ fn check(crc: &Crc, b: &[u8], bsize: u32, uuid: Option<&[u8; 16]>) -> Option<Bhd
     };
     h.uuid.copy_from_slice(&b[16..32]);
     let psize = bsize - HDR as u32;
-    if u32_at(b, 8) != bsize || h.typ < BT_DATA || h.typ > BT_TRAILER || h.paylen > psize || (h.recoff != NONE && h.recoff >= psize) {
+    if u32_at(b, 8) != bsize || h.typ < BT_DATA || h.typ > BT_ETRAILER || h.paylen > psize || (h.recoff != NONE && h.recoff >= psize) {
         return None;
     }
     if let Some(u) = uuid {
@@ -469,6 +852,15 @@ struct Reader {
     vols: Vec<Volume>,
     trailer: bool,
 
+    /* Encryption, format.md 6.10: what the VHDR says, the keys once the passphrase is right */
+    vcrypt: Option<Vcrypt>,  // a VHDR with CIPHER; None - a plain saveset
+    keys: Option<Keys>,
+    dtype: u8,               // what a DATA position holds: DATA, or EDATA when encrypted
+    ttype: u8,               // TRAILER, or ETRAILER
+    cap: u32,                // the most PAYLEN of a DATA block: P, or P - 32 when encrypted
+    trlraw: Option<Vec<u8>>, // the ETRAILER, kept until its TAG can be checked
+    enc_seen: bool,          // an EDATA block met while the block size was guessed
+
     curvol: usize, // where the next group is read from
     curpos: u64,   // ... block position in that volume
     pays: Vec<Option<Vec<u8>>>,
@@ -493,21 +885,40 @@ fn volspec(spec: &str, n: u32) -> String {
     }
 }
 
-/* The group size, out of the SUMMARY record a VHDR carries */
-fn summary_group(blk: &[u8], h: &Bhdr) -> Option<u32> {
+/* The encryption tags of a VHDR SUMMARY, format.md 6.10 */
+#[derive(Clone, Default)]
+struct Vcrypt {
+    cipher: u64,
+    kdf: u64,
+    kdfiter: u64,
+    salt: Vec<u8>,
+    check: Vec<u8>,
+}
+
+/* The group size and the encryption tags (CIPHER makes it encrypted), out of the SUMMARY record a VHDR carries */
+fn summary_group(blk: &[u8], h: &Bhdr) -> Option<(u32, Option<Vcrypt>)> {
     let pay = blk.get(HDR..HDR + h.paylen as usize)?;
     if pay.len() < 8 || u16_at(pay, 0) != RT_SUMMARY {
         return None;
     }
     let body = pay.get(8..8usize.saturating_add(u32_at(pay, 4) as usize))?;
     let mut grp = 0u32;
-    tlv_each(body, |tag, v| {
-        if tag == 71 {
-            grp = getu(v) as u32
+    let mut has_cipher = false;
+    let mut vc = Vcrypt::default();
+    tlv_each(body, |tag, v| match tag {
+        71 => grp = getu(v) as u32,
+        TAG_CIPHER => {
+            has_cipher = true;
+            vc.cipher = getu(v)
         }
+        TAG_KDF => vc.kdf = getu(v),
+        TAG_KDFITER => vc.kdfiter = getu(v),
+        TAG_SALT => vc.salt = v.to_vec(),
+        TAG_KEYCHECK => vc.check = v.to_vec(),
+        _ => {}
     });
     if grp <= MAXGRP {
-        Some(grp)
+        Some((grp, if has_cipher { Some(vc) } else { None }))
     } else {
         None
     }
@@ -524,6 +935,13 @@ impl Reader {
             uuid: [0; 16],
             vols: Vec::new(),
             trailer: false,
+            vcrypt: None,
+            keys: None,
+            dtype: BT_DATA,
+            ttype: BT_TRAILER,
+            cap: 0,
+            trlraw: None,
+            enc_seen: false,
             curvol: 1,
             curpos: 1,
             pays: Vec::new(),
@@ -547,10 +965,11 @@ impl Reader {
             let blk = read_block(Some(&f), bs, 0);
             if let Some(h) = check(&r.crc, &blk, bs, None) {
                 if h.typ == BT_VHDR && h.volno == 1 {
-                    if let Some(g) = summary_group(&blk, &h) {
+                    if let Some((g, vc)) = summary_group(&blk, &h) {
                         r.bsize = bs;
                         r.uuid = h.uuid;
                         r.grpsz = g;
+                        r.vcrypt = vc;
                         found = true;
                     }
                 }
@@ -577,7 +996,15 @@ impl Reader {
             /* Its VHDR, or else its next block, tells where it begins */
             let first;
             match check(&r.crc, &read_block(Some(&vf), r.bsize, 0), r.bsize, Some(&r.uuid)) {
-                Some(h) if h.typ == BT_VHDR && h.volno == n => first = Some(h.blkno),
+                Some(h) if h.typ == BT_VHDR && h.volno == n => {
+                    /* Volume 1 had no good VHDR: the keys are in any other one (the same in all) */
+                    if !found && r.vcrypt.is_none() {
+                        if let Some((_, vc)) = summary_group(&read_block(Some(&vf), r.bsize, 0), &h) {
+                            r.vcrypt = vc;
+                        }
+                    }
+                    first = Some(h.blkno)
+                }
                 _ => match check(&r.crc, &read_block(Some(&vf), r.bsize, 1), r.bsize, Some(&r.uuid)) {
                     Some(h) if h.volno == n && h.blkno > 0 => {
                         msg!("volume {}: its first block is bad, it is read all the same", n);
@@ -603,16 +1030,68 @@ impl Reader {
             n += 1;
         }
 
+        /* Encrypted: an algorithm not known here, and nothing of it can be read - said at once */
+        r.cap = r.bsize - HDR as u32;
+        if let Some(vc) = &r.vcrypt {
+            if vc.cipher != CIPHER_CC20HS
+                || vc.kdf != KDF_PBKDF2
+                || vc.kdfiter < KDFMIN as u64
+                || vc.kdfiter > u32::MAX as u64
+                || vc.salt.len() != 32
+                || vc.check.len() != 32
+            {
+                return Err(format!("{}: an encryption this extractor does not know - it cannot be read", spec));
+            }
+            r.dtype = BT_EDATA;
+            r.ttype = BT_ETRAILER;
+            r.cap -= TAGSZ as u32;
+        } else if r.enc_seen {
+            return Err(format!("{} is encrypted, and no volume has a readable VHDR to give its keys", spec));
+        }
+
         /* The TRAILER, last block of the last volume: it is not part of the groups */
         if let Some(lv) = r.vols.last() {
             if lv.nblk > 1 {
                 let b = read_block(lv.f.as_ref(), r.bsize, lv.nblk - 1);
                 if let Some(h) = check(&r.crc, &b, r.bsize, Some(&r.uuid)) {
-                    r.trailer = h.typ == BT_TRAILER;
+                    r.trailer = h.typ == r.ttype;
+                    if r.trailer && r.vcrypt.is_some() {
+                        r.trlraw = Some(b);
+                    }
                 }
             }
         }
         Ok(r)
+    }
+
+    /*
+    ** The passphrase of an encrypted saveset: the keys derived from it and
+    ** the SALT, judged by the KEYCHECK; false - it is not the right one.
+    ** The ETRAILER is then checked by its TAG: when it fails, that is said
+    ** and the saveset is read without a catalog - which is how this
+    ** extractor reads every saveset anyway.
+    */
+    fn setkey(&mut self, pass: &[u8]) -> bool {
+        let vc = match &self.vcrypt {
+            Some(vc) => vc,
+            None => return true,
+        };
+        let k = derive(pass, &vc.salt, vc.kdfiter as u32);
+        if !equal(&k.check, &vc.check) {
+            return false;
+        }
+        if let Some(b) = self.trlraw.take() {
+            let good = match check(&self.crc, &b, self.bsize, Some(&self.uuid)) {
+                Some(h) => tag_ok(&k, self.bsize, &h, &b[HDR..]),
+                None => false,
+            };
+            if !good {
+                msg!("{}: its trailer fails its authentication - read as a saveset without a catalog", self.spec);
+                self.bad = true;
+            }
+        }
+        self.keys = Some(k);
+        true
     }
 
     /*
@@ -631,8 +1110,10 @@ impl Reader {
                 self.bsize = bs;
                 self.uuid = h.uuid;
                 self.grpsz = 0;
+                self.enc_seen = h.typ == BT_EDATA || h.typ == BT_ETRAILER;
                 for p in 1..=(MAXGRP as u64 + 1) {
                     if let Some(x) = check(&self.crc, &read_block(Some(f), bs, p), bs, Some(&self.uuid)) {
+                        self.enc_seen |= x.typ == BT_EDATA || x.typ == BT_ETRAILER;
                         if x.typ == BT_XOR && x.gindex as u64 == p - 1 {
                             self.grpsz = x.gindex as u32;
                             break;
@@ -727,8 +1208,21 @@ impl Reader {
         let gdata = n - has_xor;
         let (mut nbad, mut badi) = (0, 0);
         for i in 0..gdata {
-            if ok[i] && hdrs[i].typ != BT_DATA {
+            if ok[i] && hdrs[i].typ != self.dtype {
                 ok[i] = false;
+            }
+            /* A good CRC and a wrong TAG: changed on purpose - a bad block all the same, repairable as any */
+            if ok[i] {
+                if let Some(k) = &self.keys {
+                    if !tag_ok(k, self.bsize, &hdrs[i], &blks[i][HDR..]) {
+                        ok[i] = false;
+                        msg!(
+                            "block {} of volume {} is not what was written: its CRC is right, its authentication fails",
+                            hdrs[i].blkno,
+                            self.curvol
+                        );
+                    }
+                }
             }
             if !ok[i] {
                 nbad += 1;
@@ -748,12 +1242,35 @@ impl Reader {
                 }
             }
             let s = hdrs[badi + 1];
-            let h = Bhdr { typ: BT_DATA, recoff: s.prvrecoff, paylen: s.prvpaylen, blkno: firstblk.wrapping_add(self.curpos + badi as u64), ..Default::default() };
-            if h.paylen <= self.bsize - HDR as u32 && (h.recoff == NONE || h.recoff < h.paylen) {
+            let h = Bhdr {
+                typ: self.dtype,
+                gindex: badi as u16,
+                uuid: self.uuid,
+                blkno: firstblk.wrapping_add(self.curpos + badi as u64),
+                volno: self.curvol as u32,
+                recoff: s.prvrecoff,
+                paylen: s.prvpaylen,
+                prvrecoff: NONE,
+                prvpaylen: 0,
+            };
+            /* Encrypted: the block rebuilt must pass its TAG too */
+            if h.paylen <= self.cap
+                && (h.recoff == NONE || h.recoff < h.paylen)
+                && self.keys.as_ref().map_or(true, |k| tag_ok(k, self.bsize, &h, &d))
+            {
                 blks[badi][HDR..].copy_from_slice(&d);
                 hdrs[badi] = h;
                 ok[badi] = true;
                 msg!("block {} of volume {} was bad and has been repaired", h.blkno, self.curvol);
+            }
+        }
+
+        /* Every check done, the repair too: now the good blocks are decrypted where they lie */
+        if let Some(k) = &self.keys {
+            for i in 0..gdata {
+                if ok[i] {
+                    decrypt(k, &hdrs[i], &mut blks[i][HDR..]);
+                }
             }
         }
 
@@ -1277,12 +1794,113 @@ fn list(r: &mut Reader) {
     }
 }
 
+/* An error of the system as strerror says it, without Rust's " (os error N)" */
+fn syserr(e: &io::Error) -> String {
+    let t = e.to_string();
+    match t.find(" (os error ") {
+        Some(i) => t[..i].to_string(),
+        None => t,
+    }
+}
+
+/*
+** The passphrase of an encrypted saveset: the first line of the key file
+** (-k, else VBACKUP_KEY_FILE) - one only its owner may read or write -
+** else asked for on the terminal without echo (stty, std has no termios).
+** Its bytes as they are, the line end (LF or CR LF) left out.  None -
+** none to be had (said).
+*/
+fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
+    let env = std::env::var_os("VBACKUP_KEY_FILE");
+    let kf: Option<PathBuf> = match keyfile {
+        Some(k) => Some(PathBuf::from(k)),
+        None => env.filter(|e| !e.is_empty()).map(PathBuf::from),
+    };
+    let mut line: Vec<u8> = Vec::new();
+    if let Some(kf) = kf.filter(|k| !k.as_os_str().is_empty()) {
+        let name = kf.display().to_string();
+        let mut f = match File::open(&kf) {
+            Ok(f) => f,
+            Err(e) => {
+                msg!("{}: {}", name, syserr(&e));
+                return None;
+            }
+        };
+        match f.metadata() {
+            Ok(m) if m.is_file() && m.mode() & 0o077 == 0 => {}
+            _ => {
+                msg!("{}: not a regular file, or others may read it - chmod 600 it", name);
+                return None;
+            }
+        }
+        let mut b = [0u8; 1];
+        while line.len() <= PASSMAX + 1 {
+            match f.read(&mut b) {
+                Ok(1) if b[0] != b'\n' => line.push(b[0]),
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                _ => break,
+            }
+        }
+    } else {
+        let tty = OpenOptions::new().read(true).write(true).open("/dev/tty");
+        let stty = |arg: &str, t: &File| -> Option<Vec<u8>> {
+            let o = Command::new("stty").arg(arg).stdin(Stdio::from(t.try_clone().ok()?)).stderr(Stdio::null()).output().ok()?;
+            if o.status.success() {
+                Some(o.stdout)
+            } else {
+                None
+            }
+        };
+        let mut t = match tty {
+            Ok(t) => t,
+            Err(_) => {
+                msg!("{} is encrypted: no terminal to ask the passphrase on - give -k file", spec);
+                return None;
+            }
+        };
+        let saved = match stty("-g", &t) {
+            Some(g) => String::from_utf8_lossy(&g).trim().to_string(),
+            None => {
+                msg!("{} is encrypted: no terminal to ask the passphrase on - give -k file", spec);
+                return None;
+            }
+        };
+        let _ = write!(t, "Passphrase for {}: ", spec);
+        let _ = t.flush();
+        stty("-echo", &t);
+        let mut b = [0u8; 1];
+        while line.len() <= PASSMAX + 1 {
+            match t.read(&mut b) {
+                Ok(1) if b[0] != b'\n' => line.push(b[0]),
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                _ => break,
+            }
+        }
+        /* The terminal as it was, whatever was typed */
+        if stty(&saved, &t).is_none() {
+            stty("echo", &t);
+        }
+        let _ = writeln!(t);
+    }
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    if line.is_empty() || line.len() > PASSMAX {
+        msg!("no passphrase, or one longer than {} bytes", PASSMAX);
+        return None;
+    }
+    Some(line)
+}
+
 fn usage() -> i32 {
     eprintln!(
-        "vbkx-rs X01-04 - the extractor of last resort for VBACKUP savesets\n\n  \
-         vbkx-rs l saveset              list the files (times in UTC)\n  \
-         vbkx-rs x saveset [-C dir]     extract them all\n  \
-         vbkx-rs t saveset              read it all, check the checksums\n\n\
+        "vbkx-rs X01-06 - the extractor of last resort for VBACKUP savesets\n\n  \
+         vbkx-rs l saveset [-k file]           list the files (times in UTC)\n  \
+         vbkx-rs x saveset [-C dir] [-k file]  extract them all\n  \
+         vbkx-rs t saveset [-k file]           read it all, check the checksums\n  \
+         vbkx-rs selftest                      check SHA-256, HMAC, PBKDF2, ChaCha20 against their standards\n\n  \
+         -k file  the passphrase of an encrypted saveset: the first line of file\n           \
+         (else VBACKUP_KEY_FILE, else it is asked for on the terminal)\n\n\
          Completion: 0 - done; 1 - something damaged or not done; 2 - not usable."
     );
     2
@@ -1290,16 +1908,23 @@ fn usage() -> i32 {
 
 fn main1() -> i32 {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 && args[1] == "selftest" {
+        return selftest();
+    }
     if args.len() < 3 || !matches!(args[1].as_str(), "l" | "x" | "t") {
         return usage();
     }
     let op = args[1].clone();
     let spec = args[2].clone();
     let mut out = ".".to_string();
+    let mut keyfile: Option<String> = None;
     let mut i = 3;
     while i < args.len() {
         if args[i] == "-C" && i + 1 < args.len() && op == "x" {
             out = args[i + 1].clone();
+            i += 2;
+        } else if args[i] == "-k" && i + 1 < args.len() {
+            keyfile = Some(args[i + 1].clone());
             i += 2;
         } else {
             return usage();
@@ -1312,6 +1937,17 @@ fn main1() -> i32 {
             return 2;
         }
     };
+    /* Encrypted: nothing of it is read, nothing made, before the passphrase is right */
+    if r.vcrypt.is_some() {
+        let pass = match passphrase(keyfile.as_deref(), &spec) {
+            Some(p) => p,
+            None => return 2,
+        };
+        if !r.setkey(&pass) {
+            msg!("the passphrase does not open {}", spec);
+            return 2;
+        }
+    }
     match op.as_str() {
         "l" => list(&mut r),
         "x" => {
