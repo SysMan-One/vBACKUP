@@ -12,9 +12,10 @@
 автономный распаковщик vbkx, распаковщики последней надежды и подключаемые
 модули файловых менеджеров, а также перечислены все сообщения утилиты.
 
-**Сведения о редакции:** Новое руководство.
+**Сведения о редакции:** Настоящее руководство заменяет редакцию для
+VBACKUP X01-08.
 
-**Версия программного обеспечения:** VBACKUP X01-08
+**Версия программного обеспечения:** VBACKUP X01-11
 
 **Операционная система:** Linux (x86_64, aarch64); Windows -- для vbkx.exe
 и модуля WCX
@@ -23,7 +24,7 @@
 
 StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
 
-Сведения настоящего документа соответствуют VBACKUP X01-08, собранной из
+Сведения настоящего документа соответствуют VBACKUP X01-11, собранной из
 исходных текстов. Формат saveset-а определяется документом
 `doc/format.md`; при расхождении настоящего руководства с этим документом
 в части байтов на носителе преимущество имеет `format.md`.
@@ -61,7 +62,8 @@ StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
 - Глава 1 описывает saveset, операции VBACKUP и механизмы, на которых они
   основаны: структуру saveset-а, спецификации файлов, инкрементное
   сохранение и журнал, операции `/PHYSICAL` и `/IMAGE`, сжатие,
-  шифрование, каналы, кэш страниц, потоки, распаковщики и модули.
+  шифрование, каналы, saveset-ы на других узлах, кэш страниц, потоки,
+  распаковщики и модули.
 - Глава 2 приводит формат команды VBACKUP, её параметры, правила выбора
   операции, код завершения и ограничения.
 - Глава 3 описывает все квалификаторы в алфавитном порядке и переменные
@@ -114,7 +116,7 @@ StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
 В примерах руководства дата, время и номер процесса опущены, а длинные
 имена каталогов системы, на которой выполнялись примеры, сокращены до
 имён вида `/home`, `/backup` и `/mnt/usb`. Числа и тексты приведены так, как
-их выводит VBACKUP X01-08.
+их выводит VBACKUP X01-11.
 
 Числа десятичные, если не оговорено иное. Размеры с суффиксами K, M, G и T
 двоичные: 1K -- 1024 байта.
@@ -158,7 +160,8 @@ Saveset -- это файл или набор файлов, называемых 
 На входной стороне VBACKUP распознаёт saveset по содержимому, а не по
 имени. На выходной стороне сохранения saveset распознаётся по имени
 (оканчивается на `.bck` или `.sav`), по квалификатору `/SAVE_SET` или по имени
-`-` (стандартный вывод).
+`-` (стандартный вывод). Saveset на другом узле, *узел*`::`*файл*, -- saveset
+на любой стороне (раздел 1.10).
 
 ### 1.2 Операции
 
@@ -176,10 +179,15 @@ Saveset -- это файл или набор файлов, называемых 
 | файлы | каталог (не saveset) | **Копирование**: файлы копируются с диска на диск. |
 | saveset[,...] | -- (с `/RECORD`) | **Перестройка журнала**: журнал создаётся заново по каталогам saveset-ов. |
 | -- | -- (с `/JOURNAL /LIST`) | **Листинг журнала**: известные журналу saveset-ы и файлы. |
+| saveset | saveset | **Копирование saveset-а**: блоки копируются как есть, том за томом (`/TRANSFER`). |
 
 Сохранение может также проверить новый saveset (`/VERIFY`), вывести его
 листинг (`/LIST`), записать его в журнал (`/RECORD`) и удалить сохранённые и
 проверенные файлы (`/DELETE`).
+
+Saveset сохранения, восстановления, листинга, сравнения, извлечения или
+копирования saveset-а может быть также `-`, каналом (раздел 1.9), или
+*узел*`::`*файл*, saveset-ом на другом узле (раздел 1.10).
 
 ### 1.3 Структура saveset-а
 
@@ -239,6 +247,11 @@ home.bck  home.bck.002  home.bck.003  ...
 файлы, целиком лежащие в остальных томах, всё равно восстанавливаются.
 Файл с именем тома, принадлежащий другому saveset-у, пропускается
 (WRONGVOL).
+
+Saveset, записываемый в канал, несёт свои тома подряд, каждый со своим
+VHDR, а номера блоков идут через них сквозь (раздел 1.9); копирование
+такого saveset-а в файлы раскладывает его по файлам томов с указанными
+выше именами.
 
 #### Каталог
 
@@ -394,7 +407,7 @@ Saveset `/IMAGE`, восстановленный без `/IMAGE`, -- обычн�
 файла -- это CRC исходных байтов, CRC блока -- байтов в том виде, в каком
 они лежат в потоке.
 
-Сжатие выполняется в нескольких потоках (см. раздел 1.11); saveset байт в
+Сжатие выполняется в нескольких потоках (см. раздел 1.12); saveset байт в
 байт тот же, что и с одним потоком. Восстановление, `/LIST`, `/COMPARE`,
 `/EXTRACT` и все распаковщики распознают сжатые данные сами.
 
@@ -473,24 +486,131 @@ VBACKUP и vbkx версий до X01-06 не читают зашифрован�
 
 ### 1.9 Каналы
 
-Имя `-` означает стандартный вывод как выход сохранения и стандартный ввод
-как вход восстановления, `/LIST`, `/COMPARE` и `/EXTRACT`:
+Имя `-` означает стандартный вывод как выход сохранения или копирования
+saveset-а и стандартный ввод как вход восстановления, `/LIST`, `/COMPARE`,
+`/EXTRACT` и копирования saveset-а:
 
 ```
-$ vbackup /home - | ssh host 'cat > /backup/home.bck'
+$ vbackup /home - | ssh host 'vbackup - /backup/home.bck'
 $ ssh host 'vbackup /home -' | vbackup - /restore
 ```
 
-Saveset, записываемый в `-`, -- один том, и после записи его уже нет:
-`/VOLUME_SIZE`, `/VERIFY` (а значит, и `/DELETE`) и `/LIST` с ним
-отвергаются (QUALUSE).
+#### Поток из нескольких томов
+
+Начиная с X01-11 saveset, записываемый в `-`, может состоять из нескольких
+томов (`/VOLUME_SIZE`): они идут на стандартный вывод подряд, каждый со
+своим VHDR, а номера блоков идут через них сквозь, как через файлы томов.
+О каждом томе после первого сообщается (CREATED, `Volume: (standard
+output)`). Читатель потока принимает VHDR следующего тома как конец
+текущего; о томе, пропущенном в потоке, сообщается (MISSVOL), и файлы,
+целиком лежащие в остальных томах, всё равно восстанавливаются.
+
+Saveset, записываемый в `-`, после записи уже не прочитать: `/VERIFY` (а
+значит, и `/DELETE`) и `/LIST` с ним отвергаются (QUALUSE: `a saveset written
+to the standard output is gone once written: it cannot be read back
+here`).
 
 Saveset из `-` читается один раз и только вперёд. Каталог в его конце
 бесполезен: `/LIST` выводит записи FILE по мере поступления, `/EXTRACT`
 ищет свой файл чтением, vbkx отвергает имена. Плохие блоки чинятся так же,
 как в файле. Канал, оборвавшийся до TRAILER, даёт NOTRAILER.
 
-### 1.10 Кэш страниц
+#### Приёмник
+
+Если вход -- saveset и выход -- тоже saveset, VBACKUP копирует saveset блок
+за блоком (`/TRANSFER`). С `-` на одной из сторон это соединяет канал и
+файлы томов:
+
+```
+$ vbackup home.bck - | ...         тома подряд -- в канал
+$ ... | vbackup - home.bck         поток -- в home.bck, home.bck.002, ...
+```
+
+Приёмник, `vbackup - `*saveset*, раскладывает поток по файлам томов на
+каждом VHDR, с именами из раздела 1.3: saveset на его диске -- тот самый,
+что был отправлен, том в том и байт в байт. Каждый блок проверяется по
+прибытии. Плохой блок копируется как есть, и о нём сообщается (BLKCOPIED):
+его починит по группе восстановление; о потоке, кончившемся до своего
+TRAILER, сообщается (NOTRAILER). Записи никогда не разбираются, поэтому
+зашифрованный saveset проходит без пароля. Итоги даёт XFRSUMM.
+
+### 1.10 Saveset-ы на других узлах
+
+Saveset может лежать на другом узле; он называется так, как DECnet называл
+файл там: *узел*`::`*файл*. *узел* -- то, что принимает ssh (`host` или
+`user@host`), без косой черты; *файл* -- saveset (его первый том) на том
+узле.
+
+```
+$ vbackup /home backup-host::/backup/home.bck /VOLUME_SIZE=4G /VERIFY
+$ vbackup backup-host::/backup/home.bck /restore
+$ vbackup backup-host::/backup/home.bck /LIST
+```
+
+#### Механизм
+
+VBACKUP запускает VBACKUP на другом узле через ssh -- или через команду,
+названную переменной окружения `VBACKUP_RSH`, -- и соединяет его с собой
+каналом; saveset идёт по каналу потоком (раздел 1.9). Другому узлу всегда
+даётся копирование saveset-а:
+
+| Этот узел | Другой узел |
+|---|---|
+| Сохранение или копирование saveset-а в *узел*`::`*файл*: saveset пишется в канал. | `vbackup - `*файл*` /TRANSFER`, с `/REPLACE`, если он задан здесь: поток раскладывается по файлам томов *файла*, каждый блок проверяется. |
+| Восстановление, `/LIST`, `/COMPARE`, `/EXTRACT` или копирование saveset-а из *узел*`::`*файл*: saveset читается из канала. | `vbackup `*файл*` - /TRANSFER`: тома *файла* подряд -- в канал. |
+
+Поэтому `/VOLUME_SIZE` сохранения на другой узел создаёт файлы томов там.
+Вход *узел*`::`*файл* должен быть единственным входом. Сообщения другой
+стороны приходят сюда на стандартный вывод ошибок как есть, вперемежку с
+сообщениями этой стороны и со своим номером процесса: её STARTED,
+CREATED, XFRSUMM и COMPLETED и всё, что там пошло не так.
+
+#### /VERIFY
+
+Сохранение на другой узел с `/VERIFY` проверяется, когда другая сторона
+завершилась: saveset читается оттуда обратно (второй ssh, `vbackup
+`*файл*` - /TRANSFER`), и каждый файл сравнивается с диском здесь
+(VERIFYING, CMPSUMM). Saveset в том виде, в каком он пришёл, -- CRC каждого
+блока, TRAILER -- проверяет приёмник там. `/DELETE` и `/LIST` с saveset-ом,
+создаваемым на другом узле, не принимаются (QUALUSE: `not with a saveset
+made on another node`); листинг -- второй командой, которая прочитает его
+обратно. При `/RECORD` журнал записывает такой saveset как
+*узел*`::`*файл*.
+
+#### Коды завершения
+
+Код завершения другой стороны присоединяется к коду этой. 0 ничего не
+добавляет; 1 (предупреждения) делает код завершения не меньше 1; любой
+другой код или конец по сигналу (показывается как 128 + сигнал)
+сообщается REMOTEERR, и код завершения -- 2. Код 127 чаще всего значит,
+что команду `VBACKUP_RSH` нельзя запустить здесь или `vbackup` не найден
+там; 255 -- отказал сам ssh. Если другая сторона остановилась, пока эта
+пишет, эта сторона находит канал оборванным: WRITERR (errno 32), FATALSAVE
+и REMOTEERR следуют друг за другом -- это одна неисправность, о которой
+говорят сообщения другой стороны выше них. `/EXTRACT` перестаёт читать,
+как только получил свой файл; оборванный канал, который тогда встречает
+другая сторона, ошибкой не является. REMOTE сообщает, что канал или
+процесс для ssh вообще нельзя создать.
+
+#### Требования
+
+- VBACKUP X01-11 или новее на другом узле, в PATH неинтерактивного сеанса
+  ssh: `ssh `*узел*` vbackup` должен его запускать.
+- ssh должен пускать этот узел по ключам, ничего не спрашивая: ключ
+  пользователя установлен там (`ssh-copy-id`), ключ другого узла уже
+  известен.
+- Пользователь на другом узле должен иметь возможность создать или
+  прочитать saveset там.
+
+#### Зачем /TRANSFER
+
+Команды, отдаваемые другому узлу, несут `/TRANSFER`. VBACKUP до X01-11 не
+знает этого квалификатора и отвергает команду; без него он принял бы
+`vbackup - /backup/home.bck` за восстановление потока в каталог
+`/backup/home.bck`. Поэтому старый VBACKUP на другом узле явно отказывает
+(REMOTEERR), а не делает не то.
+
+### 1.11 Кэш страниц
 
 VBACKUP старается не вытеснять рабочие данные системы из кэша страниц:
 
@@ -508,19 +628,19 @@ VBACKUP старается не вытеснять рабочие данные �
 Поэтому после сохранения страниц saveset-а и «холодных» файлов в кэше нет;
 это сделано намеренно.
 
-### 1.11 Потоки
+### 1.12 Потоки
 
 | Поток(и) | Работа | Число |
 |---|---|---|
 | Записи | Пишет блоки saveset-а, пока основной поток читает файлы и строит блоки. | 1; `VBACKUP_PIPELINE=0` -- запись без него. |
 | Опережающего чтения | Открывает следующие файлы обхода и читает их первый мегабайт, чтобы сохранение или копирование нашло их в кэше; вперёд не более 128 файлов и 64 МБ. | 8 по умолчанию; `VBACKUP_PREFETCH=n`, не более 64, 0 -- нет. |
 | Сжатия | Сжимают данные сохранения `/DATA_FORMAT=COMPRESSED`; основной поток пишет записи по порядку. | По числу процессоров, не более 8; `VBACKUP_ZTHREADS=n`, 1 -- нет. |
-| Шифрования | Запись: ключевой поток ChaCha20 блока полосами. Чтение: проверка тегов блоков группы и их расшифровка параллельно. | По числу процессоров, не более 8; `VBACKUP_CTHREADS=n`, 1 -- нет. |
+| Шифрования | Запись: зашифрованные блоки данных, ждущие потока записи, запечатываются (ChaCha20 и тег) параллельно, каждый целиком, а поток записи по порядку вычисляет блоки XOR и CRC; без потока записи -- ключевой поток ChaCha20 блока полосами. Чтение: проверка тегов блоков группы и их расшифровка параллельно. | По числу процессоров, не более 8; `VBACKUP_CTHREADS=n`, 1 -- нет. |
 
 Ни один поток не меняет saveset: при любом числе потоков один и тот же
 вход даёт один и тот же saveset.
 
-### 1.12 Автономный распаковщик и распаковщики последней надежды
+### 1.13 Автономный распаковщик и распаковщики последней надежды
 
 vbkx -- небольшая статически скомпонованная программа, которая выводит
 листинг, извлекает, печатает и проверяет saveset-ы на машине, где VBACKUP
@@ -538,7 +658,7 @@ vbkx -- небольшая статически скомпонованная п�
 чинят один плохой блок на группу и называют каждый повреждённый или
 недостающий файл. См. приложение C.
 
-### 1.13 Модули файловых менеджеров
+### 1.14 Модули файловых менеджеров
 
 Saveset-ы можно просматривать как папки в Midnight Commander (сценарий
 extfs `uvbk`), far2l и Far Manager 3 (MultiArc, поверх vbkx), Total Commander
@@ -550,7 +670,7 @@ extfs `uvbk`), far2l и Far Manager 3 (MultiArc, поверх vbkx), Total Comma
 
 ---
 
-### 1.14 Расписание и ротация
+### 1.15 Расписание и ротация
 
 VBACKUP не планирует себя и не удаляет старые saveset-ы: это дело
 пакетной очереди, и BATCH (подсистема пакетных заданий, `batch submit`)
@@ -583,9 +703,9 @@ $ batch submit /opt/jobs/vbackup-daily.sh /NAME=vbackup-daily /AFTER=TOMORROW
 ## Глава 2 Сводка по использованию VBACKUP
 
 Утилита VBACKUP сохраняет файлы в saveset-ы, восстанавливает, выводит,
-сравнивает и извлекает их, копирует файлы с диска на диск, копирует блочные
-устройства и целые файловые системы и ведёт журнал инкрементного
-сохранения.
+сравнивает, извлекает и копирует их, здесь или на другом узле, копирует
+файлы с диска на диск, копирует блочные устройства и целые файловые
+системы и ведёт журнал инкрементного сохранения.
 
 ### Формат
 
@@ -595,6 +715,7 @@ vbackup input-specifier /LIST[=file] [/qualifiers]
 vbackup input-specifier [output-specifier] /COMPARE [/qualifiers]
 vbackup input-specifier [output-specifier] /EXTRACT=stored-name [/qualifiers]
 vbackup input-specifier /ORIGINAL [/qualifiers]
+vbackup input-saveset output-saveset [/TRANSFER] [/qualifiers]
 vbackup saveset[,...] /RECORD [/JOURNAL=file]
 vbackup /JOURNAL[=file] /LIST [/FULL] [/SELECT=(pattern[,...])]
 vbackup /HELP [topic ...]
@@ -618,8 +739,12 @@ vbackup /HELP [topic ...]
   восстановления и перестройки журнала можно задать несколько saveset-ов;
   они обрабатываются по очереди. Для восстановления `/INCREMENTAL` задайте
   сначала полный saveset, затем инкрементные в порядке их создания.
+- **Копирование saveset-а:** один saveset, заданный именем первого тома.
 - **`-`:** saveset со стандартного ввода (восстановление, `/LIST`, `/COMPARE`,
-  `/EXTRACT`).
+  `/EXTRACT`, копирование saveset-а).
+- **`узел::файл`:** saveset на другом узле (раздел 1.10), читаемый по каналу
+  так же, как `-`; он должен быть единственным входом. *узел* -- имя хоста
+  или `user@host`, без косой черты.
 
 Saveset распознаётся по содержимому. Вход с шаблоном или `...` никогда не
 бывает saveset-ом.
@@ -629,8 +754,13 @@ Saveset распознаётся по содержимому. Вход с шаб
 Задаёт выход операции.
 
 - **Сохранение:** создаваемый saveset: имя на `.bck` или `.sav`, любое имя с
-  `/SAVE_SET` или `-` для стандартного вывода. Если saveset существует,
-  VBACKUP останавливается (OPENOUT, errno 17), если не задан `/REPLACE`.
+  `/SAVE_SET`, `-` для стандартного вывода или *узел*`::`*файл* для saveset-а
+  на другом узле. Если saveset существует, VBACKUP останавливается
+  (OPENOUT, errno 17), если не задан `/REPLACE`.
+- **Копирование saveset-а:** создаваемый saveset, названный как при
+  сохранении, или любое имя с `/TRANSFER`. Если какой-то его том
+  существует, VBACKUP останавливается (OPENOUT, errno 17), если не задан
+  `/REPLACE`.
 - **Восстановление:** каталог, в который ведётся восстановление; при
   необходимости он создаётся. Завершающие косые черты игнорируются. С
   `/ORIGINAL` не задаётся.
@@ -680,13 +810,22 @@ VBACKUP рассматривает параметры в следующем по
 
 1. Проверяется каждый вход. Вход с шаблоном -- не saveset; любой другой вход
    является saveset-ом, если об этом говорит его содержимое.
+   *узел*`::`*файл* на своей стороне означает `-`: как вход это saveset, как
+   выход -- имя saveset-а.
 2. Задан `/EXTRACT` -- извлечение. Задан `/COMPARE` -- сравнение. Оба требуют
    ровно одного входа, и он должен быть saveset-ом (иначе NOTSAVESET).
-3. Все входы -- saveset-ы: `/LIST` без выхода -- листинг; `/RECORD` без
+3. Один вход, являющийся saveset-ом, выход -- имя saveset-а (`.bck`, `.sav`,
+   `/SAVE_SET` или `-`) или задан `/TRANSFER`, и нет `/LIST`: копирование
+   saveset-а блок за блоком. Поэтому `vbackup x.bck y.bck` копирует
+   saveset; чтобы восстановить, задайте каталог, имя которого не является
+   именем saveset-а.
+4. Все входы -- saveset-ы: `/LIST` без выхода -- листинг; `/RECORD` без
    выхода -- перестройка журнала; иначе -- восстановление.
-4. Выход -- имя saveset-а (`.bck`, `.sav`, `/SAVE_SET` или `-`): сохранение.
-5. Выход задан и входы существуют: копирование.
-6. Параметров нет совсем, заданы `/JOURNAL` и `/LIST`: листинг журнала.
+5. Выход -- имя saveset-а (`.bck`, `.sav`, `/SAVE_SET` или `-`): сохранение.
+6. Выход задан и входы существуют: копирование.
+7. Параметров нет совсем, заданы `/JOURNAL` и `/LIST`: листинг журнала.
+
+`/TRANSFER` при любом другом исходе отвергается (QUALUSE).
 
 В остальных случаях VBACKUP сообщает, чего не хватает: OPENIN, если вход не
 существует и выход не задан; NOPARAM, если не задан выход; IVOP, если вход
@@ -698,8 +837,8 @@ VBACKUP рассматривает параметры в следующем по
 Каждая операция, кроме листинга, сообщает о своём начале (STARTED) и
 завершении (COMPLETED) с затраченным временем и итогом: `completed`,
 `completed with warnings` или `completed with errors`. Сохранение,
-восстановление, сравнение и копирование сообщают также итоги (SAVESUMM,
-RESTSUMM, CMPSUMM, CPYSUMM) и без `/LOG`. `/LOG` добавляет сообщение о каждом
+восстановление, сравнение, копирование и копирование saveset-а сообщают
+также итоги (SAVESUMM, RESTSUMM, CMPSUMM, CPYSUMM, XFRSUMM) и без `/LOG`. `/LOG` добавляет сообщение о каждом
 файле.
 
 #### Сообщения
@@ -713,7 +852,8 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 
 На стандартный вывод идёт только то, что производит операция: листинг,
 данные `/EXTRACT`, saveset, записываемый в `-`, текст справки. См.
-приложение A.
+приложение A. Сообщения VBACKUP на другом узле (раздел 1.10) тоже приходят
+на стандартный вывод ошибок, с номером процесса той стороны.
 
 #### Код завершения
 
@@ -721,7 +861,7 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 |---|---|
 | 0 | Всё сделано. Ни одного предупреждения или ошибки. |
 | 1 | Всё сделано, с предупреждениями: выдано хотя бы одно сообщение уровня W (например, файл изменился во время сохранения, файл существует и не восстановлен). |
-| 2 | Что-то не сделано: выдано хотя бы одно сообщение уровня E или F (например, файл не удалось прочитать, `/COMPARE` или `/VERIFY` нашли различие) либо команду не удалось разобрать. |
+| 2 | Что-то не сделано: выдано хотя бы одно сообщение уровня E или F (например, файл не удалось прочитать, `/COMPARE` или `/VERIFY` нашли различие, VBACKUP на другом узле не завершился успешно -- REMOTEERR) либо команду не удалось разобрать. |
 
 Информационные сообщения и сообщения об успехе на код завершения не
 влияют.
@@ -762,9 +902,17 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 
 #### Прочие ограничения
 
-- Saveset, записываемый на стандартный вывод, -- один том.
+- Saveset, записываемый на стандартный вывод, несёт свои тома подряд;
+  записывающая его команда не может его проверить (а значит, и удалить
+  файлы после проверки) и вывести его листинг.
 - Saveset со стандартного ввода читается один раз и только вперёд: поиска
   по каталогу нет; vbkx отвергает для него имена.
+- Saveset, создаваемый на другом узле, не принимает ни `/DELETE`, ни
+  `/LIST`; `/VERIFY` читает его оттуда обратно. Вход *узел*`::`*файл* должен
+  быть единственным входом. На другом узле нужен VBACKUP X01-11 или новее,
+  и он должен пускать этот узел по ключам ssh.
+- Копирование saveset-а сохраняет размер блока, размер группы и тома
+  входа: `/BLOCK_SIZE`, `/GROUP_SIZE` и `/VOLUME_SIZE` их не меняют.
 - `/PHYSICAL` и `/IMAGE` принимают один вход при сохранении и один saveset
   при восстановлении.
 - `/INCREMENTAL` отвергает saveset без каталога и saveset, созданный до
@@ -787,7 +935,7 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 
 В столбце *Применяется к*: S -- сохранение, R -- восстановление, L --
 листинг, C -- сравнение, X -- извлечение, P -- копирование, J -- перестройка
-и листинг журнала.
+и листинг журнала, T -- копирование saveset-а.
 
 | Квалификатор | Класс | Применяется к | По умолчанию |
 |---|---|---|---|
@@ -822,10 +970,11 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 | `/OWNER=option` | Выходной файл | R, P | `ORIGINAL` для root, иначе `DEFAULT` |
 | `/PHYSICAL` | Команда | S, R | -- |
 | `/[NO]RECORD` | Команда | S, J | `/NORECORD` |
-| `/[NO]REPLACE` | Выходной файл, выходной saveset | S, R, X | `/NOREPLACE` |
-| `/SAVE_SET` | Выходной saveset | S | По имени |
+| `/[NO]REPLACE` | Выходной файл, выходной saveset | S, R, X, T | `/NOREPLACE` |
+| `/SAVE_SET` | Выходной saveset | S, T | По имени |
 | `/SELECT=(pattern[,...])` | Выбор входных файлов | S, R, C, P, J | Все файлы |
 | `/SINCE=time` | Выбор входных файлов | S, P | Любое время |
+| `/TRANSFER` | Команда | T | По имени |
 | `/[NO]VERIFY` | Команда | S, P | `/NOVERIFY` |
 | `/VOLUME_SIZE=size` | Выходной saveset | S | Один том |
 | `/[NO]XATTRS` | Входной файл, выходной файл | S, R, P | `/XATTRS` |
@@ -922,7 +1071,7 @@ Listing of save set(s)
 
 Save set:          rrl.bck
 Volumes:           1
-Written with:      VBACKUP X01-08
+Written with:      VBACKUP X01-11
 Node name:         TTR-RTR
 Written by:        root
 Command:           vbackup /home/rrl rrl.bck /VERIFY
@@ -1179,7 +1328,9 @@ $ vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
 `/CONFIRM` спрашивает перед каждым удалением; `/LOG` сообщает о каждом
 (SRCDELETED); DELSUMM даёт итоги. `/DELETE` нельзя сочетать с `/PHYSICAL`,
 `/IMAGE`, `/SINCE` и `/BEFORE` (CONFQUAL). Если saveset идёт на стандартный
-вывод, `/DELETE` отвергается (QUALUSE): проверять не с чем.
+вывод, `/DELETE` отвергается (QUALUSE): проверять не с чем. С saveset-ом на
+другом узле он тоже отвергается (QUALUSE: `not with a saveset made on
+another node`).
 
 **Пример**
 
@@ -1595,7 +1746,9 @@ $ chmod 600 /root/backup.key
 пишется в этот файл; существующий файл перезаписывается.
 
 Заданный при сохранении, `/LIST` выводит листинг нового saveset-а (если тот
-идёт на стандартный вывод -- отвергается). С `/JOURNAL` и без параметров
+идёт на стандартный вывод или на другой узел -- отвергается). Листинг
+saveset-а на другом узле, *узел*`::`*файл*, строится по присылаемому им
+потоку (раздел 1.10). С `/JOURNAL` и без параметров
 выводит листинг журнала. `/SELECT` и `/EXCLUDE` ограничивают листинг
 saveset-а так же, как восстановление.
 
@@ -1780,7 +1933,8 @@ PHYSLARGER. Новый файл образа создаётся; существ�
 состоянии OK, -- его абсолютное имя, inode, размер, время изменения и время
 смены атрибутов (RECORDED). Файл, изменившийся во время сохранения или не
 прочитанный, не записывается, поэтому следующее `/SINCE=BACKUP` сохранит его
-снова. Saveset, записанный в `-`, записывается как `(standard output)`.
+снова. Saveset, записанный в `-`, записывается как `(standard output)`, на
+другой узел -- как *узел*`::`*файл*.
 
 С saveset-ами и без выходного параметра перестраивает журнал по их
 каталогам: каждый элемент в состоянии OK с данными inode (X01-02 и
@@ -1815,7 +1969,8 @@ $ vbackup full.bck,mon.bck /RECORD /JOURNAL=/backup/home.jnl
 
 | Операция | Действие |
 |---|---|
-| Сохранение | Существующий saveset перезаписывается. Без `/REPLACE` сохранение останавливается с OPENOUT (errno 17, File exists). |
+| Сохранение | Существующий saveset перезаписывается. Без `/REPLACE` сохранение останавливается с OPENOUT (errno 17, File exists). С saveset-ом на другом узле `/REPLACE` передаётся VBACKUP-у там. |
+| Копирование saveset-а | Существующие тома выхода перезаписываются. Без `/REPLACE` копирование останавливается на первом существующем томе (OPENOUT, errno 17). |
 | Восстановление, копирование | Существующий файл удаляется и восстанавливается заново. Без `/REPLACE` он сохраняется, и сообщается FILEEXISTS. |
 | Извлечение | Существующий выходной файл перезаписывается. |
 | Восстановление `/PHYSICAL`, `/IMAGE` | Выходное устройство перезаписывается; обязателен. |
@@ -1843,7 +1998,8 @@ $ vbackup /backup/rrl.bck /home '/SELECT=*.c' /REPLACE
 Указывает, что выходной параметр -- saveset, каким бы ни было его имя. Не
 нужен, если имя оканчивается на `.bck` или `.sav` или равно `-`. Без него
 выход с другим именем при входе, не являющемся saveset-ом, означает
-копирование. На входной стороне `/SAVE_SET` ни на что не влияет: saveset
+копирование. При входе, являющемся saveset-ом, он делает команду
+копированием saveset-а (`/TRANSFER`). На входной стороне `/SAVE_SET` ни на что не влияет: saveset
 распознаётся по содержимому.
 
 **Пример**
@@ -1919,6 +2075,62 @@ $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 
 ---
 
+### /TRANSFER
+
+Квалификатор команды.
+
+**Формат**
+
+`input-saveset output-saveset /TRANSFER`
+
+**Описание**
+
+Копирует saveset в saveset блок за блоком. Блоки копируются как есть --
+никогда не записи: копия байт в байт совпадает с оригиналом, том в том, а
+зашифрованный saveset копируется без пароля. Вход -- один saveset, заданный
+первым томом, или `-`; выход -- имя saveset-а или `-`:
+
+| Команда | Действие |
+|---|---|
+| `vbackup x.bck y.bck` | Копия том за томом: `y.bck`, `y.bck.002`, ... |
+| `vbackup x.bck -` | Тома подряд -- на стандартный вывод. |
+| `vbackup - y.bck` | Поток стандартного ввода раскладывается по `y.bck`, `y.bck.002`, ... на каждом VHDR. |
+
+Каждый блок проверяется по пути. Плохой блок копируется как есть, и о нём
+сообщается (BLKCOPIED): копия хранит то, что ей дали, а восстановление
+чинит блок по его группе. Об отсутствующем томе входа сообщается (MISSVOL),
+остальные всё равно копируются; о входе, кончившемся до своего TRAILER,
+сообщается (NOTRAILER). Вход, начинающийся не с VHDR тома 1, не
+принимается (NOTSAVESET). Размер блока и тома входа сохраняются. Итоги
+даёт XFRSUMM; `/LOG` сообщает и о томе 1 (CREATED); `/REPLACE`
+перезаписывает существующие тома.
+
+Вход-saveset и выход с именем saveset-а означают это копирование и без
+квалификатора (глава 2). `/TRANSFER` требует его, что бы ни значили имена:
+`vbackup x.bck dir /TRANSFER` пишет saveset `dir`, `dir.002`, ... и ничего не
+восстанавливает. При любом другом входе или выходе он отвергается
+(QUALUSE: `the input must be one saveset (or -), and there must be an
+output`). Его несут команды, которые VBACKUP отдаёт другому узлу, чтобы
+VBACKUP там версии до X01-11 отказал, а не стал восстанавливать (раздел
+1.10).
+
+**Пример**
+
+```
+$ vbackup /backup/home.bck /mnt/usb/home.bck /LOG
+%VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/home.bck, Output: /mnt/usb/home.bck - started
+%VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck - created
+%VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
+...
+%VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.005 - created
+%VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+%VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+$ vbackup /backup/home.bck /TRANSFER
+%VBACKUP-E-QUALUSE, Qualifier: /TRANSFER - the input must be one saveset (or -), and there must be an output
+```
+
+---
+
 ### /VERIFY
 
 Квалификатор команды.
@@ -1932,7 +2144,9 @@ $ vbackup /home mon.bck /SINCE=BACKUP /RECORD
 
 При сохранении, после записи saveset-а, читает его обратно и сравнивает
 каждый файл с диском (VERIFYING, затем COMPARERR при различии и CMPSUMM с
-итогами). С saveset-ом, записываемым на стандартный вывод, отвергается (QUALUSE). `/DELETE`
+итогами). С saveset-ом, записываемым на стандартный вывод, отвергается
+(QUALUSE). Saveset на другом узле читается оттуда обратно, когда другая
+сторона завершилась, и сравнивается с диском здесь (раздел 1.10). `/DELETE`
 и, при `/VERIFY`, `/RECORD` действуют, только если проверка не нашла
 различий.
 
@@ -1971,8 +2185,11 @@ $ vbackup /home/rrl /backup/rrl.bck /VERIFY
 томе после первого сообщается (CREATED). Храните тома вместе в одном
 каталоге.
 
-`/VOLUME_SIZE` отвергается для saveset-а, записываемого на стандартный вывод
-(QUALUSE).
+Если saveset идёт на стандартный вывод, тома идут в него подряд, каждый со
+своим VHDR (раздел 1.9); приёмник (`vbackup - `*saveset*) или VBACKUP на
+другом узле (раздел 1.10) снова раскладывает их по файлам томов.
+Копирование saveset-а сохраняет тома своего входа, что бы ни говорил
+`/VOLUME_SIZE`.
 
 **Пример**
 
@@ -2025,6 +2242,7 @@ vbkx-pl.
 | `VBACKUP_ZTHREADS` | Потоки сжатия при сохранении `/DATA_FORMAT=COMPRESSED`: по умолчанию по числу процессоров, не более 8; `1` и меньше -- нет. |
 | `VBACKUP_PIPELINE` | `0` -- saveset пишется без потока записи, для поиска неисправностей. Подсказки кэшу страниц остаются; saveset тот же. |
 | `VBACKUP_PREFETCH` | Потоки опережающего чтения следующих файлов при сохранении или копировании: 8 по умолчанию, не более 64; `0` -- нет. Больше потоков может помочь на NFS или медленном сетевом диске, меньше -- на одном медленном жёстком диске. |
+| `VBACKUP_RSH` | Команда, которая вместо `ssh` запускает VBACKUP на другом узле для *узел*`::`*файл* (раздел 1.10). Вызывается как *команда* *узел* *удалённая-команда*, так же как ssh. |
 | `VBACKUP_HELPLIB` | Библиотека справки для `/HELP`. |
 | `HOME` | Каталог журнала по умолчанию для пользователя, не являющегося root. |
 
@@ -2108,23 +2326,76 @@ vbkx-pl.
    надёжном месте -- без неё saveset-ы не открыть.
 
 5. ```
-   $ vbackup /etc - | ssh backup-host 'cat > /backup/etc.bck'
-   %VBACKUP-I-STARTED, Operation: save, Input: /etc, Output: (standard output) - started
-   %VBACKUP-I-SAVESUMM, Files: 1520, Bytes: 6914304, Blocks: 120, Volumes: 1 - saved
-   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.41 - completed
-   $ ssh backup-host 'cat /backup/etc.bck' | vbackup - /restore/etc
-   %VBACKUP-I-STARTED, Operation: restore, Input: (standard input), Output: /restore/etc - started
-   %VBACKUP-I-RESTSUMM, Files: 1520, Bytes: 6914304 - restored
-   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.30 - completed
+   $ vbackup /etc backup-host::/backup/etc.bck /VOLUME_SIZE=1M /VERIFY
+   %VBACKUP-I-STARTED, Operation: save, Input: /etc, Output: backup-host::/backup/etc.bck - started
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /backup/etc.bck - started
+   %VBACKUP-I-CREATED, Volume: (standard output) - created
+   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.002 - created
+   ...
+   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.005 - created
+   %VBACKUP-I-SAVESUMM, Files: 42, Bytes: 3662512, Blocks: 72, Volumes: 5 - saved
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+   %VBACKUP-I-VERIFYING, Saveset: backup-host::/backup/etc.bck - verifying
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
+   %VBACKUP-I-CMPSUMM, Files: 42, Differences: 0 - compared
+   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.04 - completed
    ```
 
-   Сохранение на другую машину через канал и восстановление из него.
-   Сообщения идут на стандартный вывод ошибок и не смешиваются с
-   saveset-ом. Saveset в канале -- один том, без проверки и листинга; при обрыве
-   канала восстановление сообщает NOTRAILER и восстанавливает то, что
-   пришло.
+   Сохранение на другой узел томами по 1 МБ, с проверкой. VBACKUP на
+   `backup-host`, запущенный через ssh, принимает поток и создаёт там файлы
+   томов `/backup/etc.bck`, `/backup/etc.bck.002`, ..., проверяя каждый
+   блок; его сообщения (копирование saveset-а) приходят сюда вперемежку с
+   сообщениями сохранения. `/VERIFY` читает saveset оттуда обратно и
+   сравнивает его с `/etc`. Если бы VBACKUP там завершился неудачно,
+   REMOTEERR сообщил бы его код завершения, и код завершения был бы 2.
 
 6. ```
+   $ vbackup backup-host::/backup/etc.bck /restore/etc
+   %VBACKUP-I-STARTED, Operation: restore, Input: backup-host::/backup/etc.bck, Output: /restore/etc - started
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
+   %VBACKUP-I-RESTSUMM, Files: 42, Bytes: 3662512 - restored
+   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.01 - completed
+   $ vbackup backup-host::/backup/etc.bck /LIST
+   $ vbackup backup-host::/backup/etc.bck /EXTRACT=etc/fstab | less
+   ```
+
+   Восстановление с другого узла. VBACKUP там присылает тома подряд;
+   восстановление читает их как канал, один раз и только вперёд. Листинг
+   читает весь поток (до каталога в его конце не добраться заранее);
+   извлечение останавливается, как только получило свой файл.
+
+7. ```
+   $ vbackup /backup/home.bck - > /tmp/home.stream
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/home.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.01 - completed
+   $ vbackup - /mnt/usb/home.bck < /tmp/home.stream
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /mnt/usb/home.bck - started
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
+   ...
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.005 - created
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+   $ cmp /backup/home.bck.003 /mnt/usb/home.bck.003
+   $ vbackup /backup/secret.bck - | ssh vault 'vbackup - /archive/secret.bck'
+   $ vbackup /backup/secret.bck vault::/archive/secret.bck
+   ```
+
+   Saveset из пяти томов копируется в поток, здесь сохранённый в файле, и
+   обратно в файлы томов: каждый том копии байт в байт совпадает с
+   оригиналом. Последние две команды отправляют зашифрованный saveset на
+   другую машину -- через канал, заданный вручную, и как *узел*`::`*файл*:
+   блоки копируются и никогда не расшифровываются, поэтому пароль не
+   спрашивается ни на одной стороне. Если бы блок
+   испортился по дороге, приёмник сообщил бы о нём (BLKCOPIED) и скопировал
+   его как есть; восстановление чинит его по группе.
+
+8. ```
    # umount /dev/sdb1
    # vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL /DATA_FORMAT=COMPRESSED
    # vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
@@ -2138,7 +2409,7 @@ vbkx-pl.
    Копия несёт метки и UUID оригинала (PHYSUUID): не монтируйте оба
    одновременно.
 
-7. ```
+9. ```
    # vbackup /mnt/data /mnt/usb/data.bck /IMAGE /VERIFY
    # vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE /LOG
    ```
@@ -2149,30 +2420,30 @@ vbkx-pl.
    новую файловую систему и размонтирует её (IMGSUMM). `/dev/sdc1` может быть
    меньше исходного устройства, если файлы помещаются.
 
-8. ```
-   # vbackup /mnt/usb/home.bck /ORIGINAL
-   %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/home.bck, Output: (where its files came from) - started
-   %VBACKUP-I-ORIGTARGET, Saveset: /mnt/usb/home.bck, Target: /home - its files go back there
-   %VBACKUP-W-FILEEXISTS, File: /home/rrl/a.txt - already exists, not restored
-   ...
-   ```
-
-   Каждый файл возвращается в каталог, из которого был сохранён.
-   Существующие файлы сохраняются, и о них сообщается; добавьте `/REPLACE`,
-   чтобы перезаписать их.
-
-9. ```
-   $ vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
-   ...
-   %VBACKUP-I-CMPSUMM, Files: 213, Differences: 0 - compared
-   %VBACKUP-W-SRCKEPT, File: /home/ivan/old/log.txt - not deleted: it changed after it was saved
-   %VBACKUP-I-DELSUMM, Deleted: 197, Kept: 1
-   ```
-
-   Файлы архивируются и затем удаляются с диска. Файл, в который писали
-   после сохранения, остаётся. Каталоги остаются.
-
 10. ```
+    # vbackup /mnt/usb/home.bck /ORIGINAL
+    %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/home.bck, Output: (where its files came from) - started
+    %VBACKUP-I-ORIGTARGET, Saveset: /mnt/usb/home.bck, Target: /home - its files go back there
+    %VBACKUP-W-FILEEXISTS, File: /home/rrl/a.txt - already exists, not restored
+    ...
+    ```
+
+    Каждый файл возвращается в каталог, из которого был сохранён.
+    Существующие файлы сохраняются, и о них сообщается; добавьте `/REPLACE`,
+    чтобы перезаписать их.
+
+11. ```
+    $ vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
+    ...
+    %VBACKUP-I-CMPSUMM, Files: 213, Differences: 0 - compared
+    %VBACKUP-W-SRCKEPT, File: /home/ivan/old/log.txt - not deleted: it changed after it was saved
+    %VBACKUP-I-DELSUMM, Deleted: 197, Kept: 1
+    ```
+
+    Файлы архивируются и затем удаляются с диска. Файл, в который писали
+    после сохранения, остаётся. Каталоги остаются.
+
+12. ```
     $ vbackup /backup/rrl.bck /COMPARE
     $ vbackup /backup/rrl.bck /tmp/restore /COMPARE
     ```
@@ -2181,7 +2452,7 @@ vbkx-pl.
     файлы; вторая -- с каталогом, в который он был восстановлен. О каждом
     различии сообщается COMPARERR; при наличии различий код завершения 2.
 
-11. ```
+13. ```
     $ vbackup /backup/rrl.bck /EXTRACT=rrl/notes.txt | less
     $ vbackup /backup/rrl.bck /tmp/notes.txt /EXTRACT=rrl/notes.txt
     ```
@@ -2189,7 +2460,7 @@ vbkx-pl.
     Один файл извлекается на стандартный вывод, затем в файл. Имя --
     хранимое имя, как его показывает `/LIST`.
 
-12. ```
+14. ```
     $ vbackup /backup/rrl.bck /LIST
     $ vbackup /backup/rrl.bck /LIST /FULL
     $ vbackup /backup/rrl.bck /LIST=/tmp/rrl.lis /FORMAT=LS
@@ -2198,7 +2469,7 @@ vbkx-pl.
     Три формы листинга: краткая (по умолчанию), полная и по строке на файл
     в форме `ls -l`, здесь -- в файл.
 
-13. ```
+15. ```
     $ vbackup /JOURNAL=/backup/home.jnl /LIST /FULL '/SELECT=*/notes.txt'
     $ rm /backup/home.jnl
     $ vbackup /backup/full.bck,/backup/mon.bck /RECORD /JOURNAL=/backup/home.jnl
@@ -2208,7 +2479,7 @@ vbkx-pl.
     оканчиваются на `/notes.txt`, и saveset-ом с последней копией каждого.
     Затем журнал перестраивается по каталогам saveset-ов, от старейшего.
 
-14. ```
+16. ```
     # vbkx t /mnt/usb/home.bck
     /mnt/usb/home.bck: all files read, all checksums match
     # vbkx l /mnt/usb/home.bck | less
@@ -2219,7 +2490,7 @@ vbkx-pl.
     проверяет saveset, выводит его листинг и извлекает один каталог на
     восстанавливаемый диск.
 
-15. ```
+17. ```
     C:\> set VBACKUP_KEY_FILE=C:\Users\rrl\backup.key
     C:\> vbkx.exe l E:\home.bck
     C:\> vbkx.exe x E:\home.bck -C C:\restore rrl/documents
@@ -2324,6 +2595,26 @@ saveset создан VBACKUP, сообщите о проблеме, прилож
 
 ---
 
+**BLKCOPIED**, Block: *block*, Volume: *volume* - is bad, copied as it is: a restore repairs it from its group
+
+**Средство:** VBACKUP. **Уровень:** предупреждение (W).
+
+**Пояснение:** Копирование saveset-а (`/TRANSFER`, приёмник потока, VBACKUP
+на другом узле, принимающий сохранение) встретило блок с неверной
+контрольной суммой. Он копируется как есть: копия хранит то, что ей дали,
+а восстановление из копии чинит блок по его группе так же, как из
+оригинала. *block* -- место блока в копии, считая с 0, *volume* -- том
+выхода, который пишется; если до плохого блока не пропущен ни один том,
+это его номер блока и номер тома в saveset-е.
+
+**Действие пользователя:** Для копии -- никаких, пока в той же группе нет
+другого плохого блока. Если блок испортился по дороге (сеть, канал),
+скопируйте saveset ещё раз; если он плох в оригинале, носитель может
+выходить из строя: скопируйте saveset на другой носитель и проверьте его
+восстановлением или `/COMPARE`.
+
+---
+
 **BLKFIXED**, Block: *block*, Volume: *volume* - was bad, rebuilt from its group
 
 **Средство:** VBACKUP. **Уровень:** информация (I).
@@ -2416,7 +2707,7 @@ file on the disk is shorter`, `the contents differ at octet n`, а для
 **Средство:** VBACKUP. **Уровень:** информация (I).
 
 **Пояснение:** Операция (save, restore, compare, extract, copy, rebuild of
-the journal) завершилась за указанное время. *outcome* -- `completed`,
+the journal, copy of a saveset) завершилась за указанное время. *outcome* -- `completed`,
 `completed with warnings` или `completed with errors`, в согласии с кодом
 завершения. Выводится без `/LOG`; листинг его не выводит.
 
@@ -2482,7 +2773,9 @@ saveset-а. Используйте текущую версию VBACKUP. Если
 **Средство:** VBACKUP. **Уровень:** информация (I).
 
 **Пояснение:** Создан том saveset-а. О томе 1 сообщается только при `/LOG`; о
-каждом следующем -- всегда.
+каждом следующем -- всегда. О следующих томах saveset-а, записываемого на
+стандартный вывод, сообщается как `Volume: (standard output)`: в потоке они
+идут друг за другом.
 
 **Действие пользователя:** Никаких. Если тома идут на сменные носители,
 храните их вместе.
@@ -2854,12 +3147,15 @@ no line`. Ничего не прочитано и не записано.
 
 **Средство:** VBACKUP. **Уровень:** ошибка (E).
 
-**Пояснение:** Том saveset-а не найден рядом с первым. Файлы, целиком
-лежащие в остальных томах, всё равно восстанавливаются; о прочих
-сообщается.
+**Пояснение:** Том saveset-а не найден рядом с первым, или поток из
+нескольких томов перешёл от одного тома к более позднему (saveset тогда
+называется `-`). Файлы, целиком лежащие в остальных томах, всё равно
+восстанавливаются; о прочих сообщается. Копирование saveset-а сообщает о
+томе, которого не нашло, и копирует остальные.
 
 **Действие пользователя:** Поместите все тома в один каталог, не меняя их
-имён, и повторите операцию.
+имён, и повторите операцию. Для потока выясните, почему отправитель
+пропустил том (его собственный MISSVOL).
 
 ---
 
@@ -3005,9 +3301,11 @@ Saveset-ы, созданные X01-02 и позднее, содержат всё
 
 **Пояснение:** Последний блок saveset-а -- не TRAILER: сохранение было
 прервано (диск переполнился, программу остановили), отсутствует последний
-том или канал оборвался раньше конца saveset-а. Файлы до места обрыва можно
+том или канал оборвался раньше конца saveset-а -- для потока из нескольких
+томов раньше, чем пришёл его последний том. Файлы до места обрыва можно
 восстановить; saveset читается последовательно. Перестройка журнала такой
-saveset пропускает.
+saveset пропускает. Копирование saveset-а сообщает об этом, скопировав то,
+что пришло, и у его копии тоже нет TRAILER.
 
 **Действие пользователя:** Найдите недостающий том, если он есть. Иначе
 восстановите то, что можно, и создайте новый saveset.
@@ -3020,7 +3318,9 @@ saveset пропускает.
 
 **Пояснение:** `/LIST`, `/COMPARE` или `/EXTRACT` задан вход, не являющийся
 saveset-ом, или более одного входа; либо файл, читаемый как saveset, им не
-является.
+является; либо вход копирования saveset-а начинается не с заголовка тома 1.
+С *узел*`::`*файл* файл -- это `-`: VBACKUP там ничего не прислал, и его
+сообщения выше говорят почему.
 
 **Действие пользователя:** Задайте первый том одного saveset-а.
 
@@ -3240,8 +3540,12 @@ it)`. Устройство, в которое пишут во время коп�
 
 **Пояснение:** Квалификатор задан там, где его нельзя использовать; *reason*
 говорит почему: `/DELETE` без `/VERIFY`; `/ENCRYPT` при операции, отличной от
-сохранения; `/VOLUME_SIZE` со стандартным выводом в качестве saveset-а;
-`/PHYSICAL` или `/IMAGE` с более чем одним входом (`one input - one device or
+сохранения; `/VERIFY` или `/LIST` со стандартным выводом в качестве saveset-а
+(`a saveset written to the standard output is gone once written: it cannot
+be read back here`); `/DELETE` или `/LIST` с saveset-ом на другом узле (`not
+with a saveset made on another node`); `/TRANSFER`, когда команда -- не
+копирование saveset-а (`the input must be one saveset (or -), and there
+must be an output`); `/PHYSICAL` или `/IMAGE` с более чем одним входом (`one input - one device or
 volume - a saveset`) или более чем одним saveset-ом (`one saveset at a
 time`); `/ORIGINAL` с выходным параметром или с `/INCREMENTAL` и saveset-ом
 из нескольких баз.
@@ -3271,6 +3575,40 @@ time`); `/ORIGINAL` с выходным параметром или с `/INCREME
 или перестроен по каталогам.
 
 **Действие пользователя:** Никаких.
+
+---
+
+**REMOTE**, Node: *node*, errno: *n* - the pipe to VBACKUP there cannot be made (*reason*)
+
+**Средство:** VBACKUP. **Уровень:** ошибка (E).
+
+**Пояснение:** Для saveset-а на другом узле, *узел*`::`*файл*, VBACKUP не смог
+создать канал к VBACKUP там или запустить процесс для ssh (или для
+команды `VBACKUP_RSH`). Ничего не отправлено и не прочитано. Команда,
+которую нельзя запустить, или недоступный узел сообщаются не здесь, а
+REMOTEERR.
+
+**Действие пользователя:** Чаще всего системе не хватает процессов или
+дескрипторов файлов: смотрите *reason* и повторите операцию.
+
+---
+
+**REMOTEERR**, Node: *node*, Exit: *n* - VBACKUP there did not complete: see its messages above
+
+**Средство:** VBACKUP. **Уровень:** ошибка (E).
+
+**Пояснение:** VBACKUP на другом узле или запускающий его ssh завершился с
+кодом *n* (2 -- VBACKUP там выдал ошибку; 127 -- команду `VBACKUP_RSH` нельзя
+запустить здесь или `vbackup` нет в PATH там; 255 -- отказал ssh: узел
+недоступен или не пускает этот), либо был завершён сигналом (*n* = 128 +
+сигнал). Код 1 (предупреждения) не сообщается: он делает код завершения не
+меньше 1. Если другая сторона остановилась во время сохранения, этому
+сообщению предшествуют WRITERR (errno 32, Broken pipe) и FATALSAVE.
+
+**Действие пользователя:** Прочитайте сообщения другой стороны выше.
+Проверьте, что `ssh `*узел*` vbackup` выводит краткую справку, ничего не
+спрашивая, что VBACKUP там -- X01-11 или новее (более ранний отвергает
+`/TRANSFER`) и что saveset там можно создать или прочитать.
 
 ---
 
@@ -3356,11 +3694,13 @@ saved`, причина неудачи удаления либо -- при *file*
 **Средство:** VBACKUP. **Уровень:** информация (I).
 
 **Пояснение:** Операция начинается. *operation* -- `save`, `restore`,
-`compare`, `extract`, `copy` или `rebuild of the journal`. Стандартный ввод и
-вывод показываются как `(standard input)` и `(standard output)`; выход
-восстановления `/ORIGINAL` -- как `(where its files came from)`. При
-нескольких входных спецификациях показывается первая. Выводится без
-`/LOG`; листинг его не выводит.
+`compare`, `extract`, `copy`, `rebuild of the journal` или `copy of a
+saveset`. Стандартный ввод и вывод показываются как `(standard input)` и
+`(standard output)`; выход восстановления `/ORIGINAL` -- как `(where its
+files came from)`; saveset на другом узле -- как *узел*`::`*файл*. При
+нескольких входных спецификациях показываются все, как они заданы.
+Выводится без `/LOG`; листинг его не выводит. VBACKUP на другом узле
+выводит свой STARTED, с операцией `copy of a saveset`.
 
 **Действие пользователя:** Никаких.
 
@@ -3469,13 +3809,28 @@ FATALSAVE), спула каталога, восстанавливаемого и
 
 ---
 
+**XFRSUMM**, Blocks: *n*, Volumes: *n*, Bad: *n* - copied
+
+**Средство:** VBACKUP. **Уровень:** информация (I).
+
+**Пояснение:** Итоги копирования saveset-а: скопированные блоки, тома и
+плохие блоки среди них (о каждом сообщено BLKCOPIED). Выводится без `/LOG`,
+и при неудаче копирования -- с тем, что успело скопироваться. VBACKUP на
+другом узле выводит его за свою сторону сохранения или восстановления
+через *узел*`::`*файл*.
+
+**Действие пользователя:** Никаких, если Bad равно 0. Иначе см. BLKCOPIED.
+
+---
+
 ## Приложение B Сводка формата saveset-а
 
 Это приложение кратко излагает формат saveset-а версии 1. Определяющее
 описание -- `doc/format.md`; читающая программа, написанная только по этому
 документу, должна уметь выводить листинг и восстанавливать любой saveset.
-Начиная с X01-08 saveset можно читать и со стандартного ввода (см. раздел
-1.9; `format.md`, раздел 8).
+Начиная с X01-08 saveset можно читать и со стандартного ввода, а начиная с
+X01-11 поток несёт несколько томов (см. раздел 1.9; `format.md`, разделы 2
+и 8).
 
 ### B.1 Соглашения
 
@@ -3503,6 +3858,13 @@ G (group) = DATA x n, then XOR        (1 <= n <= N; N = 0: no XOR blocks)
 пересекает границу тома. Размер блока B -- от 8192 до 1048576, кратен 512;
 полезная нагрузка блока -- P = B - 64 байта. Блоки нумеруются с 0 через
 весь saveset.
+
+Поток (канал, начиная с X01-11) несёт тома подряд, каждый со своим VHDR;
+номера блоков идут как обычно. Читатель потока принимает VHDR следующего
+тома как конец текущего; приёмник раскладывает поток по файлам томов на
+каждом VHDR. Читатель потока читает только вперёд: TRAILER заканчивает
+группы там, где пришёл, а каталог в конце потока для поиска не
+используется.
 
 ### B.3 Заголовок блока (64 байта)
 

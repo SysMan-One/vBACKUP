@@ -442,6 +442,7 @@ typedef struct vbk_opts_t
 	int		delete;			/* /DELETE: the files saved and verified go	*/
 	int		encrypt;		/* /ENCRYPT: the saveset is made encrypted	*/
 	char		keyfile [VBACKUP$K_SZ_PATH];	/* /KEY_FILE=file: the passphrase	*/
+	char		outnode [VBACKUP$K_SZ_PATH];	/* node::file, when the output is there	*/
 	struct vbk_pre_t *pre;			/* The read-ahead of files, NULL - none		*/
 	char		jnlspec [VBACKUP$K_SZ_PATH];	/* /JOURNAL=file, "" - the default	*/
 	struct vbk_jnl_t *jnl;			/* The journal, when one is open		*/

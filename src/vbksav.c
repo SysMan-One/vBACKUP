@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-12"
+#define	__REV__		"1.12.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-12		 5-OCT-2026	RRL
+**		/RECORD of a save onto another node: the journal names the saveset
+**		node::file, not "(standard output)".
 **
 **	X01-07		 5-OCT-2026	RRL
 **		SAVESUMM always; SYSTEM made by FAO.
@@ -1477,7 +1481,9 @@ int		l_status = STS$K_SUCCESS;
 
 		vbk$tlv_reset(&l_sav->rec);
 		vbk$tlv_put(&l_sav->rec, VBK$K_TAG_SSUUID, VBK$K_UUIDSZ, l_sav->wctx.ssuuid);
-		vbk$tlv_str(&l_sav->rec, VBK$K_TAG_SPEC, !strcmp(a_opts->output, "-") ? "(standard output)"
+		/* Where the saveset is: a file here, node::file there, or a pipe nobody can name */
+		vbk$tlv_str(&l_sav->rec, VBK$K_TAG_SPEC, a_opts->outnode [0] ? a_opts->outnode
+				: !strcmp(a_opts->output, "-") ? "(standard output)"
 				: (realpath(a_opts->output, l_abs) ? l_abs : a_opts->output));
 		vbk$tlv_time(&l_sav->rec, VBK$K_TAG_CREATED, &l_sav->created);
 		vbk$tlv_u8(&l_sav->rec, VBK$K_TAG_KIND, a_opts->timefilter ? VBK$K_KIND_INCR : VBK$K_KIND_FULL);

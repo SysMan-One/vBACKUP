@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-11"
-#define	__REV__		"1.11.0"
+#define	__IDENT__	"X01-12"
+#define	__REV__		"1.12.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-12		 5-OCT-2026	RRL
+**		/RECORD of a save onto another node names it node::file (OUTNODE);
+**		the reference manual brought to X01-11.
 **
 **	X01-11		 5-OCT-2026	RRL
 **		Stage 8: volumes through a pipe; a saveset to a saveset block for
@@ -1025,6 +1029,8 @@ size_t		l_cmdlen = 0;
 
 	if ( vbk$rsh_parse(l_opts.output, l_routnode, sizeof(l_routnode), &l_routfile) )
 		{
+		/* The journal names the saveset where it is: node::file */
+		vbk$strcpy(sizeof(l_opts.outnode), l_opts.outnode, l_opts.output);
 		l_routfile = strdup(l_routfile);
 		vbk$strcpy(sizeof(l_opts.output), l_opts.output, "-");
 		}
