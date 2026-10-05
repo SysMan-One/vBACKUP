@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-10"
-#define	__REV__		"1.10.0"
+#define	__IDENT__	"X01-11"
+#define	__REV__		"1.11.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		Stage 8: volumes through a pipe; a saveset to a saveset block for
+**		block (/TRANSFER); node::file - a saveset on another node through
+**		ssh, /VERIFY read back from there; the pipeline of an encrypted
+**		save.  A save of an input that is not there makes no saveset.
 **
 **	X01-10		 5-OCT-2026	RRL
 **		MC knows a saveset by .sav as by .bck and by its contents (the

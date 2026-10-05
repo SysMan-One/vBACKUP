@@ -17,7 +17,9 @@ What a saveset gives you:
 - XOR blocks (`/GROUP_SIZE`): one bad block in a group is rebuilt, and
   after a loss the reader picks the stream up again at the next good
   block - only the files that lay in the lost blocks are hurt;
-- volumes (`/VOLUME_SIZE=4G`), each of which identifies itself;
+- volumes (`/VOLUME_SIZE=4G`), each of which identifies itself - on
+  disk, through a pipe, or straight onto another node
+  (`vbackup /home host::/backup/home.bck`, as DECnet wrote it);
 - a catalog at the end: `/LIST` and `/EXTRACT` are instant;
 - incremental saves: `/RECORD` keeps a journal, `/SINCE=BACKUP` saves
   what changed since, and a chain restored `/INCREMENTAL` comes back with

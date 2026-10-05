@@ -40,7 +40,12 @@ vbackup \- save files into a saveset, restore, list and compare them
 .SH DESCRIPTION
 Two parameters at most: an input and an output; "-" as the input is a
 saveset from the standard input (a pipe), as the output the standard
-output.  A saveset on the
+output (its volumes back to back).
+.I node::file
+is a saveset on another node, VBACKUP there run through ssh
+(VBACKUP_RSH): a save is split into its volume files there, a restore,
+/LIST, /COMPARE or /EXTRACT read from there.  A saveset given as input
+and as output is copied block for block (/TRANSFER).  A saveset on the
 output side is a name ending in .bck or .sav, or /SAVE_SET; qualifiers
 may be glued to a parameter, as in DCL: x.sav/sav/log.
 .B vbackup
@@ -113,6 +118,11 @@ at a terminal.  See vbackup /HELP /PHYSICAL.
 .B /DATA_FORMAT=COMPRESSED
 Compress the data (LZ4); data that does not shrink is stored plain.
 Readers before X01-04 report compressed files as damaged.
+.TP
+.B /TRANSFER
+A saveset to a saveset, block for block: the volumes into a pipe, a
+stream into volume files, a copy; encrypted ones without the
+passphrase; bad blocks copied as they are (BLKCOPIED).
 .TP
 .B /ENCRYPT
 Encrypt the saveset with a passphrase, asked twice on the terminal or
@@ -219,6 +229,10 @@ file managers set it): no key file means %VBACKUP-E-NOKEY.
 .B VBACKUP_KDFITER
 The PBKDF2 iterations of an encrypted save, for the tests (at least
 1000); not to be lowered for real savesets.
+.TP
+.B VBACKUP_RSH
+The command that runs VBACKUP on another node for node::file; ssh by
+default.
 .TP
 .B VBACKUP_CTHREADS
 The threads of the encryption (the stripes of a block, the blocks of a

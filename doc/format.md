@@ -86,6 +86,10 @@ G (group) = DATA x n, then XOR        (n = gcount, 1 <= n <= N)
   (N + 3) * B.
 - A volume holding only VHDR and TRAILER is legal (the TRAILER did not
   fit into the previous volume).
+- A stream (a pipe, since X01-11) carries the volumes back to back, each
+  beginning with its VHDR; `blkno` runs on as ever.  A reader of a stream
+  takes a VHDR of the next volume as the end of the volume in hand; a
+  receiver splits the stream into volume files at each VHDR.
 
 ## 3. Block header (64 bytes)
 
@@ -526,8 +530,9 @@ in sequential mode up to the last good block.
 
 A saveset can be read from the standard input (a pipe, "-" as the
 input, since X01-08): sequential mode only, forward only; a TRAILER
-ends the groups where it comes, and the catalog at the end of the stream
-is not used for seeking.
+ends the groups where it comes, a VHDR begins the next volume (since
+X01-11, section 2), and the catalog at the end of the stream is not used
+for seeking.
 
 
 ## 9. The journal

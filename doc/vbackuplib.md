@@ -61,15 +61,31 @@ A saveset may come through a pipe: "-" is the standard input.
 
 ```
 ssh host 'vbackup /home -' | vbackup - /restore
-vbackup /home - | ssh host 'cat > /backup/home.bck'
+vbackup /home - | ssh host 'vbackup - /backup/home.bck'
 ```
 
-Restore, /LIST, /COMPARE (with a directory), /EXTRACT and vbkx read it
-as it comes, once, forward only; the catalog at its end is of no use
-there, so a file of /EXTRACT is found by reading. Bad blocks are
-repaired as from a file. A saveset written to "-" is one volume
-(/VOLUME_SIZE is refused); a pipe that stops before the saveset ends
-gives NOTRAILER.
+Restore, /LIST, /COMPARE, /EXTRACT and vbkx read it as it comes, once,
+forward only; the catalog at its end is of no use there, so a file of
+/EXTRACT is found by reading. Bad blocks are repaired as from a file.
+A saveset written to "-" carries its volumes (/VOLUME_SIZE) back to
+back; a pipe that stops before the saveset ends gives NOTRAILER.
+
+A saveset on another node, as DECnet wrote it - node::file:
+
+```
+vbackup /home host::/backup/home.bck /VOLUME_SIZE=4G /VERIFY
+vbackup host::/backup/home.bck /restore
+vbackup host::/backup/home.bck /LIST
+```
+
+VBACKUP runs there too, through ssh (VBACKUP_RSH names another
+command), and the saveset goes through a pipe: a save is split into its
+volume files there, each block checked as it arrives; /VERIFY reads it
+back from there and compares it with the disk here. The messages of the
+other side come here; its completion code becomes this one's
+(REMOTEERR). The other node needs VBACKUP X01-11 or later on the PATH
+of ssh, and must let this one in by its keys. /DELETE and /LIST are not
+taken with a saveset made on another node.
 
 When you restore, several savesets may be given, separated by commas:
 they are restored one after the other. With /INCREMENTAL give the full
@@ -296,6 +312,22 @@ compressed data. They do not write wrong files: they report the
 compressed files as damaged (CRCERR, FILDAMAGED). Update them.
 
 Example: vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+
+## /TRANSFER -- a saveset to a saveset, block for block
+
+```
+vbackup x.bck y.bck             a copy, volume for volume
+vbackup x.bck -                 the volumes, back to back, to the output
+vbackup - y.bck                 a stream into y.bck, y.bck.002, ...
+```
+
+When the input is a saveset and the output is one, the blocks are
+copied as they are - never the records: an encrypted saveset needs no
+passphrase, and the copy is byte for byte the original. Every block is
+checked on the way; a bad one is copied as it is and said (BLKCOPIED) -
+a restore repairs it from its group. /TRANSFER asks for this whatever
+the names would mean (node::file uses it, so that an older VBACKUP on
+the other node refuses rather than restores).
 
 ## /ENCRYPT -- make an encrypted saveset
 
@@ -1010,6 +1042,10 @@ that were in the cache stay there.
 %VBACKUP-E-KEYFILE      the key file cannot be used (chmod 600, first line)
 %VBACKUP-E-KEYMATCH     the two passphrases of a save differ: nothing saved
 %VBACKUP-W-BLKFORGED    a block changed on purpose: its checksum right, its tag not
+%VBACKUP-W-BLKCOPIED    /TRANSFER: a bad block copied as it is
+%VBACKUP-I-XFRSUMM      /TRANSFER: the totals
+%VBACKUP-E-REMOTE       node::file: the pipe to VBACKUP there cannot be made
+%VBACKUP-E-REMOTEERR    node::file: VBACKUP there did not complete
 %VBACKUP-I-STARTED      the work begins: what, from where, to where
 %VBACKUP-I-COMPLETED    the work is done: completed, with warnings or with errors; how long
 ```
