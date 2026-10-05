@@ -589,7 +589,7 @@ block, the TRAILER -- is checked by the receiver there. `/DELETE` and
 `/LIST` are not taken with a saveset made on another node (QUALUSE: `not
 with a saveset made on another node`); list it by a second command, which
 reads it back. With `/RECORD` the journal records such a saveset as
-`(standard output)`.
+*node*`::`*file*.
 
 #### Completion Codes
 
@@ -1944,8 +1944,8 @@ and, with `/VERIFY`, verified without a difference; and for every file
 saved with the status OK, its absolute name, inode, size, modification
 and change times (RECORDED). A file that changed while it was saved, or
 could not be read, is not recorded, so the next `/SINCE=BACKUP` saves it
-again. A saveset written to `-`, or to another node, is recorded as
-`(standard output)`.
+again. A saveset written to `-` is recorded as `(standard output)`, one
+written to another node as *node*`::`*file*.
 
 With savesets and no output specifier, rebuilds the journal from their
 catalogs: every entry with the status OK and inode data (X01-02 or later)

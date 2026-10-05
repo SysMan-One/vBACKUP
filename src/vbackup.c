@@ -1025,6 +1025,8 @@ size_t		l_cmdlen = 0;
 
 	if ( vbk$rsh_parse(l_opts.output, l_routnode, sizeof(l_routnode), &l_routfile) )
 		{
+		/* The journal names the saveset where it is: node::file */
+		vbk$strcpy(sizeof(l_opts.outnode), l_opts.outnode, l_opts.output);
 		l_routfile = strdup(l_routfile);
 		vbk$strcpy(sizeof(l_opts.output), l_opts.output, "-");
 		}
