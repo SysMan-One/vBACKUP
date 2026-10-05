@@ -550,6 +550,36 @@ extfs `uvbk`), far2l и Far Manager 3 (MultiArc, поверх vbkx), Total Comma
 
 ---
 
+### 1.14 Расписание и ротация
+
+VBACKUP не планирует себя и не удаляет старые saveset-ы: это дело
+пакетной очереди, и BATCH (подсистема пакетных заданий, `batch submit`)
+делает это так, как принято в OpenVMS, -- задание выполняет сохранение и
+ставит само себя в очередь на следующий день.
+
+```sh
+#!/bin/sh
+# /opt/jobs/vbackup-daily.sh - полная копия в воскресенье, инкремент в остальные дни
+T=/backup/home-$(date +%Y%m%d)
+if [ "$(date +%u)" = 7 ]; then
+	vbackup /home $T.bck /RECORD /VERIFY
+else
+	vbackup /home $T.bck /SINCE=BACKUP /RECORD /VERIFY
+fi
+# Ротация: хранятся пять недель saveset-ов
+find /backup -name 'home-*.bck*' -mtime +35 -delete
+# Снова завтра в 02:00 - задание ставит себя в очередь само
+batch submit "$0" /NAME=vbackup-daily "/AFTER=$(date -d tomorrow +%d-%b-%Y:02:00 | tr a-z A-Z)"
+```
+
+```
+$ batch submit /opt/jobs/vbackup-daily.sh /NAME=vbackup-daily /AFTER=TOMORROW
+```
+
+Задание, завершившееся с ошибкой, остаётся в очереди вместе с журналом
+(`batch show`), где есть сообщения VBACKUP и код завершения; ничего не
+теряется молча, как с cron.
+
 ## Глава 2 Сводка по использованию VBACKUP
 
 Утилита VBACKUP сохраняет файлы в saveset-ы, восстанавливает, выводит,

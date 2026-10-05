@@ -93,6 +93,11 @@ deletes what was deleted; a copy disk to disk; savesets through ssh.
 `/SELECT`, `/EXCLUDE` - with HELP, messages of the VMS form and a reference
 manual in the manner of DEC ([doc/ref](doc/ref/vbackup_ref.md)).
 
+**Scheduling and rotation are left to a batch queue.**  BATCH (the batch
+job subsystem) runs a save every night the way OpenVMS does - a job that
+submits itself again for the next day, keeps its log, and stays in the
+queue when it fails (`vbackup /HELP SCHEDULING`).
+
 **In the file managers.**  Midnight Commander, far2l and Far, Total and
 Double Commander open a saveset like a folder (read only).
 

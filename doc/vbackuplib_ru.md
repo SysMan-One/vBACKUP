@@ -664,6 +664,36 @@ $ vbackup full.bck,mon.bck,tue.bck /restore /INCREMENTAL
 /NOCROSS_DEVICE и /BY_OWNER говорят, о каких файлах saveset; /SINCE,
 /BEFORE и /SINCE=BACKUP -- какие из них сохраняются.
 
+
+## Scheduling -- регулярные сохранения и ротация, через BATCH
+
+VBACKUP не планирует себя и не удаляет старые saveset-ы: это дело
+пакетной очереди, и BATCH (подсистема пакетных заданий, `batch submit`)
+делает это так, как принято в OpenVMS, -- задание выполняет сохранение и
+ставит само себя в очередь на следующий день.
+
+```sh
+#!/bin/sh
+# /opt/jobs/vbackup-daily.sh - полная копия в воскресенье, инкремент в остальные дни
+T=/backup/home-$(date +%Y%m%d)
+if [ "$(date +%u)" = 7 ]; then
+	vbackup /home $T.bck /RECORD /VERIFY
+else
+	vbackup /home $T.bck /SINCE=BACKUP /RECORD /VERIFY
+fi
+# Ротация: хранятся пять недель saveset-ов
+find /backup -name 'home-*.bck*' -mtime +35 -delete
+# Снова завтра в 02:00 - задание ставит себя в очередь само
+batch submit "$0" /NAME=vbackup-daily "/AFTER=$(date -d tomorrow +%d-%b-%Y:02:00 | tr a-z A-Z)"
+```
+
+```
+$ batch submit /opt/jobs/vbackup-daily.sh /NAME=vbackup-daily /AFTER=TOMORROW
+```
+
+Задание, завершившееся с ошибкой, остаётся в очереди вместе с журналом
+(`batch show`), где есть сообщения VBACKUP и код завершения; ничего не
+теряется молча, как с cron.
 ## Время -- как записывается время
 
 ```

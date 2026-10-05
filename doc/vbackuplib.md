@@ -664,6 +664,36 @@ What decides what is covered and what is saved: /SELECT, /EXCLUDE, the
 nodump flag, /NOCROSS_DEVICE and /BY_OWNER say which files the saveset
 is about; /SINCE, /BEFORE and /SINCE=BACKUP say which of them are saved.
 
+## Scheduling -- regular saves and rotation, by BATCH
+
+VBACKUP does not schedule itself nor delete old savesets: that is the
+business of a batch queue, and BATCH (the batch job subsystem, `batch
+submit`) does it the way OpenVMS does - a job that runs the save and
+submits itself again for the next day.
+
+```sh
+#!/bin/sh
+# /opt/jobs/vbackup-daily.sh - a full save on Sunday, an incremental on the other days
+T=/backup/home-$(date +%Y%m%d)
+if [ "$(date +%u)" = 7 ]; then
+	vbackup /home $T.bck /RECORD /VERIFY
+else
+	vbackup /home $T.bck /SINCE=BACKUP /RECORD /VERIFY
+fi
+# Rotation: five weeks of savesets are kept
+find /backup -name 'home-*.bck*' -mtime +35 -delete
+# Again tomorrow at 02:00 - the job submits itself
+batch submit "$0" /NAME=vbackup-daily "/AFTER=$(date -d tomorrow +%d-%b-%Y:02:00 | tr a-z A-Z)"
+```
+
+```
+$ batch submit /opt/jobs/vbackup-daily.sh /NAME=vbackup-daily /AFTER=TOMORROW
+```
+
+A job that fails stays in the queue with its log (`batch show`), the
+messages of VBACKUP and its completion code in it; nothing is lost
+silently, as with cron.
+
 ## Time -- how a time value is written
 
 ```
