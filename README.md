@@ -171,7 +171,7 @@ It needs no StarLet and no CMake; with MinGW-w64, from the top of the
 source tree:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 
@@ -192,7 +192,9 @@ the catalog.
 - **Midnight Commander** - [plugins/mc/uvbk](plugins/mc/uvbk), an extfs
   script over `vbackup`.  `cmake --install` puts it into the extfs of MC
   and its section into `mc.ext.ini`, when MC is there (and takes them out
-  again on uninstall); then Enter on a `.bck` file.
+  again on uninstall); then Enter on a `.bck` or `.sav` file - or on a
+  saveset of any name: the installation adds the magic of VBACKUP to
+  `/etc/magic`, and MC knows it by its contents.
 - **far2l and Far3** - [plugins/far/vbackup.ini](plugins/far/vbackup.ini),
   a format description for MultiArc over `vbkx` (`vbkx.exe` on Windows).
   The installation appends it to the `custom.ini` of far2l's MultiArc.
@@ -225,7 +227,8 @@ help libraries.
     $ (cd build && ctest)
     $ cmake --install build
 
-`make kit` in the build tree makes `vbackup-<ident>.tar.gz`.
+`make kit` in the build tree makes `vbackup-<ident>.tar.gz` - in a git
+tree by git archive of HEAD, so only what is committed goes into it.
 
 The tests speak TAP (the Test Anything Protocol) when `TAP=1` is set,
 for prove, Jenkins, GitLab and their kin; without it they print only

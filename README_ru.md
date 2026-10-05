@@ -190,7 +190,7 @@ Saveset, сделанный с `/PHYSICAL`, любой распаковщик в
 исходных текстов:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 
@@ -212,7 +212,9 @@ Saveset открывается как папка в перечисленных �
 - **Midnight Commander** -- [plugins/mc/uvbk](plugins/mc/uvbk), скрипт
   extfs поверх `vbackup`.  `cmake --install` кладёт его в extfs MC, а его
   секцию -- в `mc.ext.ini`, если MC установлен (и убирает их обратно при
-  удалении); после этого Enter на файле `.bck`.
+  удалении); после этого Enter на файле `.bck` или `.sav` -- или на
+  saveset-е с любым именем: установка добавляет магию VBACKUP в
+  `/etc/magic`, и MC узнаёт его по содержимому.
 - **far2l и Far3** -- [plugins/far/vbackup.ini](plugins/far/vbackup.ini),
   описание формата для MultiArc поверх `vbkx` (`vbkx.exe` в Windows).
   Установка дописывает его в `custom.ini` MultiArc из far2l.
@@ -246,7 +248,9 @@ Saveset открывается как папка в перечисленных �
     $ (cd build && ctest)
     $ cmake --install build
 
-`make kit` в дереве сборки делает `vbackup-<ident>.tar.gz`.
+`make kit` в дереве сборки делает `vbackup-<ident>.tar.gz` -- в дереве
+git через git archive от HEAD, так что в него попадает только
+закоммиченное.
 
 Тесты говорят на TAP (Test Anything Protocol), если задано `TAP=1`, --
 для prove, Jenkins, GitLab и им подобных; без него они печатают только
