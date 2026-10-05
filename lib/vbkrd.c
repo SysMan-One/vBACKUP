@@ -36,6 +36,7 @@
 **		"-": a saveset read from a pipe - forward only, block by block, its
 **		TRAILER taken where it comes; no seek; VBK$RD_SETKEY puts the
 **		reader back within the first group, which it still holds.
+**		The TAGs and the decryption of a group on the cores of the pool.
 **		No printf: the name of volume 1 by VBK$STRPUT.
 **
 **	X01-06		 5-OCT-2026	RRL
@@ -841,6 +842,35 @@ int	vbk$rd_rewind	(
 
 
 /*
+**  One block of the group in hand, a job of the pool: its TAG checked
+**  (into GTAG) or, after the repair, the block decrypted.  Jobs touch
+**  only their own block; events are left to the caller.
+*/
+typedef struct vbk_grpjob_t
+{
+	VBK$RCTX *	ctx;
+	int		decrypt;
+} VBK$GRPJOB;
+
+static	void	s_vbk$tagjob	(
+		void *		a_arg,
+		uint32_t	a_i
+			)
+{
+VBK$GRPJOB *	l_j = (VBK$GRPJOB *) a_arg;
+VBK$RCTX *	l_c = l_j->ctx;
+uint8_t *	l_pay = l_c->gbuf + (size_t) a_i * l_c->bsize + VBK$K_HDRSZ;
+
+	if ( !l_c->gok [a_i] )
+		return;
+
+	if ( l_j->decrypt )
+		vbk$crp_decrypt(&l_c->keys, &l_c->ghdr [a_i], l_pay);
+	else	l_c->gtag [a_i] = (uint8_t) vbk$crp_check(&l_c->keys, &l_c->ghdr [a_i], l_pay, l_c->psize);
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
@@ -984,17 +1014,31 @@ uint8_t *	l_blk;
 	a_ctx->gdata	= (uint32_t) l_n - l_hasxor;
 
 	for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
-		{
 		if ( a_ctx->gok [i] && (a_ctx->ghdr [i].type != a_ctx->dtype) )
 			a_ctx->gok [i] = 0;
 
-		/* A good CRC and a wrong TAG: changed on purpose - a bad block all the same, repairable as any */
-		if ( a_ctx->gok [i] && a_ctx->crypt
-			&& !vbk$crp_check(&a_ctx->keys, &a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ, a_ctx->psize) )
-			{
-			a_ctx->gok [i] = 0;
-			s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->curvol, a_ctx->ghdr [i].blkno);
-			}
+	/*
+	**  A good CRC and a wrong TAG: changed on purpose - a bad block all the
+	**  same, repairable as any.  The TAGs of the group are checked on the
+	**  cores of the pool, when the utility has one; what failed is then
+	**  reported here, in the order of the blocks.
+	*/
+	if ( a_ctx->crypt )
+		{
+		VBK$GRPJOB	l_job = { a_ctx, 0 };
+
+		vbk$crp_par(a_ctx->gdata, s_vbk$tagjob, &l_job);
+
+		for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
+			if ( a_ctx->gok [i] && !a_ctx->gtag [i] )
+				{
+				a_ctx->gok [i] = 0;
+				s_vbk$event(a_ctx, VBK$K_EV_BADTAG, a_ctx->curvol, a_ctx->ghdr [i].blkno);
+				}
+		}
+
+	for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
+		{
 
 		if ( !a_ctx->gok [i] )
 			{
@@ -1062,11 +1106,13 @@ uint8_t *	l_blk;
 			s_vbk$event(a_ctx, VBK$K_EV_LOST, a_ctx->curvol, l_vol->firstblk + a_ctx->curpos + i);
 			}
 
-	/* Every check done, the repair too: now the good blocks are decrypted where they lie */
+	/* Every check done, the repair too: now the good blocks are decrypted where they lie, on the cores of the pool */
 	if ( a_ctx->crypt )
-		for ( uint32_t i = 0; i < a_ctx->gdata; i++ )
-			if ( a_ctx->gok [i] )
-				vbk$crp_decrypt(&a_ctx->keys, &a_ctx->ghdr [i], a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ);
+		{
+		VBK$GRPJOB	l_job = { a_ctx, 1 };
+
+		vbk$crp_par(a_ctx->gdata, s_vbk$tagjob, &l_job);
+		}
 
 	a_ctx->gvol	= a_ctx->curvol;
 	a_ctx->gpos	= a_ctx->curpos;

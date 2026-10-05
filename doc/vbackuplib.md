@@ -57,6 +57,20 @@ WILDCARDS.
 When you restore, list, compare or extract: the saveset. Give the
 name of its first volume; VBACKUP finds the other volumes by itself.
 
+A saveset may come through a pipe: "-" is the standard input.
+
+```
+ssh host 'vbackup /home -' | vbackup - /restore
+vbackup /home - | ssh host 'cat > /backup/home.bck'
+```
+
+Restore, /LIST, /COMPARE (with a directory), /EXTRACT and vbkx read it
+as it comes, once, forward only; the catalog at its end is of no use
+there, so a file of /EXTRACT is found by reading. Bad blocks are
+repaired as from a file. A saveset written to "-" is one volume
+(/VOLUME_SIZE is refused); a pipe that stops before the saveset ends
+gives NOTRAILER.
+
 When you restore, several savesets may be given, separated by commas:
 they are restored one after the other. With /INCREMENTAL give the full
 saveset first, then the incremental ones in the order they were made.
@@ -311,6 +325,10 @@ The passphrase IS the key. Keep it somewhere safe: nobody, VBACKUP's
 author included, can open a saveset whose passphrase is lost. Use a
 long one - five or more random words. The journal (/RECORD) is not
 encrypted: it is a file of this system.
+
+The encryption runs on several cores: the key stream of a block in
+stripes, the blocks of a group checked and decrypted side by side when
+reading. VBACKUP_CTHREADS=n sets the threads, 1 - none.
 
 How: ChaCha20 and HMAC-SHA256 per block, the keys from the passphrase
 by PBKDF2-HMAC-SHA256 with 600000 iterations and a random salt per

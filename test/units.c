@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -26,6 +26,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 5-OCT-2026	RRL
+**		The pool: an encrypted saveset written and read on four threads, a
+**		zapped and a forged block; stripes against one pass both ways.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		The encryption: SHA-256, HMAC, PBKDF2, ChaCha20 by the vectors
@@ -645,6 +649,49 @@ char		l_spec [1100];
 	s_forge("enc2.bck", 1, 10, 9);
 	s_readall("enc2.bck", &l_nread, &l_nresync, &l_nbad, NULL);
 	$CHECK((l_nread < UNITS$K_NREC) && l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+
+	/* All of it once more with the pool: the stripes of a block and the blocks of a group on several threads */
+	{
+	uint32_t	l_nthr;
+
+	setenv("VBACKUP_CTHREADS", "4", 0);
+	l_nthr	= vbk$par_init();
+
+	s_begin("encrypted, with the pool: several volumes read back, a zapped and a forged block rebuilt");
+	$NOTE("threads: %u", l_nthr);
+	$CHECK(l_nthr > 1, "no pool started");
+	$CHECK(1 & s_write("encp.bck", 3, 12 * UNITS$K_BSZ, &l_nvols), "write");
+	s_readall("encp.bck", &l_nread, &l_nresync, &l_nbad, NULL);
+	$CHECK((l_nread == UNITS$K_NREC) && !l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+	$CHECK(1 & s_write("encpf.bck", 4, 0, &l_nvols), "write");
+	s_zap("encpf.bck", 1, 2);
+	s_forge("encpf.bck", 1, 7, 100);
+	s_readall("encpf.bck", &l_nread, &l_nresync, &l_nbad, NULL);
+	$CHECK((l_nread == UNITS$K_NREC) && !l_nresync && !l_nbad, "read %u resync %u bad %u", l_nread, l_nresync, l_nbad);
+	$CHECK((s_ev [VBK$K_EV_REPAIRED] == 2) && (s_ev [VBK$K_EV_BADTAG] == 1) && !s_ev [VBK$K_EV_LOST],
+		"repaired %d badtag %d lost %d", s_ev [VBK$K_EV_REPAIRED], s_ev [VBK$K_EV_BADTAG], s_ev [VBK$K_EV_LOST]);
+
+	/* A large payload sealed in stripes opens in one pass, and the other way round */
+	{
+	static uint8_t	l_pay [262144 - VBK$K_HDRSZ], l_ref [sizeof(l_pay)];
+	VBK$BHDR	l_h = {0};
+	uint32_t	l_psz = sizeof(l_pay);
+
+	l_h.bsize = 262144; l_h.type = 5; l_h.blkno = 9; l_h.volno = 1; l_h.paylen = l_psz - VBK$K_TAGSZ;
+
+	for ( uint32_t i = 0; i < l_h.paylen; i++ )
+		l_ref [i] = l_pay [i] = (uint8_t) (i * 13 + (i >> 9));
+
+	vbk$crp_seal(&s_keys, &l_h, l_pay, l_psz);
+	vbk$crp_setpar(NULL, 1);
+	$CHECK(1 & vbk$crp_open(&s_keys, &l_h, l_pay, l_psz), "sealed in stripes, refused in one pass");
+	$CHECK(!memcmp(l_pay, l_ref, l_h.paylen), "sealed in stripes, opened in one pass: other bytes");
+	vbk$crp_seal(&s_keys, &l_h, l_pay, l_psz);
+	vbk$par_init();
+	$CHECK(1 & vbk$crp_open(&s_keys, &l_h, l_pay, l_psz), "sealed in one pass, refused in stripes");
+	$CHECK(!memcmp(l_pay, l_ref, l_h.paylen), "sealed in one pass, opened in stripes: other bytes");
+	}
+	}
 
 	s_crypt	= 0;
 	vbk$crp_wipe(&s_keys, sizeof(s_keys));

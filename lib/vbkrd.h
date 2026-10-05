@@ -114,6 +114,7 @@ typedef struct vbk_rctx_t
 
 	uint8_t *	gbuf;			/* The group being read, (grpsz + 1) blocks	*/
 	uint8_t		gok [VBK$K_MAXGRP + 1];
+	uint8_t		gtag [VBK$K_MAXGRP + 1];	/* ... its TAG is right (encrypted)		*/
 	VBK$BHDR	ghdr [VBK$K_MAXGRP + 1];
 	uint32_t	gdata;			/* DATA blocks in the group			*/
 	uint32_t	gnext;			/* Next of them to deliver			*/

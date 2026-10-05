@@ -42,6 +42,8 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-08		 5-OCT-2026	RRL
+**		Stage 7: "-" as the input - a saveset from a pipe; the pool of the
+**		encryption started (VBK$PAR_INIT); lib/ without printf.
 **		/VOLUME_SIZE refused with the standard output: one stream, one
 **		volume.
 **
@@ -819,6 +821,9 @@ int		l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 
 size_t		l_cmdlen = 0;
 
 	vbk$inimsg();
+
+	/* The cores for the encryption: the stripes of a block, the blocks of a group (VBACKUP_CTHREADS) */
+	vbk$par_init();
 
 	/* The defaults */
 	l_opts.bsize	= VBK$K_DEFBSZ;
