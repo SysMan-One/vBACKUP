@@ -42,8 +42,9 @@ saveset, восстановить их, получить листинг и ср�
   (`vbackup /HELP VBKX`);
 - saveset-ы OpenVMS BACKUP тоже читаются: листинг как у `BACKUP/LIST`,
   файлы восстанавливаются с именами Linux, тексты становятся текстами,
-  плохие блоки чинятся по их XOR-группам (`vbackup /HELP OPENVMS`,
-  [doc/vmsbackup.md](doc/vmsbackup.md));
+  плохие блоки чинятся по их XOR-группам -- в vbackup, vbkx, vbkx.exe,
+  Midnight Commander; far2l, модуль WCX и распаковщики для гиков их не
+  читают (`vbackup /HELP OPENVMS`, [doc/vmsbackup.md](doc/vmsbackup.md));
 - никаких зависимостей, кроме libc, StarLet и HELP.
 
 Формат описан в [doc/format.md](doc/format.md) (на английском);

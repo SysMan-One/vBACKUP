@@ -765,8 +765,10 @@ $ vbkx x USERS.BCK -C /restore/vms       то же через vbkx (и vbkx.exe)
 сделал бы BACKUP; файл, потерявший данные, называется FILDAMAGED. Не
 читаются: saveset-ы, зашифрованные BACKUP (/ENCRYPT), и LBN-данные
 saveset-ов /IMAGE и /PHYSICAL. /COMPARE, /INCREMENTAL, /ORIGINAL,
-/IMAGE и /TRANSFER к такому saveset-у не применяются. Формат описан в
-doc/vmsbackup.md.
+/IMAGE и /TRANSFER к такому saveset-у не применяются. Midnight Commander
+открывает его, как saveset VBACKUP (через vbackup); MultiArc в far2l (он
+узнаёт saveset по "VBKB" в начале, а BACKUP этого не пишет), модуль WCX
+для Total и Double Commander и vbkx-go, vbkx-rs, vbkx-pl -- нет. Формат описан в doc/vmsbackup.md.
 
 ## Время -- как записывается время
 

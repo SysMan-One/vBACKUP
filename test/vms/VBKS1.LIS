@@ -3,7 +3,7 @@ Listing of save set(s)
 Save set:          VBKS1.BCK
 Written by:        SYSTEM      
 UIC:               [000001,000004]
-Date:               5-OCT-2026 18:44:13.19
+Date:               5-OCT-2026 19:25:00.80
 Command:           BACKUP [LAISHEV.VBKS...]*.*;* VBKS1.BCK/SAVE_SET/BLOCK_SIZE=8192/GROUP_SIZE=5
 Operating system:  OpenVMS Alpha version V8.3
 BACKUP version:    V8.3
@@ -14,9 +14,9 @@ Group size:        5
 Buffer count:      478
 
 [LAISHEV.VBKS]a^.b^.c.txt;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:13
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:13 (1)
-                      File ID: (15585,1,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15574,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -26,9 +26,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]BIN.DAT;1
-                      Size:       6/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15571,4,1)    Expires: <None specified>
+                      Size:       6/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15568,4,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -38,9 +38,9 @@ Buffer count:      478
   Record attributes:  None
 
 [LAISHEV.VBKS]EMPTY.DAT;1
-                      Size:       0/0         Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15573,2,1)    Expires: <None specified>
+                      Size:       0/0         Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15570,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -50,9 +50,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]FIX80.TXT;1
-                      Size:      19/32        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15569,2,1)    Expires: <None specified>
+                      Size:      19/32        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15566,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -62,9 +62,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]IDX.DAT;1
-                      Size:      32/32        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15570,2,1)    Expires: <None specified>
+                      Size:      32/32        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15567,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Indexed
@@ -74,9 +74,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]LONG.TXT;1
-                      Size:      33/48        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15564,2,1)    Expires: <None specified>
+                      Size:      33/48        Created:  5-OCT-2026 19:24:59
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:24:59 (1)
+                      File ID: (15560,2,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -86,9 +86,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]Mixed^_Case.txt;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:13
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:13 (1)
-                      File ID: (15584,1,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15573,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -97,10 +97,22 @@ Buffer count:      478
   Record format:      Variable length
   Record attributes:  Carriage return
 
+[LAISHEV.VBKS]NOSPAN.TXT;1
+                      Size:      17/32        Created:  5-OCT-2026 19:24:59
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:24:59 (1)
+                      File ID: (15561,3,1)    Expires: <None specified>
+                                              Backup:  <No backup done>
+  File protection:    System:RWED, Owner:RWED, Group:RE, World:
+  File organization:  Sequential
+  File attributes:    Allocation = 32, Extend = 0
+                      Global Buffer Count = 0
+  Record format:      Variable length
+  Record attributes:  Carriage return, Non-spanned
+
 [LAISHEV.VBKS]STM.TXT;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15566,2,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:24:59
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:24:59 (1)
+                      File ID: (15563,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -110,9 +122,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]STMCR.TXT;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15567,2,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15564,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -122,9 +134,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]STMLF.TXT;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15565,2,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:24:59
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:24:59 (1)
+                      File ID: (15562,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -134,9 +146,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]SUB.DIR;1
-                      Size:       1/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (0)
-                      File ID: (15562,2,1)    Expires: <None specified>
+                      Size:       1/16        Created:  5-OCT-2026 19:24:59
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:24:59 (0)
+                      File ID: (15544,2,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWE, Owner:RWE, Group:RE, World:E
   File organization:  Sequential
@@ -146,9 +158,9 @@ Buffer count:      478
   Record attributes:  Non-spanned
 
 [LAISHEV.VBKS.SUB]V.TXT;2
-                      Size:      15/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15575,2,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15572,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -158,9 +170,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS.SUB]V.TXT;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15574,2,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15571,5,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -170,9 +182,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]UDF.DAT;1
-                      Size:       6/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (2)
-                      File ID: (15572,2,1)    Expires: <None specified>
+                      Size:       6/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (2)
+                      File ID: (15569,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -182,9 +194,9 @@ Buffer count:      478
   Record attributes:  None
 
 [LAISHEV.VBKS]VAR.TXT;1
-                      Size:      15/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15563,2,1)    Expires: <None specified>
+                      Size:      15/16        Created:  5-OCT-2026 19:24:59
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:24:59 (1)
+                      File ID: (15547,2,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -194,9 +206,9 @@ Buffer count:      478
   Record attributes:  Carriage return
 
 [LAISHEV.VBKS]VFC.TXT;1
-                      Size:      16/16        Created:  5-OCT-2026 18:44:12
-                      Owner: [000001,000001]  Revised:  5-OCT-2026 18:44:12 (1)
-                      File ID: (15568,2,1)    Expires: <None specified>
+                      Size:      16/16        Created:  5-OCT-2026 19:25:00
+                      Owner: [000001,000001]  Revised:  5-OCT-2026 19:25:00 (1)
+                      File ID: (15565,3,1)    Expires: <None specified>
                                               Backup:  <No backup done>
   File protection:    System:RWED, Owner:RWED, Group:RE, World:
   File organization:  Sequential
@@ -206,6 +218,6 @@ Buffer count:      478
   Record attributes:  Print file format
 
 
-Total of 16 files, 233 blocks
+Total of 17 files, 250 blocks
 End of save set
 

@@ -764,7 +764,10 @@ Bad blocks are rebuilt from the XOR blocks of /GROUP_SIZE as BACKUP
 would; a file that lost data is said FILDAMAGED. Not read: savesets
 BACKUP encrypted (/ENCRYPT), and the LBN data of /IMAGE and /PHYSICAL
 savesets. /COMPARE, /INCREMENTAL, /ORIGINAL, /IMAGE and /TRANSFER are
-not for such a saveset. doc/vmsbackup.md tells the format.
+not for such a saveset. Midnight Commander opens it like one of
+VBACKUP's (through vbackup); MultiArc of far2l (it knows a saveset by
+"VBKB" at its start, which BACKUP does not write), the WCX plugin of
+Total and Double Commander and vbkx-go, vbkx-rs, vbkx-pl do not. doc/vmsbackup.md tells the format.
 
 ## Time -- how a time value is written
 

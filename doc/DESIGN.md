@@ -219,7 +219,7 @@ ORIGINAL, у остальных DEFAULT), `/[NO]XATTRS`, `/INCREMENTAL` (эта�
 | 6 | **Сделано (X01-06).**  Шифрование (раздел 17, format.md 6.10): `/ENCRYPT`, `/KEY_FILE`, `VBACKUP_KEY_FILE`; vbkx `-k`/`-n`, vbkx-go/rs/pl, WCX, MC и MultiArc через файл ключа; инструкции SHA-256 ARMv8 с самопроверкой.  Командная строка: MAXPARM, приклеенные квалификаторы, `.sav`.  Параллельное шифрование - этап 7 |
 | 7 | **Сделано (X01-08).**  Saveset из канала (`-` на входе, раздел 18); `lib/` без printf; пул потоков шифрования `lib/vbkpar.c` (только в vbackup); STARTED/COMPLETED и весь текст утилиты через FAO (X01-07).  Отложено: skip list для журнала (из TTR reseq.c) - пока не нужен |
 | 8 | **Сделано (X01-11).**  Тома через канал подряд, приём потока в файлы томов и копия saveset-а блок за блоком (`/TRANSFER`, `src/vbkxfr.c`), saveset на другом узле `node::file` через ssh (`src/vbkrsh.c`); конвейер шифрования при записи (раздел 19).  Расписание и ротация - дело BATCH, не vbackup |
-| 9 | **Сделано (X01-13).**  Чтение saveset-ов OpenVMS BACKUP (раздел 20, `doc/vmsbackup.md`): `lib/vbkvms.c`, `src/vbkvms.c`; `/LIST[/FULL]` как у BACKUP, восстановление, `/EXTRACT`, vbkx и vbkx.exe; эталоны с OpenVMS Alpha V8.3 в `test/vms`, `test/vms.sh`.  Skip list для журнала оценён и отклонён: сортировка журнала - 0,69 с на миллион записей |
+| 9 | **Сделано (X01-13).**  Чтение saveset-ов OpenVMS BACKUP (раздел 20, `doc/vmsbackup.md`): `lib/vbkvms.c`, `src/vbkvms.c`; `/LIST[/FULL]` как у BACKUP, восстановление, `/EXTRACT`, vbkx и vbkx.exe; эталоны с OpenVMS Alpha V8.3 в `test/vms`, `test/vms.sh`.  Skip list для журнала оценён и отложен (держим в памяти): сортировка журнала - 0,69 с на миллион записей |
 
 
 ## 7. Открытые вопросы

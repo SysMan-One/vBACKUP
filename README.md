@@ -37,7 +37,9 @@ What a saveset gives you:
   test a saveset where VBACKUP is not installed (`vbackup /HELP VBKX`);
 - the savesets of OpenVMS BACKUP read too: listed as `BACKUP/LIST`
   lists them, their files restored with Linux names and their texts made
-  texts, bad blocks rebuilt from their XOR groups (`vbackup /HELP OPENVMS`,
+  texts, bad blocks rebuilt from their XOR groups - by vbackup, vbkx,
+  vbkx.exe and Midnight Commander; not by far2l, the WCX plugin or the
+  extractors for the geeks (`vbackup /HELP OPENVMS`,
   [doc/vmsbackup.md](doc/vmsbackup.md));
 - no dependency beyond libc, StarLet and HELP.
 

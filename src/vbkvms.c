@@ -69,6 +69,9 @@ typedef struct vbk_vmsout_t
 } VBK$VMSOUT_T;
 
 
+static	void	s_vbk$vts	(uint64_t a_vtime, struct timespec *a_ts);
+
+
 /*
 **++
 **  FUNCTIONAL DESCRIPTION:
@@ -86,11 +89,13 @@ int	vbk$vms_isss	(
 	const	char *		a_spec
 			)
 {
-uint8_t	*l_blk;
-int	l_fd, l_status = STS$K_WARN;
-ssize_t	l_n;
+uint8_t		*l_blk;
+int		l_fd, l_status = STS$K_WARN;
+ssize_t		l_n;
+struct stat	l_st;
 
-	if ( !strcmp(a_spec, "-") || (0 > (l_fd = open(a_spec, O_RDONLY | O_CLOEXEC))) )
+	/* A regular file only: a FIFO would hang the open, a device be read from */
+	if ( !strcmp(a_spec, "-") || stat(a_spec, &l_st) || !S_ISREG(l_st.st_mode) || (0 > (l_fd = open(a_spec, O_RDONLY | O_CLOEXEC))) )
 		return	STS$K_WARN;
 
 	if ( (l_blk = malloc(VBK$K_VMSMAXBSZ)) )
@@ -396,11 +401,49 @@ uint32_t	l_fidnum = a_f->fid [0] | ((uint32_t) (a_f->fid [2] >> 8) << 16);
 
 
 /*
+**  /FORMAT=LS: one line as ls -l, for the extfs of MC and MultiArc - the
+**  Linux name, the octets up to the end of file, the revision date; the
+**  owner the UIC
+*/
+static	void	s_vbk$vls	(
+		FILE *		a_out,
+	const	VBK$VMSFILE *	a_f,
+	const	char *		a_name
+			)
+{
+char		l_perm [16], l_tim [32], l_uic [32];
+uint32_t	l_mode = vbk$vms_mode(a_f->fpro, a_f->isdir) | (a_f->isdir ? 0700 : 0);
+struct timespec	l_ts;
+struct tm	l_tm;
+time_t		l_t;
+
+	l_perm [0] = a_f->isdir ? 'd' : '-';
+
+	for ( int i = 0; i < 9; i++ )
+		l_perm [1 + i] = (l_mode & (0400 >> i)) ? "rwxrwxrwx" [i] : '-';
+
+	l_perm [10] = '\0';
+
+	s_vbk$vts(a_f->revdate, &l_ts);
+	l_t	= (l_ts.tv_nsec == UTIME_OMIT) ? 0 : l_ts.tv_sec;
+	localtime_r(&l_t, &l_tm);
+	$VBKFAOB(l_tim, sizeof(l_tim), "!2ZL-!2ZL-!4ZL !2ZL:!2ZL:!2ZL", l_tm.tm_mon + 1, l_tm.tm_mday, l_tm.tm_year + 1900,
+		l_tm.tm_hour, l_tm.tm_min, l_tm.tm_sec);
+
+	$VBKFAOB(l_uic, sizeof(l_uic), "!UL,!UL", (a_f->uic >> 16) & 0xFFFF, a_f->uic & 0xFFFF);
+
+	$VBKFAOP(a_out, "!AZ   1 !AZ!#*  vms      !#UQ !AZ !AZ\n", l_perm, l_uic, VBK$PADW(8, strlen(l_uic)),
+		VBK$NUMW(10, a_f->bytes), a_f->bytes, l_tim, a_name);
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
 **	/LIST of a saveset of BACKUP: as BACKUP/LIST shows it, brief or
-**	/FULL; /SELECT and /EXCLUDE on the Linux names.
+**	/FULL, or /FORMAT=LS by the Linux names (MC); /SELECT and /EXCLUDE
+**	on the Linux names.
 **
 **  RETURN VALUE:
 **	STS$K_SUCCESS, or the condition reported.
@@ -418,7 +461,7 @@ VBK$VMSSUM	l_sum;
 FILE *		l_out = stdout;
 char		l_prev [VBK$K_VMSNAME] = "", l_name [VBACKUP$K_SZ_PATH];
 uint64_t	l_nfiles = 0, l_nblocks = 0;
-int		l_full = (a_opts->lstfmt == VBACKUP$K_LST_FULL), l_head = 0;
+int		l_full = (a_opts->lstfmt == VBACKUP$K_LST_FULL), l_ls = (a_opts->lstfmt == VBACKUP$K_LST_LS), l_head = l_ls;
 
 	if ( !(1 & s_vbk$vopen(&l_vms, l_spec)) )
 		return	STS$K_ERROR;
@@ -461,7 +504,10 @@ int		l_full = (a_opts->lstfmt == VBACKUP$K_LST_FULL), l_head = 0;
 		if ( !s_vbk$vname(&l_f, l_prev, sizeof(l_prev), l_name, sizeof(l_name)) || !s_vbk$vwanted(a_opts, l_name) )
 			continue;
 
-		s_vbk$ventry(l_out, &l_f, l_full);
+		if ( l_ls )
+			s_vbk$vls(l_out, &l_f, l_name);
+		else	s_vbk$ventry(l_out, &l_f, l_full);
+
 		l_nfiles++;
 		l_nblocks += l_f.used;
 		}
@@ -469,7 +515,8 @@ int		l_full = (a_opts->lstfmt == VBACKUP$K_LST_FULL), l_head = 0;
 	if ( !l_head )
 		s_vbk$vheading(l_out, l_spec, &l_vms.sum);
 
-	$VBKFAOP(l_out, "\nTotal of !UQ file!%S, !UQ block!%S\nEnd of save set\n\n", l_nfiles, l_nblocks);
+	if ( !l_ls )
+		$VBKFAOP(l_out, "\nTotal of !UQ file!%S, !UQ block!%S\nEnd of save set\n\n", l_nfiles, l_nblocks);
 
 	if ( (l_out != stdout) && fclose(l_out) )
 		$VBKMSG(VBACKUP$_WRITERR, a_opts->lstfile, errno, strerror(errno));

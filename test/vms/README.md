@@ -13,7 +13,7 @@ files here, all put there by FTP:
 | `VBKS3.BCK` | the same with the defaults: 32256, a group of 10 |
 | `VBKS1.LIS` | `BACKUP/LIST=VBKS1.LIS/FULL VBKS1.BCK/SAVE_SET` |
 | `VBKS2.LIS` | `BACKUP/LIST=VBKS2.LIS VBKS2.BCK/SAVE_SET` |
-| `TEXT.TXT` | the text all the text files were made of: VAR, STM, STMCR, STMLF, VFC (CONVERT/FDL), and their copies - FTP of VMS gives it back from each |
+| `TEXT.TXT` | the text all the text files were made of: VAR, VAR non-spanned (`NOSPAN.TXT`, 0xFFFF at the end of each block), STM, STMCR, STMLF, VFC (CONVERT/FDL), and their copies - FTP of VMS gives it back from each |
 | `LONG.TXT` | a variable file of records of 4 to 9 KB, as FTP gives it |
 | `BIN.DAT` | 3000 random octets: `BIN.DAT` (fixed 512) and `UDF.DAT` (undefined) |
 | `FIX80.REF` | `FIX80.TXT` (fixed 80, CONVERT/PAD) as FTP gives it: each record of 80 octets and LF |

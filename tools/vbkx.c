@@ -2108,8 +2108,10 @@ uint8_t *	l_blk;
 size_t		l_got = 0;
 int64_t		l_rc;
 int		l_fd, l_is = 0;
+struct stat	l_st;
 
-	if ( !strcmp(a_spec, "-") || (0 > (l_fd = vbk$os_open(a_spec))) )
+	/* A regular file only: a FIFO would hang the open, a device be read from */
+	if ( !strcmp(a_spec, "-") || stat(a_spec, &l_st) || !S_ISREG(l_st.st_mode) || (0 > (l_fd = vbk$os_open(a_spec))) )
 		return	0;
 
 	if ( (l_blk = malloc(VBK$K_VMSMAXBSZ)) )

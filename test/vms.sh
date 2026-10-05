@@ -22,7 +22,8 @@
 #			    VBKS2.LIS	BACKUP/LIST VBKS2.BCK/SAVE_SET
 #
 #			TEXT.TXT is the text every text file was made of (so
-#			FTP of VMS gives it back from each), LONG.TXT one with
+#			FTP of VMS gives it back from each; NOSPAN.TXT has
+#			records that do not cross a block), LONG.TXT one with
 #			records of 4 to 9 KB, BIN.DAT the binary of BIN.DAT and
 #			UDF.DAT; FIX80.REF the fixed records with LF, IDX.REF
 #			the indexed file as it is on the disk.
@@ -69,7 +70,7 @@ zap () {
 #	The files of a restore of VBKS: each against its reference
 tree_ok () {
 	T=$1/LAISHEV/VBKS
-	for f in VAR.TXT STM.TXT STMCR.TXT STMLF.TXT VFC.TXT a.b.c.txt "Mixed Case.txt" SUB/V.TXT "SUB/V.TXT;1"; do
+	for f in VAR.TXT NOSPAN.TXT STM.TXT STMCR.TXT STMLF.TXT VFC.TXT a.b.c.txt "Mixed Case.txt" SUB/V.TXT "SUB/V.TXT;1"; do
 		cmp -s "$T/$f" "$R/TEXT.TXT" || { echo "$f differs from TEXT.TXT"; return 1; }
 	done
 	cmp -s "$T/LONG.TXT" "$R/LONG.TXT" || { echo "LONG.TXT differs"; return 1; }
@@ -79,7 +80,7 @@ tree_ok () {
 	cmp -s "$T/IDX.DAT" "$R/IDX.REF" || { echo "IDX.DAT differs"; return 1; }
 	[ -f "$T/EMPTY.DAT" ] && [ ! -s "$T/EMPTY.DAT" ] || { echo "EMPTY.DAT"; return 1; }
 	[ -d "$T/SUB" ] || { echo "SUB is no directory"; return 1; }
-	[ "$(find "$1" | wc -l)" = 19 ] || { echo "not 19 names: $(find "$1" | wc -l)"; return 1; }
+	[ "$(find "$1" | wc -l)" = 20 ] || { echo "not 20 names: $(find "$1" | wc -l)"; return 1; }
 	return 0
 }
 
@@ -99,26 +100,29 @@ check 'cmp -s l2.lis "$R/VBKS2.LIS"' "list brief: not BACKUP/LIST's listing"
 check 'grep -q "VMSNOCRC, Saveset:" l2.err' "list /NOCRC: VMSNOCRC not said"
 
 $VB "$R/VBKS3.BCK" /LIST > l3.lis 2>&1; rc=$?
-check 'grep -q "^Total of 16 files, 233 blocks$" l3.lis && grep -q "^Block size:        32256$" l3.lis' "list default sizes: totals or block size"
+check 'grep -q "^Total of 17 files, 250 blocks$" l3.lis && grep -q "^Block size:        32256$" l3.lis' "list default sizes: totals or block size"
 
 $VB "$R/VBKS1.BCK" /LIST /SELECT="*/SUB/*" > ls.lis 2>&1; rc=$?
 check 'grep -q "^Total of 2 files, 30 blocks$" ls.lis' "list /SELECT: not the two files of SUB"
+
+$VB "$R/VBKS1.BCK" /LIST /FORMAT=LS > lls.lis 2>&1; rc=$?
+check '[ $rc = 0 ] && [ "$(wc -l < lls.lis)" = 17 ] && grep -q "^drwxr-x--x   1 1,1 .* LAISHEV/VBKS/SUB$" lls.lis && grep -q " LAISHEV/VBKS/SUB/V.TXT;1$" lls.lis' "list /FORMAT=LS (MC): not 17 lines by the Linux names"
 
 #
 #	The restore: each file as FTP of VMS gives it
 #
 $VB "$R/VBKS1.BCK" r1 > r1.log 2>&1; rc=$?
-check '[ $rc = 0 ] && tree_ok r1 > r1.why' "restore VBKS1: $(cat r1.why 2>/dev/null)"
+check '[ $rc = 0 ] && tree_ok r1' "restore VBKS1"
 check 'grep -q "VMSSAVESET, Saveset: .*Block size: 8192, Group size: 5" r1.log' "restore: VMSSAVESET not said"
 check 'grep -q "VMSRAW, File: r1/LAISHEV/VBKS/IDX.DAT, Organization: Indexed" r1.log' "restore: the indexed file not said VMSRAW"
-check 'grep -q "RESTSUMM, Files: 16," r1.log' "restore: RESTSUMM not 16 files"
+check 'grep -q "RESTSUMM, Files: 17," r1.log' "restore: RESTSUMM not 17 files"
 check '[ "$(stat -c %a r1/LAISHEV/VBKS/VAR.TXT)" = 640 ] && [ "$(stat -c %a r1/LAISHEV/VBKS/SUB)" = 751 ]' "restore: modes from the protection (640, a directory 751)"
-check '[ "$(date -r r1/LAISHEV/VBKS/VAR.TXT "+%Y-%m-%d %H:%M:%S")" = "2026-10-05 18:44:12" ]' "restore: the revision date as the time of the file"
+check '[ "$(date -r r1/LAISHEV/VBKS/VAR.TXT "+%Y-%m-%d %H:%M:%S")" = "2026-10-05 19:24:59" ]' "restore: the revision date as the time of the file"
 
 $VB "$R/VBKS2.BCK" r2 > r2.log 2>&1; rc=$?
-check 'tree_ok r2 > r2.why' "restore VBKS2 (/NOCRC, no groups): $(cat r2.why 2>/dev/null)"
+check 'tree_ok r2' "restore VBKS2 (/NOCRC, no groups)"
 $VB "$R/VBKS3.BCK" r3 > r3.log 2>&1; rc=$?
-check 'tree_ok r3 > r3.why' "restore VBKS3 (32256, group 10): $(cat r3.why 2>/dev/null)"
+check 'tree_ok r3' "restore VBKS3 (32256, group 10)"
 
 $VB "$R/VBKS1.BCK" r1 > rx.log 2>&1; rc=$?
 check '[ $rc != 0 ] && grep -q "FILEEXISTS, File: r1/LAISHEV/VBKS/VAR.TXT" rx.log' "restore again: FILEEXISTS not said"
@@ -186,11 +190,11 @@ check 'grep -q "OPENOUT, File: ../LAISHEV/BIN.DAT" f.log && [ ! -e fo/LAISHEV ]'
 #	vbkx: the same files, the same judgement
 #
 $VX l "$R/VBKS1.BCK" > x.lis 2>&1; rc=$?
-check '[ "$(wc -l < x.lis)" = 16 ] && grep -q " d0751 LAISHEV/VBKS/SUB$" x.lis && grep -q "LAISHEV/VBKS/SUB/V.TXT;1$" x.lis' "vbkx l: not the 16 files"
+check '[ "$(wc -l < x.lis)" = 17 ] && grep -q " d0751 LAISHEV/VBKS/SUB$" x.lis && grep -q "LAISHEV/VBKS/SUB/V.TXT;1$" x.lis' "vbkx l: not the 17 files"
 $VX t "$R/VBKS1.BCK" > xt.log 2>&1; rc=$?
 check '[ $rc = 0 ] && grep -q "all block CRCs match" xt.log' "vbkx t: not clean"
 $VX x "$R/VBKS3.BCK" -C xo > xo.log 2>&1; rc=$?
-check '[ $rc = 0 ] && tree_ok xo > xo.why' "vbkx x: $(cat xo.why 2>/dev/null)"
+check '[ $rc = 0 ] && tree_ok xo' "vbkx x"
 $VX p "$R/VBKS1.BCK" LAISHEV/VBKS/LONG.TXT > xp.txt 2> xp.log; rc=$?
 check 'cmp -s xp.txt "$R/LONG.TXT"' "vbkx p: LONG.TXT"
 $VX t d2.bck > xd.log 2>&1; rc=$?

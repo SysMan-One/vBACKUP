@@ -1,0 +1,7 @@
+FILE
+	ORGANIZATION	sequential
+RECORD
+	BLOCK_SPAN	no
+	CARRIAGE_CONTROL	carriage_return
+	FORMAT	variable
+	SIZE	0

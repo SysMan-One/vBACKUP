@@ -220,6 +220,14 @@ of them in ASCII mode:
 Fortran carriage control: the first octet of a record is the control -
 "0" a line more, "1" a form feed, the others nothing - and is dropped.
 
+Checked against `test/vms`: variable (also with records of 4 to 9 KB,
+and non-spanned - each block of it ends with 0xFFFF), VFC with print
+control, fixed of 80 with carriage return, Stream, Stream_CR, Stream_LF,
+fixed of 512 and undefined without a carriage control, an indexed file.
+Taken from the description of RMS, not shown by a saveset here: Fortran
+carriage control, fixed non-spanned records, variable and VFC records
+without a carriage control, relative files.
+
 Everything else is copied as it is on the disk, up to the end of file,
 a block lost a hole of zeroes at its place: undefined and fixed records
 without a carriage control (an image, an object library), variable and
@@ -243,8 +251,9 @@ a file is said VMSRAW, its data is the image of the RMS file.
 
 ## 7. The listing
 
-`/LIST` prints what `BACKUP/LIST` prints, `/LIST/FULL` what
-`BACKUP/LIST/FULL` prints: the heading from the SUMMARY, one line - or
+`/LIST /FORMAT=LS` prints one line per file as `ls -l`, by the Linux
+names - for the extfs of Midnight Commander.  `/LIST` prints what
+`BACKUP/LIST` prints, `/LIST/FULL` what `BACKUP/LIST/FULL` prints: the heading from the SUMMARY, one line - or
 one entry - per file, the totals of files and blocks.  The `/FULL`
 entries show the attributes of section 3 in the layout of BACKUP V8.3;
 a field of the FAT not shown by the savesets of `test/vms` (a VFC file
