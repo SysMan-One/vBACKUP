@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWRT"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -48,6 +48,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-08		 5-OCT-2026	RRL
+**		No printf: the names by VBK$STRPUT.
+**
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets: the payload of a DATA block and of the TRAILER
 **		sealed before the XOR and the CRC; CAP, the room left by the TAG.
@@ -67,7 +70,6 @@
 */
 
 #include	<stdlib.h>
-#include	<stdio.h>
 #include	<string.h>
 #include	<errno.h>
 #include	<fcntl.h>
@@ -495,7 +497,7 @@ struct stat	l_st;
 	if ( a_ctx->isstdout )
 		{
 		a_ctx->fd	= STDOUT_FILENO;
-		snprintf(a_ctx->volspec, sizeof(a_ctx->volspec), "%s", "(standard output)");
+		vbk$strput(a_ctx->volspec, sizeof(a_ctx->volspec), "(standard output)");
 		}
 	else	{
 		if ( !(1 & vbk$volspec(a_ctx->spec, a_ctx->volno, a_ctx->volspec, sizeof(a_ctx->volspec))) )
@@ -681,7 +683,7 @@ int	vbk$wrt_open	(
 {
 int	l_status;
 
-	snprintf(a_ctx->spec, sizeof(a_ctx->spec), "%s", a_spec);
+	vbk$strput(a_ctx->spec, sizeof(a_ctx->spec), a_spec);
 
 	a_ctx->fd	= -1;
 	a_ctx->isstdout	= !strcmp(a_spec, "-");

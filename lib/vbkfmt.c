@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKFMT"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -19,6 +19,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-08		 5-OCT-2026	RRL
+**		No printf in the core: VBK$VOLSPEC writes the number of a volume
+**		itself, VBK$STRPUT copies a string.
+**
 **	X01-06		 5-OCT-2026	RRL
 **		VBK$BLK_CHECK takes the block types EDATA and ETRAILER.
 **
@@ -33,7 +37,6 @@
 */
 
 #include	<stdlib.h>
-#include	<stdio.h>
 #include	<string.h>
 
 #include	"vbkfmt.h"
@@ -448,11 +451,58 @@ int	vbk$volspec	(
 		size_t		a_outsz
 			)
 {
-int	l_n;
+char	l_num [16];
+size_t	l_len = strlen(a_spec), l_nd = 0;
 
-	if ( a_volno <= 1 )
-		l_n	= snprintf(a_out, a_outsz, "%s", a_spec);
-	else	l_n	= snprintf(a_out, a_outsz, "%s.%03u", a_spec, a_volno);
+	/* The name, then for k >= 2 "." and k in decimal, three digits at least - no printf in the core */
+	if ( a_volno > 1 )
+		{
+		char	l_rev [12];
+		size_t	l_r = 0;
 
-	return	((l_n < 0) || ((size_t) l_n >= a_outsz)) ? STS$K_ERROR : STS$K_SUCCESS;
+		for ( uint32_t l_v = a_volno; l_v; l_v /= 10 )
+			l_rev [l_r++] = (char) ('0' + (l_v % 10));
+
+		while ( l_r < 3 )
+			l_rev [l_r++] = '0';
+
+		l_num [l_nd++] = '.';
+
+		while ( l_r )
+			l_num [l_nd++] = l_rev [--l_r];
+		}
+
+	if ( (l_len + l_nd) >= a_outsz )
+		{
+		if ( a_outsz )
+			a_out [0] = '\0';
+
+		return	STS$K_ERROR;
+		}
+
+	memcpy(a_out, a_spec, l_len);
+	memcpy(a_out + l_len, l_num, l_nd);
+	a_out [l_len + l_nd] = '\0';
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  Copy a string into a buffer of <a_size>, cut to it, always ended by a NUL
+*/
+void	vbk$strput	(
+		char *		a_buf,
+		size_t		a_size,
+	const	char *		a_src
+			)
+{
+size_t	l_n = strlen(a_src);
+
+	if ( !a_size )
+		return;
+
+	l_n	= (l_n < a_size) ? l_n : (a_size - 1);
+	memcpy(a_buf, a_src, l_n);
+	a_buf [l_n] = '\0';
 }

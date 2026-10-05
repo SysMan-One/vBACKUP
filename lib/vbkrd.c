@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-08		 5-OCT-2026	RRL
+**		No printf: the name of volume 1 by VBK$STRPUT.
+**
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets (format.md 6.10): EDATA blocks checked by
 **		their TAG before the repair, the repaired one after it, then
@@ -61,7 +64,6 @@
 #include	<stdlib.h>
 #include	<string.h>
 #include	<errno.h>
-#include	<stdio.h>
 
 #include	"vbkrd.h"
 #include	"vbkos.h"
@@ -272,7 +274,7 @@ uint16_t	l_tag;
 const uint8_t *	l_val;
 int		l_fd, l_isreg = 0;
 
-	snprintf(a_ctx->spec, sizeof(a_ctx->spec), "%s", a_spec);
+	vbk$strput(a_ctx->spec, sizeof(a_ctx->spec), a_spec);
 
 	a_ctx->evcb	= a_evcb;
 	a_ctx->evarg	= a_evarg;
