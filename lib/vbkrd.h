@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-08"
+#define	__IDENT__	"X01-11"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.8.0"
+#define	__REV__		"1.11.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		SBASE of a volume of a stream.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		ISSTREAM, SPOS; VBK$K_STREAMBLK.
@@ -78,6 +81,7 @@ typedef struct vbk_rvol_t
 	int		fd;			/* -1 - the volume is missing			*/
 	uint64_t	firstblk;		/* blkno of its VHDR				*/
 	uint64_t	nblk;			/* Whole blocks in it				*/
+	uint64_t	sbase;			/* A stream: the octet of it the volume begins at */
 } VBK$RVOL;
 
 /*

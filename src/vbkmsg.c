@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-11"
+#define	__REV__		"1.11.0"
 
 /*
 **++
@@ -19,6 +19,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		BLKCOPIED, XFRSUMM, REMOTE, REMOTEERR.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		Every message in one form: what it is about first, as "Label:
@@ -161,7 +164,11 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_ENCRYPTED,	"ENCRYPTED, Saveset: !AZ, Iterations: !UL - encrypted: ChaCha20, HMAC-SHA256, PBKDF2"),
 	$VBKREC(VBACKUP$_GLUED,		"GLUED, Parameter: !AZ - the qualifiers glued to it are taken as qualifiers"),
 	$VBKREC(VBACKUP$_STARTED,	"STARTED, Operation: !AZ, Input: !AZ!AZ!AZ - started"),
-	$VBKREC(VBACKUP$_COMPLETED,	"COMPLETED, Operation: !AZ, Seconds: !UL.!2ZL - !AZ")
+	$VBKREC(VBACKUP$_COMPLETED,	"COMPLETED, Operation: !AZ, Seconds: !UL.!2ZL - !AZ"),
+	$VBKREC(VBACKUP$_BLKCOPIED,	"BLKCOPIED, Block: !UQ, Volume: !UL - is bad, copied as it is: a restore repairs it from its group"),
+	$VBKREC(VBACKUP$_XFRSUMM,	"XFRSUMM, Blocks: !UQ, Volumes: !UL, Bad: !UQ - copied"),
+	$VBKREC(VBACKUP$_REMOTE,	"REMOTE, Node: !AZ, errno: !SL - the pipe to VBACKUP there cannot be made (!AZ)"),
+	$VBKREC(VBACKUP$_REMOTEERR,	"REMOTEERR, Node: !AZ, Exit: !UL - VBACKUP there did not complete: see its messages above")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

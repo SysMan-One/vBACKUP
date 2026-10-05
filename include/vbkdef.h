@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-07"
+#define	__IDENT__	"X01-11"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.7.0"
+#define	__REV__		"1.11.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		VBACKUP$K_OP_TRANSFER; VBKXFR.C, VBKRSH.C; BLKCOPIED, XFRSUMM, REMOTE,
+**		REMOTEERR.
 **
 **	X01-07		 5-OCT-2026	RRL
 **		STARTED, COMPLETED; $VBKFAOB, $VBKFAOP, $VBKFAOD, VBK$NUMW,
@@ -185,6 +189,10 @@ enum	{
 	VBACKUP$K_MSG_GLUED,			/* Qualifiers glued to a parameter, taken apart	*/
 	VBACKUP$K_MSG_STARTED,			/* The work begins: what, from where, to where	*/
 	VBACKUP$K_MSG_COMPLETED,		/* ... it is done: how, in how long		*/
+	VBACKUP$K_MSG_BLKCOPIED,		/* A saveset copied: a bad block copied as it is */
+	VBACKUP$K_MSG_XFRSUMM,			/* ... the totals				*/
+	VBACKUP$K_MSG_REMOTE,			/* node::file: the pipe to the node cannot be made */
+	VBACKUP$K_MSG_REMOTEERR,		/* ... VBACKUP there failed			*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -280,6 +288,10 @@ enum	{
 #define	VBACKUP$_GLUED		$VBKSTS(VBACKUP$K_MSG_GLUED,		STS$K_INFO)
 #define	VBACKUP$_STARTED	$VBKSTS(VBACKUP$K_MSG_STARTED,		STS$K_INFO)
 #define	VBACKUP$_COMPLETED	$VBKSTS(VBACKUP$K_MSG_COMPLETED,	STS$K_INFO)
+#define	VBACKUP$_BLKCOPIED	$VBKSTS(VBACKUP$K_MSG_BLKCOPIED,	STS$K_WARN)
+#define	VBACKUP$_XFRSUMM	$VBKSTS(VBACKUP$K_MSG_XFRSUMM,		STS$K_INFO)
+#define	VBACKUP$_REMOTE		$VBKSTS(VBACKUP$K_MSG_REMOTE,		STS$K_ERROR)
+#define	VBACKUP$_REMOTEERR	$VBKSTS(VBACKUP$K_MSG_REMOTEERR,	STS$K_ERROR)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -350,7 +362,8 @@ enum	{
 	VBACKUP$K_OP_EXTRACT,			/* One file of a saveset -> file or stdout	*/
 	VBACKUP$K_OP_COPY,			/* Files -> directory				*/
 	VBACKUP$K_OP_RECORD,			/* Savesets -> journal (rebuild)		*/
-	VBACKUP$K_OP_JNLLIST			/* Journal -> listing				*/
+	VBACKUP$K_OP_JNLLIST,			/* Journal -> listing				*/
+	VBACKUP$K_OP_TRANSFER			/* Saveset -> saveset, block for block (X01-11)	*/
 	};
 
 enum	{					/* /LIST format					*/
@@ -637,6 +650,18 @@ int	vbk$rst_write	(struct vbk_rest_t *a_rst, uint64_t a_off, const uint8_t *a_da
 int	vbk$rst_end	(struct vbk_rest_t *a_rst, uint64_t a_size, uint32_t a_crc, uint8_t a_status, int a_checkcrc);
 int	vbk$rst_finish	(struct vbk_rest_t *a_rst, uint64_t *a_nfiles, uint64_t *a_nbytes);
 const char *	vbk$rst_path	(const struct vbk_rest_t *a_rst);
+
+/*
+**  VBKXFR.C - a saveset to a saveset, block for block (pipes, volumes)
+*/
+int	vbk$transfer	(VBK$OPTS *a_opts);
+
+/*
+**  VBKRSH.C - a saveset on another node, node::file
+*/
+int	vbk$rsh_parse	(const char *a_spec, char *a_node, size_t a_nsz, const char **a_file);
+int	vbk$rsh_open	(const char *a_node, const char *a_file, int a_output, int a_replace, pid_t *a_pid);
+int	vbk$rsh_close	(const char *a_node, int a_output, int a_early, pid_t a_pid);
 
 /*
 **  VBKKEY.C - the passphrase of an encrypted saveset

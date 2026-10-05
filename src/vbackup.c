@@ -827,7 +827,11 @@ char *		l_argv [1 + 64], *l_words [2 + VBACKUP$K_MAXSPEC];
 const char *	l_glued [8], *l_opname = "";
 int		l_nglued = 0, l_announce = 0;
 struct timespec	l_t0;
-static	char	l_inwords [VBK$K_MAXCMD];
+static	char	l_inwords [VBK$K_MAXCMD], l_outwords [VBACKUP$K_SZ_PATH], l_dash [] = "-";
+char		l_rinnode [256] = "", l_routnode [256] = "";
+const char *	l_rinfile = NULL, *l_routfile = NULL;
+pid_t		l_rinpid = 0, l_routpid = 0;
+int		l_rverify = 0;
 int		l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
 size_t		l_cmdlen = 0;
 
@@ -1001,6 +1005,21 @@ size_t		l_cmdlen = 0;
 	l_list	= s_vbk$present(l_clictx, VBACKUP$K_QUAL_LIST, NULL);
 
 	/*
+	**  node::file - a saveset on another node (VBKRSH.C).  Here it is the
+	**  standard input or output, joined to VBACKUP there by a pipe.
+	*/
+	vbk$strcpy(sizeof(l_outwords), l_outwords, l_opts.output);
+
+	if ( (l_opts.ninput == 1) && vbk$rsh_parse(l_opts.input [0], l_rinnode, sizeof(l_rinnode), &l_rinfile) )
+		l_opts.input [0] = l_dash;
+
+	if ( vbk$rsh_parse(l_opts.output, l_routnode, sizeof(l_routnode), &l_routfile) )
+		{
+		l_routfile = strdup(l_routfile);
+		vbk$strcpy(sizeof(l_opts.output), l_opts.output, "-");
+		}
+
+	/*
 	**  What the command means.  A saveset on the input side is known by
 	**  its contents - every input must be one; on the output side by
 	**  /SAVE_SET, its name or "-".  An output that is no saveset, beside
@@ -1015,6 +1034,8 @@ size_t		l_cmdlen = 0;
 		l_opts.op	= VBACKUP$K_OP_EXTRACT;
 	else if ( s_vbk$present(l_clictx, VBACKUP$K_QUAL_COMPARE, NULL) )
 		l_opts.op	= VBACKUP$K_OP_COMPARE;
+	else if ( (l_status == STS$K_SUCCESS) && l_opts.output [0] && (l_opts.ninput == 1) && !l_list && s_vbk$issaveset(l_clictx, l_opts.output) )
+		l_opts.op	= VBACKUP$K_OP_TRANSFER;
 	else if ( l_status == STS$K_SUCCESS )
 		{
 		if ( l_list && !l_opts.output [0] )
@@ -1041,6 +1062,20 @@ size_t		l_cmdlen = 0;
 			return	VBACKUP$K_EXIT_ERROR;
 			}
 
+	/* A save of what is not there makes no saveset: said by its name, nothing written */
+	for ( unsigned i = 0; (l_opts.op == VBACKUP$K_OP_SAVE) && !l_opts.physical && (i < l_opts.ninput); i++ )
+		{
+		struct stat	l_st;
+
+		if ( !s_vbk$haswild(l_opts.input [i]) && lstat(l_opts.input [i], &l_st) )
+			{
+			$VBKMSG(VBACKUP$_OPENIN, l_opts.input [i], errno, strerror(errno));
+			__cli$cleanup(l_clictx);
+
+			return	VBACKUP$K_EXIT_ERROR;
+			}
+		}
+
 	if ( l_opts.encrypt && (l_opts.op != VBACKUP$K_OP_SAVE) )
 		{
 		$VBKMSG(VBACKUP$_QUALUSE, "ENCRYPT", "a saveset is made encrypted by a save; one that is, is known by itself - give /KEY_FILE or nothing");
@@ -1050,15 +1085,29 @@ size_t		l_cmdlen = 0;
 		}
 
 	/*
-	**  The standard output is one stream: one volume, and gone once
-	**  written - it cannot be read back for /VERIFY (nor /DELETE after
-	**  it), nor listed by /LIST.  Said, rather than passed over.
+	**  The standard output is gone once written - it cannot be read back
+	**  for /VERIFY (nor /DELETE after it), nor listed by /LIST.  Said,
+	**  rather than passed over.  Its volumes go back to back.
 	*/
-	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && !strcmp(l_opts.output, "-") && (l_opts.volsize || l_opts.verify || l_list) )
+	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && l_routnode [0] && (l_opts.delete || l_list) )
 		{
-		$VBKMSG(VBACKUP$_QUALUSE, l_opts.volsize ? "VOLUME_SIZE" : l_opts.verify ? "VERIFY" : "LIST",
-			l_opts.volsize ? "a saveset written to the standard output is one volume"
-			: "a saveset written to the standard output is gone once written: it cannot be read back here");
+		$VBKMSG(VBACKUP$_QUALUSE, l_opts.delete ? "DELETE" : "LIST", "not with a saveset made on another node");
+		__cli$cleanup(l_clictx);
+
+		return	VBACKUP$K_EXIT_ERROR;
+		}
+
+	/* A saveset on another node is verified once it is there: read back from it, compared here */
+	if ( l_routnode [0] )
+		{
+		l_rverify	= l_opts.verify;
+		l_opts.verify	= 0;
+		}
+
+	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && !strcmp(l_opts.output, "-") && (l_opts.verify || l_list) )
+		{
+		$VBKMSG(VBACKUP$_QUALUSE, l_opts.verify ? "VERIFY" : "LIST",
+			"a saveset written to the standard output is gone once written: it cannot be read back here");
 		__cli$cleanup(l_clictx);
 
 		return	VBACKUP$K_EXIT_ERROR;
@@ -1070,7 +1119,8 @@ size_t		l_cmdlen = 0;
 	**  is its own answer and is left as it is.
 	*/
 	{
-	static const char *	l_what [] = { "?", "save", "restore", "listing", "compare", "extract", "copy", "rebuild of the journal", "listing" };
+	static const char *	l_what [] = { "?", "save", "restore", "listing", "compare", "extract", "copy", "rebuild of the journal", "listing",
+				"copy of a saveset" };
 
 	l_opname = l_what [(l_opts.op < (int) $ARRSZ(l_what)) ? l_opts.op : 0];
 	l_announce = (l_opts.op != VBACKUP$K_OP_LIST) && (l_opts.op != VBACKUP$K_OP_NONE) && (l_opts.op != VBACKUP$K_OP_JNLLIST);
@@ -1079,9 +1129,16 @@ size_t		l_cmdlen = 0;
 	if ( l_announce )
 		$VBKMSG(VBACKUP$_STARTED, l_opname, strcmp(l_inwords, "-") ? l_inwords : "(standard input)",
 			l_opts.output [0] || l_opts.original ? ", Output: " : "",
-			!strcmp(l_opts.output, "-") ? "(standard output)" : l_opts.output [0] ? l_opts.output
+			l_routnode [0] ? l_outwords : !strcmp(l_opts.output, "-") ? "(standard output)" : l_opts.output [0] ? l_opts.output
 			: (l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? "(where its files came from)" : "");
 	}
+
+	/* The other node joined: VBACKUP there reads, or writes, the saveset through a pipe */
+	if ( l_rinnode [0] && !(1 & vbk$rsh_open(l_rinnode, l_rinfile, 0, 0, &l_rinpid)) )
+		l_opts.op	= VBACKUP$K_OP_NONE, l_rinnode [0] = '\0';
+
+	if ( l_routnode [0] && (l_opts.op != VBACKUP$K_OP_NONE) && !(1 & vbk$rsh_open(l_routnode, l_routfile, 1, l_opts.replace, &l_routpid)) )
+		l_opts.op	= VBACKUP$K_OP_NONE, l_routnode [0] = '\0';
 
 	switch ( l_opts.op )
 		{
@@ -1156,6 +1213,10 @@ size_t		l_cmdlen = 0;
 			l_status = vbk$jnl_rebuild(&l_opts);
 			break;
 
+		case	VBACKUP$K_OP_TRANSFER:
+			l_status = vbk$transfer(&l_opts);
+			break;
+
 		default:
 			/* An input given that is not there: said by its name, not as a missing parameter */
 			if ( !l_opts.output [0] && (l_status == STS$K_ERROR) )
@@ -1163,6 +1224,23 @@ size_t		l_cmdlen = 0;
 			else if ( !l_opts.output [0] )
 				$VBKMSG(VBACKUP$_NOPARAM, "output specification");
 			else	$VBKMSG(VBACKUP$_IVOP, "the input does not exist - and for a save the output must be named .bck or .sav, or /SAVE_SET given");
+		}
+
+	if ( l_rinnode [0] )
+		vbk$rsh_close(l_rinnode, 0, l_opts.op == VBACKUP$K_OP_EXTRACT, l_rinpid);
+
+	if ( l_routnode [0] && (1 & vbk$rsh_close(l_routnode, 1, 0, l_routpid)) && l_rverify && !vbk$errors() )
+		{
+		/* /VERIFY of a saveset on another node: read back from there, compared with the disk here */
+		pid_t	l_vpid;
+
+		$VBKMSG(VBACKUP$_VERIFYING, l_outwords);
+
+		if ( 1 & vbk$rsh_open(l_routnode, l_routfile, 0, 0, &l_vpid) )
+			{
+			vbk$compare(&l_opts, "-");
+			vbk$rsh_close(l_routnode, 0, 0, l_vpid);
+			}
 		}
 
 	if ( l_announce )

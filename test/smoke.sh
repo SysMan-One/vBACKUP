@@ -29,6 +29,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-11 : Volumes through a pipe; a saveset copied block for
+#					block (the same bytes, encrypted, no key; a bad
+#					block copied and said); node::file through a
+#					stand-in for ssh: save /VERIFY, restore, an error.
+#
 #		 5-OCT-2026	RRL	X-09 : /LIST /SELECT; /VERIFY and /DELETE with the standard
 #					output refused.
 #
@@ -708,8 +713,29 @@ rm -rf pz; cat pipez.bck | $VB - pz > pz.log 2>&1
 check '[ $? = 0 ] && grep -q BLKFIXED pz.log && diff -r --no-dereference etree pz/etree > /dev/null' "a bad block in a pipe not repaired: $(grep -- '-[EW]-' pz.log | head -2)"
 rm -rf pc; head -c 300000 pipe.bck | $VB - pc > pc.log 2>&1
 check '[ $? = 2 ] && grep -q NOTRAILER pc.log' "a pipe cut short not reported: $(tail -2 pc.log)"
-$VB etree - /VOLUME_SIZE=1000000 > /dev/null 2> pv.log
-check '[ $? = 2 ] && grep -q QUALUSE pv.log' "/VOLUME_SIZE with the standard output accepted"
+#	Volumes through a pipe, back to back; a saveset copied block for block - the same bytes, no key needed
+rm -rf pmv; $VB etree - /VOLUME_SIZE=600000 /BLOCK_SIZE=16384 2> /dev/null | $VB - pmv > pmv.log 2>&1
+check '[ $? = 0 ] && diff -r --no-dereference etree pmv/etree > /dev/null' "volumes through a pipe: $(grep -- '-[EW]-' pmv.log | head -2)"
+rm -f xs.bck* xd.bck*
+$VB etree xs.bck /VOLUME_SIZE=600000 /BLOCK_SIZE=16384 /DATA_FORMAT=COMPRESSED /ENCRYPT /KEY_FILE=key > /dev/null 2>&1
+$VB xs.bck - 2> /dev/null | $VB - xd.bck > xd.log 2>&1
+check '[ $? = 0 ] && [ -e xs.bck.002 ] && cmp -s xs.bck xd.bck && cmp -s xs.bck.002 xd.bck.002 && grep -q "XFRSUMM.*Bad: 0" xd.log' "a saveset through a pipe into its volume files, not the same bytes: $(tail -2 xd.log)"
+python3 -c "import sys; d=bytearray(open('xs.bck','rb').read()); d[3*16384+99]^=1; open('xb.bck','wb').write(d)"; cp xs.bck.002 xb.bck.002; cp xs.bck.003 xb.bck.003 2>/dev/null; cp xs.bck.004 xb.bck.004 2>/dev/null; cp xs.bck.005 xb.bck.005 2>/dev/null
+rm -f xbd.bck*; $VB xb.bck xbd.bck > xbd.log 2>&1
+check '[ $? = 1 ] && grep -q BLKCOPIED xbd.log && cmp -s xb.bck xbd.bck' "a bad block not copied as it is, or not said: $(tail -2 xbd.log)"
+$VB nosuch-input nosuch.bck > nsi.log 2>&1
+check '[ $? = 2 ] && grep -q OPENIN nsi.log && [ ! -e nosuch.bck ]' "a save of what is not there made a saveset"
+
+#	node::file, through a stand-in for ssh that runs the command here with this vbackup
+mkdir -p rshbin && ln -sf "$VB" rshbin/vbackup
+printf '#!/bin/sh\nshift\nPATH=%s:$PATH exec sh -c "$1"\n' "$S/rshbin" > fakessh && chmod +x fakessh
+rm -rf remote && mkdir remote
+VBACKUP_RSH=$S/fakessh $VB etree "node::$S/remote/r.bck" /VOLUME_SIZE=600000 /BLOCK_SIZE=16384 /VERIFY > rsh.log 2>&1
+check '[ $? = 0 ] && [ -e remote/r.bck.002 ] && grep -q "CMPSUMM.*Differences: 0" rsh.log' "a save to node::file /VERIFY: $(grep -- '-[EW]-' rsh.log | head -2)"
+rm -rf rsho; VBACKUP_RSH=$S/fakessh $VB "node::$S/remote/r.bck" rsho > rsho.log 2>&1
+check '[ $? = 0 ] && diff -r --no-dereference etree rsho/etree > /dev/null' "a restore from node::file: $(grep -- '-[EW]-' rsho.log | head -2)"
+VBACKUP_RSH=$S/fakessh $VB "node::$S/remote/nosuch.bck" /LIST > rshn.log 2>&1
+check '[ $? = 2 ] && grep -q REMOTEERR rshn.log' "a saveset not there on the node: not reported"
 if [ -n "$VBKX" ]; then
 	rm -rf pvx; cat pipe.bck | $VBKX x - -C pvx > pvx.log 2>&1
 	check '[ $? = 0 ] && diff -r --no-dereference etree pvx/etree > /dev/null' "vbkx x - from a pipe: $(head -2 pvx.log)"

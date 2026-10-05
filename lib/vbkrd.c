@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-11"
+#define	__REV__		"1.11.0"
 
 /*
 **++
@@ -31,6 +31,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		A stream of several volumes: the VHDR of a further one ends the volume
+**		in hand and begins the next (SBASE, where each begins); volumes
+**		skipped are missing.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		"-": a saveset read from a pipe - forward only, block by block, its
@@ -788,8 +793,9 @@ void	vbk$rd_close	(
 		VBK$RCTX *	a_ctx
 			)
 {
+	/* A stream: all its volumes are the one descriptor */
 	if ( a_ctx->vols )
-		for ( uint32_t i = 0; i < a_ctx->nvols; i++ )
+		for ( uint32_t i = 0; i < (a_ctx->isstream ? 1 : a_ctx->nvols); i++ )
 			if ( a_ctx->vols [i].fd >= 0 )
 				vbk$os_close(a_ctx->vols [i].fd);
 
@@ -941,14 +947,42 @@ uint8_t *	l_blk;
 		*/
 		VBK$BHDR	l_th;
 		uint64_t	l_i;
+		int		l_newvol = 0;
 
 		for ( l_i = 0; l_i < l_n; l_i++ )
 			{
 			uint8_t *	l_b = a_ctx->gbuf + (size_t) l_i * a_ctx->bsize;
 
-			if ( STS$K_SUCCESS != s_vbk$sread(a_ctx, l_b, a_ctx->bsize, (a_ctx->curpos + l_i) * a_ctx->bsize) )
+			if ( STS$K_SUCCESS != s_vbk$sread(a_ctx, l_b, a_ctx->bsize, l_vol->sbase + (a_ctx->curpos + l_i) * a_ctx->bsize) )
 				{
 				l_vol->nblk = a_ctx->curpos + l_i;
+				break;
+				}
+
+			/*
+			**  The VHDR of a further volume: a stream carries the volumes back
+			**  to back, and a volume begins at a group boundary (writer rule
+			**  4).  It ends the volume in hand; volumes skipped are missing.
+			*/
+			if ( (1 & vbk$blk_check(l_b, a_ctx->bsize, a_ctx->ssuuid, &l_th)) && (l_th.type == VBK$K_BT_VHDR)
+				&& (l_th.volno > a_ctx->curvol) && (l_th.volno <= VBK$K_MAXVOL) )
+				{
+				uint64_t	l_base = l_vol->sbase + (a_ctx->curpos + l_i) * a_ctx->bsize;
+
+				l_vol->nblk = a_ctx->curpos + l_i;
+
+				for ( uint32_t j = a_ctx->curvol + 1; j < l_th.volno; j++ )
+					{
+					a_ctx->vols [j - 1].fd	 = -1;
+					a_ctx->vols [j - 1].nblk = 0;
+					}
+
+				a_ctx->vols [l_th.volno - 1].fd	      = l_vol->fd;
+				a_ctx->vols [l_th.volno - 1].firstblk = l_th.blkno;
+				a_ctx->vols [l_th.volno - 1].nblk     = VBK$K_STREAMBLK;
+				a_ctx->vols [l_th.volno - 1].sbase    = l_base;
+				a_ctx->nvols	= l_th.volno;
+				l_newvol	= 1;
 				break;
 				}
 
@@ -968,6 +1002,10 @@ uint8_t *	l_blk;
 			}
 
 		l_n	= l_i;
+
+		/* The volume in hand ended right where the next one begins: on to it */
+		if ( !l_n && l_newvol )
+			return	s_vbk$loadgrp(a_ctx);
 
 		if ( !l_n )
 			{

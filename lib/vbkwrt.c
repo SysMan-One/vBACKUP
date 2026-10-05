@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWRT"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-11"
+#define	__REV__		"1.11.0"
 
 /*
 **++
@@ -47,6 +47,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 5-OCT-2026	RRL
+**		The standard output carries volumes back to back.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		No printf: the names by VBK$STRPUT.
@@ -696,8 +699,7 @@ int	l_status;
 	a_ctx->volno	= 1;
 	a_ctx->prvrecoff = VBK$K_NONE;
 
-	if ( a_ctx->isstdout )
-		a_ctx->maxvolblk = 0;
+	/* The standard output carries the volumes back to back, each beginning with its VHDR (format.md, 2) */
 
 	if ( !(1 & vbk$os_random(a_ctx->ssuuid, sizeof(a_ctx->ssuuid))) )
 		{
