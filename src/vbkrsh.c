@@ -148,9 +148,10 @@ int		l_pipe [2];
 	l_rsh	= (l_rsh && *l_rsh) ? l_rsh : "ssh";
 	s_vbk$quote(l_q, sizeof(l_q), a_file);
 
+	/* /TRANSFER: a VBACKUP there before X01-11 refuses it - it would take "- file" for a restore into a directory */
 	if ( a_output )
-		$VBKFAOB(l_cmd, sizeof(l_cmd), "vbackup - !AZ!AZ", l_q, a_replace ? " /REPLACE" : "");
-	else	$VBKFAOB(l_cmd, sizeof(l_cmd), "vbackup !AZ -", l_q);
+		$VBKFAOB(l_cmd, sizeof(l_cmd), "vbackup - !AZ /TRANSFER!AZ", l_q, a_replace ? " /REPLACE" : "");
+	else	$VBKFAOB(l_cmd, sizeof(l_cmd), "vbackup !AZ - /TRANSFER", l_q);
 
 	if ( pipe(l_pipe) )
 		return	$VBKMSG(VBACKUP$_REMOTE, a_node, errno, strerror(errno));

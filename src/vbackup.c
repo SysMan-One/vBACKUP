@@ -150,6 +150,7 @@ enum	{
 	VBACKUP$K_QUAL_DELETE,
 	VBACKUP$K_QUAL_ENCRYPT,
 	VBACKUP$K_QUAL_KEY_FILE,
+	VBACKUP$K_QUAL_TRANSFER,
 
 	VBACKUP$K_QUAL_MAX
 	};
@@ -214,6 +215,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("DELETE")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("ENCRYPT")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("KEY_FILE")},	.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("TRANSFER")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
 
@@ -246,6 +248,8 @@ static	const char	s_usage [] = {
 	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
 	"            /DELETE (with /VERIFY: the files saved and verified are deleted)\n"
 	"            /ENCRYPT (asks a passphrase twice, or /KEY_FILE=file)\n"
+	"  Saveset:  x.bck y.bck | x.bck - | - y.bck  block for block (/TRANSFER)\n"
+	"  Network:  /home node::/backup/home.bck     node::/backup/home.bck /restore\n"
 	"  Restore:  /REPLACE /OWNER=ORIGINAL|DEFAULT|user /INCREMENTAL /ORIGINAL (no output)\n"
 	"  Device:   /dev/sdb1 disk.bck /PHYSICAL      disk.bck /dev/sdc1 /PHYSICAL /REPLACE\n"
 	"  Volume:   /mnt/data vol.bck /IMAGE          vol.bck /dev/sdc1 /IMAGE /REPLACE\n"
@@ -1034,7 +1038,8 @@ size_t		l_cmdlen = 0;
 		l_opts.op	= VBACKUP$K_OP_EXTRACT;
 	else if ( s_vbk$present(l_clictx, VBACKUP$K_QUAL_COMPARE, NULL) )
 		l_opts.op	= VBACKUP$K_OP_COMPARE;
-	else if ( (l_status == STS$K_SUCCESS) && l_opts.output [0] && (l_opts.ninput == 1) && !l_list && s_vbk$issaveset(l_clictx, l_opts.output) )
+	else if ( (l_status == STS$K_SUCCESS) && l_opts.output [0] && (l_opts.ninput == 1) && !l_list
+		&& (s_vbk$issaveset(l_clictx, l_opts.output) || s_vbk$present(l_clictx, VBACKUP$K_QUAL_TRANSFER, NULL)) )
 		l_opts.op	= VBACKUP$K_OP_TRANSFER;
 	else if ( l_status == STS$K_SUCCESS )
 		{
@@ -1074,6 +1079,15 @@ size_t		l_cmdlen = 0;
 
 			return	VBACKUP$K_EXIT_ERROR;
 			}
+		}
+
+	/* /TRANSFER: a saveset to a saveset, block for block - and nothing else, whatever the words would mean */
+	if ( s_vbk$present(l_clictx, VBACKUP$K_QUAL_TRANSFER, NULL) && (l_opts.op != VBACKUP$K_OP_TRANSFER) )
+		{
+		$VBKMSG(VBACKUP$_QUALUSE, "TRANSFER", "the input must be one saveset (or -), and there must be an output");
+		__cli$cleanup(l_clictx);
+
+		return	VBACKUP$K_EXIT_ERROR;
 		}
 
 	if ( l_opts.encrypt && (l_opts.op != VBACKUP$K_OP_SAVE) )
