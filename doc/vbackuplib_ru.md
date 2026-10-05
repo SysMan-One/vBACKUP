@@ -693,7 +693,7 @@ share/vbackup/plugins/far/vbackup.ini (для far2l установка доба�
 Enter или Ctrl+PgDn на файле .bck; F5 копирует файлы.
 
 Total Commander (Windows) и Double Commander (Linux): плагин архиватора
-vbackup.wcx64 / vbackup.wcx / vbkwcx.so -- установите его в настройках
+vbackup.wcx64 (64-битный TC) / vbackup.wcx (32-битный TC; на Linux -- для DC) -- установите его в настройках
 плагинов и свяжите с расширением bck.
 
 Зашифрованный saveset: файловые менеджеры не умеют спрашивать пароль.

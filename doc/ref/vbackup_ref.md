@@ -495,9 +495,9 @@ $ vbackup /home - | ssh host 'cat > /backup/home.bck'
 $ ssh host 'vbackup /home -' | vbackup - /restore
 ```
 
-A saveset written to `-` is one volume; `/VOLUME_SIZE` is refused
-(QUALUSE). It is not verified: `/VERIFY` is skipped, `/DELETE` deletes
-nothing (SRCKEPT), and `/LIST` of the save is not done.
+A saveset written to `-` is one volume and is gone once written:
+`/VOLUME_SIZE`, `/VERIFY` (hence `/DELETE`) and `/LIST` are refused with
+it (QUALUSE).
 
 A saveset read from `-` is read once, forward only. The catalog at its
 end is of no use there: `/LIST` lists the FILE records as they come,
@@ -1043,7 +1043,8 @@ Asks at the terminal before every file is processed:
 | Operation | Question |
 |---|---|
 | Save | `Save` *stored-name* `? [N]:` |
-| Restore, copy | `Restore` *file* `? [N]:` |
+| Restore | `Restore` *file* `? [N]:` |
+| Copy | `Copy` *file* `? [N]:` |
 | `/DELETE`, deletions of `/INCREMENTAL` | `Delete` *file* `? [N]:` |
 
 Answer `YES`, `NO`, `QUIT` or `ALL`; the first letter is enough, and an
@@ -1159,9 +1160,9 @@ are kept.
 
 `/CONFIRM` asks before each deletion; `/LOG` reports each one
 (SRCDELETED); DELSUMM gives the totals. `/DELETE` cannot be combined with
-`/PHYSICAL`, `/IMAGE`, `/SINCE` or `/BEFORE` (CONFQUAL). When the saveset
-goes to the standard output it cannot be verified, and nothing is
-deleted.
+`/PHYSICAL`, `/IMAGE`, `/SINCE` or `/BEFORE` (CONFQUAL). With the standard
+output as the saveset it is refused (QUALUSE): there is nothing to verify
+against.
 
 **Example**
 
@@ -1223,8 +1224,8 @@ directory that matches is left out with everything in it. In a pattern,
 character. At most 64 patterns (TOOMANY).
 
 On a save and a copy, the excluded files are not covered; on a restore
-and a comparison they are skipped. `/EXCLUDE` does not restrict a saveset
-listing. It cannot be combined with `/INCREMENTAL`, `/PHYSICAL` or
+and a comparison they are skipped. A saveset listing leaves
+the excluded entries out. It cannot be combined with `/INCREMENTAL`, `/PHYSICAL` or
 `/IMAGE`.
 
 **Example**
@@ -1576,9 +1577,10 @@ read (NOCATALOG). The present entries of an incremental saveset are not
 listed. With a file name, the listing is written into that file, which is
 overwritten.
 
-Given to a save, `/LIST` lists the new saveset (not when it goes to the
-standard output). With `/JOURNAL` and no parameter, it lists the journal.
-`/SELECT` and `/EXCLUDE` do not restrict a saveset listing.
+Given to a save, `/LIST` lists the new saveset (refused when it goes to
+the standard output). With `/JOURNAL` and no parameter, it lists the
+journal. `/SELECT` and `/EXCLUDE` restrict a saveset listing as they
+restrict a restore.
 
 **Example**
 
@@ -1776,7 +1778,7 @@ TRAILER is skipped (NOTRAILER); entries without inode data are counted
 ```
 $ vbackup /home full.bck /RECORD /JOURNAL=/backup/home.jnl
 $ vbackup full.bck,mon.bck /RECORD /JOURNAL=/backup/home.jnl
-%VBACKUP-I-STARTED, Operation: rebuild of the journal, Input: full.bck - started
+%VBACKUP-I-STARTED, Operation: rebuild of the journal, Input: full.bck,mon.bck - started
 %VBACKUP-I-RECORDED, Files: 6, Journal: /backup/home.jnl - recorded
 %VBACKUP-I-COMPLETED, Operation: rebuild of the journal, Seconds: 0.00 - completed
 ```
@@ -1855,7 +1857,7 @@ taken. On a restore, a directory is restored only when it matches itself
 (the parents of a selected file are made anyway); on a comparison the
 files that do not match are skipped. With `/JOURNAL /LIST /FULL` the
 patterns are matched against the absolute names of the journal.
-`/SELECT` does not restrict a saveset listing. It cannot be combined with
+On a saveset listing only the entries that match are listed. It cannot be combined with
 `/INCREMENTAL`, `/PHYSICAL` or `/IMAGE`.
 
 **Example**
@@ -1913,8 +1915,8 @@ Command qualifier.
 
 On a save, after the saveset has been written, reads it back and compares
 every file with the disk (VERIFYING, then COMPARERR for a difference and
-CMPSUMM for the totals). A saveset written to the standard output is not
-verified. `/DELETE` and, under `/VERIFY`, `/RECORD` act only when the
+CMPSUMM for the totals). With a saveset written to the standard output it is
+refused (QUALUSE). `/DELETE` and, under `/VERIFY`, `/RECORD` act only when the
 verification found no difference.
 
 On a copy, reads every regular file back from both sides as soon as it
@@ -2102,7 +2104,7 @@ vbkx-rs and vbkx-pl.
 
    A save to another machine through a pipe, and a restore from it. The
    messages go to the standard error and do not mix with the saveset. A
-   saveset on a pipe is one volume and is not verified; when the pipe is
+   saveset on a pipe is one volume, not verified nor listed; when the pipe is
    cut, the restore reports NOTRAILER and restores what came.
 
 6. ```
@@ -3323,8 +3325,7 @@ saved and verified.
 
 **Explanation:** `/DELETE` kept a file. *reason* is `it changed after it was
 saved`, the reason the deletion failed, or -- with *file* `every file` --
-`the saveset did not verify` or `a saveset on the standard output cannot be
-verified`.
+`the saveset did not verify`.
 
 **User Action:** Save the file again if it changed; delete it by hand if
 that is wanted.
@@ -3453,8 +3454,8 @@ savesets saved under the same name.
 This appendix summarizes the saveset format, version 1. The authoritative
 definition is `doc/format.md`; a reader written from that document alone
 must be able to list and restore any saveset. Since X01-08 a saveset may
-also be read from the standard input (see Section 1.9); the sentence of
-`format.md`, section 8, that excludes it describes stage 1 only.
+also be read from the standard input (see Section 1.9; `format.md`,
+section 8).
 
 ### B.1 Conventions
 

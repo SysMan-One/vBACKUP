@@ -29,6 +29,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-09 : /LIST /SELECT; /VERIFY and /DELETE with the standard
+#					output refused.
+#
 #		 5-OCT-2026	RRL	X-08 : A saveset through a pipe: restore, listing,
 #					/EXTRACT, encrypted and compressed, a bad block
 #					repaired, a pipe cut short, /VOLUME_SIZE refused,
@@ -555,7 +558,8 @@ check '[ $? = 0 ] && [ ! -e orig/one/a ] && [ ! -e orig/one/sub/b ] && [ -d orig
 $VB dl.bck /ORIGINAL > /dev/null 2>&1
 check '[ "$(cat orig/one/a)" = 1 ]' "after /DELETE the files do not come back with /ORIGINAL"
 $VB orig/two - /VERIFY /DELETE > /dev/null 2> dlt.log; true
-check '[ -e orig/two/c ] && grep -q SRCKEPT dlt.log' "/DELETE deleted a file that could not be verified: $(cat dlt.log)"
+check '[ -e orig/two/c ] && grep -q "QUALUSE.*VERIFY" dlt.log' "/DELETE with the standard output (nothing to verify against) not refused: $(cat dlt.log)"
+check '[ "$($VB x.bck /LIST /FORMAT=LS /SELECT=tree/a.txt 2> /dev/null | wc -l)" = 1 ]' "/LIST /SELECT listed other than the file chosen"
 
 #
 #	12. VBKX, the stand-alone extractor

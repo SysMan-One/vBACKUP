@@ -817,6 +817,7 @@ char *		l_argv [1 + 64], *l_words [2 + VBACKUP$K_MAXSPEC];
 const char *	l_glued [8], *l_opname = "";
 int		l_nglued = 0, l_announce = 0;
 struct timespec	l_t0;
+static	char	l_inwords [VBK$K_MAXCMD];
 int		l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
 size_t		l_cmdlen = 0;
 
@@ -970,6 +971,9 @@ size_t		l_cmdlen = 0;
 		return	VBACKUP$K_EXIT_ERROR;
 		}
 
+	/* As it was given, for STARTED: the split below cuts it at its commas */
+	vbk$strcpy(sizeof(l_inwords), l_inwords, l_words [0]);
+
 	if ( !(1 & s_vbk$split(l_words [0], VBACKUP$K_MAXSPEC, l_opts.input, &l_opts.ninput)) )
 		$VBKMSG(VBACKUP$_TOOMANY, "input specifications", VBACKUP$K_MAXSPEC);
 
@@ -1035,10 +1039,16 @@ size_t		l_cmdlen = 0;
 		return	VBACKUP$K_EXIT_ERROR;
 		}
 
-	/* The standard output is one stream: one volume */
-	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && !strcmp(l_opts.output, "-") && l_opts.volsize )
+	/*
+	**  The standard output is one stream: one volume, and gone once
+	**  written - it cannot be read back for /VERIFY (nor /DELETE after
+	**  it), nor listed by /LIST.  Said, rather than passed over.
+	*/
+	if ( (l_opts.op == VBACKUP$K_OP_SAVE) && !strcmp(l_opts.output, "-") && (l_opts.volsize || l_opts.verify || l_list) )
 		{
-		$VBKMSG(VBACKUP$_QUALUSE, "VOLUME_SIZE", "a saveset written to the standard output is one volume");
+		$VBKMSG(VBACKUP$_QUALUSE, l_opts.volsize ? "VOLUME_SIZE" : l_opts.verify ? "VERIFY" : "LIST",
+			l_opts.volsize ? "a saveset written to the standard output is one volume"
+			: "a saveset written to the standard output is gone once written: it cannot be read back here");
 		__cli$cleanup(l_clictx);
 
 		return	VBACKUP$K_EXIT_ERROR;
@@ -1057,7 +1067,7 @@ size_t		l_cmdlen = 0;
 	clock_gettime(CLOCK_MONOTONIC, &l_t0);
 
 	if ( l_announce )
-		$VBKMSG(VBACKUP$_STARTED, l_opname, strcmp(l_words [0], "-") ? l_words [0] : "(standard input)",
+		$VBKMSG(VBACKUP$_STARTED, l_opname, strcmp(l_inwords, "-") ? l_inwords : "(standard input)",
 			l_opts.output [0] || l_opts.original ? ", Output: " : "",
 			!strcmp(l_opts.output, "-") ? "(standard output)" : l_opts.output [0] ? l_opts.output
 			: (l_opts.op == VBACKUP$K_OP_RESTORE) && l_opts.original ? "(where its files came from)" : "");

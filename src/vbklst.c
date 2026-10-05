@@ -133,6 +133,20 @@ struct tm	l_tm;
 time_t		l_t = (time_t) a_attr->mtime.sec;
 const char *	l_ft = (a_attr->ftype < $ARRSZ(s_ftname)) ? s_ftname [a_attr->ftype] : "?";
 
+	/* /SELECT and /EXCLUDE choose what is listed, as they choose what is restored */
+	if ( a_lst->opts->nselect || a_lst->opts->nexclude )
+		{
+		char	l_name [VBACKUP$K_SZ_PATH];
+
+		$VBKFAOB(l_name, sizeof(l_name), "!AD", a_attr->pathlen, a_attr->path);
+
+		if ( a_lst->opts->nexclude && (1 & vbk$match(l_name, a_lst->opts->exclude, a_lst->opts->nexclude)) )
+			return;
+
+		if ( a_lst->opts->nselect && !(1 & vbk$match(l_name, a_lst->opts->select, a_lst->opts->nselect)) )
+			return;
+		}
+
 	if ( a_attr->status == VBK$K_FS_PRESENT )
 		{
 		a_lst->npresent++;
