@@ -524,7 +524,10 @@ savesets): read the blocks in order.  For each group, check every CRC:
 A saveset without a TRAILER (the save was interrupted) is still readable
 in sequential mode up to the last good block.
 
-Reading a saveset from standard input is not part of stage 1.
+A saveset can be read from the standard input (a pipe, "-" as the
+input, since X01-08): sequential mode only, forward only; a TRAILER
+ends the groups where it comes, and the catalog at the end of the stream
+is not used for seeking.
 
 
 ## 9. The journal

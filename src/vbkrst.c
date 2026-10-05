@@ -407,7 +407,7 @@ int		l_status;
 
 	if ( l_o->confirm )
 		{
-		if ( STS$K_FATAL == (l_status = vbk$confirm("Restore", a_rst->path)) )
+		if ( STS$K_FATAL == (l_status = vbk$confirm(a_rst->rctx ? "Restore" : "Copy", a_rst->path)) )
 			return	STS$K_FATAL;
 
 		if ( !(1 & l_status) )

@@ -694,7 +694,7 @@ far2l). It runs vbkx; on Windows put vbkx.exe on the PATH. Press Enter
 or Ctrl+PgDn on a .bck file; F5 copies files out.
 
 Total Commander (Windows) and Double Commander (Linux): the packer
-plugin vbackup.wcx64 / vbackup.wcx / vbkwcx.so - install it in the
+plugin vbackup.wcx64 (64-bit TC) / vbackup.wcx (32-bit TC; on Linux, for DC) - install it in the
 plugin settings and associate it with the extension bck.
 
 An encrypted saveset: the file managers cannot ask for a passphrase.
