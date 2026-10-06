@@ -231,7 +231,7 @@ if ( WIN32 )
 	target_compile_definitions(vbackup PRIVATE _FILE_OFFSET_BITS=64 __USE_MINGW_ANSI_STDIO=1 NDEBUG VBK_STARLET
 		VBACKUP_K_IDENT="${VBACKUP$K_IDENT}")
 	target_compile_options(vbackup PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/win/vbkwin.h)
-	target_link_libraries(vbackup PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32 advapi32)
+	target_link_libraries(vbackup PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32 advapi32 ntdll)
 	target_link_options(vbackup PRIVATE -static -pthread -Wl,--stack,8388608)	# 8 MB as on Linux: paths of UTF-16 live on the stack
 
 	#	The vector code: GCC keeps the stack of Windows at 16 octets, a spilled __m256i must not be loaded aligned
@@ -250,7 +250,7 @@ if ( WIN32 )
 		${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 	target_compile_definitions(units PRIVATE _FILE_OFFSET_BITS=64 __USE_MINGW_ANSI_STDIO=1 NDEBUG VBK_STARLET)
 	target_compile_options(units PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/win/vbkwin.h)
-	target_link_libraries(units PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32)
+	target_link_libraries(units PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32 advapi32 ntdll)
 	target_link_options(units PRIVATE -static -pthread)
 
 	if ( VBACKUP_HAVE_UNALIGNED )

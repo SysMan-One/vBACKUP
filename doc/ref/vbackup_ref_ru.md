@@ -813,9 +813,11 @@ SeRestorePrivilege, SeSecurityPrivilege, SeCreateSymbolicLinkPrivilege, --
 файл получает ACL своего каталога -- DACL с другой машины мог бы оставить
 восстанавливающего без доступа к файлам. `/OWNER=ORIGINAL` всё равно
 просит дескриптор; владелец, которого нельзя назначить, называется
-(ATTRERR ... security). `/OWNER=`*пользователь* в Windows недоступен.
-Дескриптор, прочитанный из saveset-а, перед использованием проверяется
-(IsValidSecurityDescriptor, его длина).
+(ATTRERR ... security). `/OWNER=`*пользователь* и `/BY_OWNER` в Windows
+отвергаются (QUALUSE): SID -- не номер пользователя. Дескриптор,
+прочитанный из saveset-а, перед использованием проверяется -- каждый SID и
+ACL в нём должны лежать внутри элемента, -- и поддельный отвергается
+(ATTRERR ... the descriptor in the saveset is not valid).
 
 #### Имена, которых в Windows не бывает
 

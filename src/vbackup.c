@@ -44,7 +44,8 @@
 **	X01-18		 6-OCT-2026	RRL
 **		Stage 14: Windows - /OWNER=ORIGINAL by default for a backup operator
 **		(the restore privilege held), the security descriptors put back then;
-**		/XATTRS by default again: the streams of NTFS are the user. attributes.
+**		/XATTRS by default again: the streams of NTFS are the user. attributes;
+**		/OWNER=user and /BY_OWNER refused there (QUALUSE).
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Stage 13: vbackup.exe, the utility on Windows (src/vbkosw.c,
@@ -659,6 +660,12 @@ ASC		l_val;
 	else if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_CHANGED, NULL) )
 		a_opts->timsrc	= VBACKUP$K_TIM_CHANGED;
 
+#ifdef	_WIN32
+	/* No owner by number on Windows: a SID is no uid */
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_BY_OWNER, NULL) )
+		return	$VBKMSG(VBACKUP$_QUALUSE, "BY_OWNER", "not on Windows");
+#endif
+
 	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_BY_OWNER, l_str, sizeof(l_str)) )
 		{
 		struct passwd	*l_pw = getpwnam(l_str);
@@ -707,6 +714,9 @@ ASC		l_val;
 			a_opts->ownmode	= VBACKUP$K_OWN_ORIGINAL;
 		else if ( !strncasecmp(l_str, "DEFAULT", l_len) )
 			a_opts->ownmode	= VBACKUP$K_OWN_DEFAULT;
+#ifdef	_WIN32
+		else	return	(void) l_pw, $VBKMSG(VBACKUP$_QUALUSE, "OWNER", "only ORIGINAL and DEFAULT on Windows");
+#else
 		else if ( (l_pw = getpwnam(l_str)) )
 			{
 			a_opts->ownmode	= VBACKUP$K_OWN_USER;
@@ -714,6 +724,7 @@ ASC		l_val;
 			a_opts->owngid	= l_pw->pw_gid;
 			}
 		else	return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "OWNER");
+#endif
 		}
 
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_FULL, NULL) && s_vbk$present(a_clictx, VBACKUP$K_QUAL_BRIEF, NULL) )

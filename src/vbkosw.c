@@ -147,6 +147,13 @@ static	uint8_t		s_sd [VBK$K_SDMAX];		/* VBK$W_GETWIN: valid to the next call	*/
 static	char		s_uname [256], s_gname [256];
 
 static	void	s_vbk$privs	(void);
+
+/*
+**  The check of a self-relative security descriptor against its length
+**  (ntdll): IsValidSecurityDescriptor follows the offsets in it without
+**  knowing where the buffer ends
+*/
+NTSYSAPI BOOLEAN NTAPI	RtlValidRelativeSecurityDescriptor (PSECURITY_DESCRIPTOR a_sd, ULONG a_len, SECURITY_INFORMATION a_req);
 static	pthread_mutex_t	s_envlock = PTHREAD_MUTEX_INITIALIZER;
 
 
@@ -2505,12 +2512,21 @@ DWORD		l_nl = 256, l_dl = 256;
 SID_NAME_USE	l_use;
 DWORD		l_len = GetLengthSid(a_sid);
 
+	/* Remembered - a name, or "" when it had none: a SID of a deleted account would be asked again for every file */
 	for ( unsigned i = 0; i < s_nsids; i++ )
 		if ( EqualSid(a_sid, (PSID) s_sids [i].sid) )
-			return	vbk$strcpy(a_size, a_out, s_sids [i].name), a_out;
+			return	s_sids [i].name [0] ? (vbk$strcpy(a_size, a_out, s_sids [i].name), a_out) : NULL;
 
 	if ( !LookupAccountSidW(NULL, a_sid, l_name, &l_nl, l_dom, &l_dl, &l_use) )
+		{
+		if ( (s_nsids < VBK$K_SIDS) && (l_len <= SECURITY_MAX_SID_SIZE) )
+			{
+			CopySid(SECURITY_MAX_SID_SIZE, (PSID) s_sids [s_nsids].sid, a_sid);
+			s_sids [s_nsids++].name [0] = '\0';
+			}
+
 		return	NULL;
+		}
 
 	if ( l_dom [0] )
 		_snwprintf(l_full, 520, L"%ls\\%ls", l_dom, l_name);
@@ -2534,6 +2550,79 @@ DWORD		l_len = GetLengthSid(a_sid);
 		}
 
 	return	a_out;
+}
+
+
+/*
+**  A self-relative security descriptor out of a saveset, checked by its
+**  own bytes before Windows sees it: the owner and the group SIDs, the
+**  DACL and the SACL each inside the item, of a size that fits.  Not left
+**  to RtlValidRelativeSecurityDescriptor alone - its strictness differs
+**  between Windows and wine.  1 - it may be used.
+*/
+static	int	s_vbk$sdcheck	(
+	const	uint8_t *	a_sd,
+		uint32_t	a_len
+			)
+{
+const SECURITY_DESCRIPTOR_RELATIVE *l_r = (const SECURITY_DESCRIPTOR_RELATIVE *) a_sd;
+DWORD	l_off [4] = { l_r->Owner, l_r->Group, l_r->Sacl, l_r->Dacl };
+
+	if ( (a_len < sizeof(*l_r)) || (l_r->Revision != SECURITY_DESCRIPTOR_REVISION) || !(l_r->Control & SE_SELF_RELATIVE) )
+		return	0;
+
+	for ( int i = 0; i < 4; i++ )
+		{
+		uint32_t	l_o = l_off [i], l_size;
+
+		if ( !l_o )
+			continue;
+
+		if ( (l_o < sizeof(*l_r)) || (l_o > (a_len - 8)) )
+			return	0;
+
+		/* A SID: 8 octets and 4 for each subauthority; an ACL: its AclSize, 8 at least */
+		l_size	= (i < 2) ? (8 + 4 * (uint32_t) a_sd [l_o + 1]) : ((uint32_t) a_sd [l_o + 2] | ((uint32_t) a_sd [l_o + 3] << 8));
+
+		if ( ((i < 2) && (a_sd [l_o + 1] > SID_MAX_SUB_AUTHORITIES)) || (l_size < 8) || (l_size > (a_len - l_o)) )
+			return	0;
+		}
+
+	return	1;
+}
+
+
+/*
+**  The attributes of NTFS and the security descriptor of an open file
+*/
+static	void	s_vbk$wingot	(
+		HANDLE		a_h,
+		SECURITY_INFORMATION a_si,
+		VBK$ATTR *	a_attr
+			)
+{
+FILE_BASIC_INFO	l_bi;
+DWORD		l_need = 0;
+PSID		l_sid;
+BOOL		l_def;
+
+	if ( GetFileInformationByHandleEx(a_h, FileBasicInfo, &l_bi, sizeof(l_bi)) )
+		{
+		a_attr->winattr	   = l_bi.FileAttributes & VBK$M_WA_KEPT;
+		a_attr->haswinattr = 1;
+		}
+
+	if ( !GetKernelObjectSecurity(a_h, a_si, (PSECURITY_DESCRIPTOR) s_sd, sizeof(s_sd), &l_need) || !IsValidSecurityDescriptor((PSECURITY_DESCRIPTOR) s_sd) )
+		return;
+
+	a_attr->ntsd	= s_sd;
+	a_attr->ntsdlen	= GetSecurityDescriptorLength((PSECURITY_DESCRIPTOR) s_sd);
+
+	if ( GetSecurityDescriptorOwner((PSECURITY_DESCRIPTOR) s_sd, &l_sid, &l_def) && l_sid )
+		a_attr->uname	= s_vbk$sidname(l_sid, s_uname, sizeof(s_uname));
+
+	if ( GetSecurityDescriptorGroup((PSECURITY_DESCRIPTOR) s_sd, &l_sid, &l_def) && l_sid )
+		a_attr->gname	= s_vbk$sidname(l_sid, s_gname, sizeof(s_gname));
 }
 
 
@@ -2567,14 +2656,17 @@ void	vbk$w_getwin	(
 {
 wchar_t			l_w [VBK$K_WMAX];
 HANDLE			l_h = INVALID_HANDLE_VALUE;
-FILE_BASIC_INFO		l_bi;
 SECURITY_INFORMATION	l_si = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-DWORD			l_need = 0, l_access = READ_CONTROL | FILE_READ_ATTRIBUTES;
-PSID			l_sid;
-BOOL			l_def;
+DWORD			l_access = READ_CONTROL | FILE_READ_ATTRIBUTES;
 int			l_link = (a_attr->ftype == VBK$K_FT_SYMLINK);
 
-	(void) a_fd;
+	/* The handle of the data, when there is one and no SACL is asked: READ_CONTROL is in GENERIC_READ, and it is the same file */
+	if ( (a_fd >= 0) && !(s_privs & VBK$M_PRIV_SECURITY) && (INVALID_HANDLE_VALUE != (l_h = (HANDLE) _get_osfhandle(a_fd))) )
+		{
+		s_vbk$wingot(l_h, l_si, a_attr);
+
+		return;
+		}
 
 	if ( !s_vbk$wpath(a_path, l_w) )
 		return;
@@ -2594,24 +2686,7 @@ int			l_link = (a_attr->ftype == VBK$K_FT_SYMLINK);
 			return;
 		}
 
-	if ( GetFileInformationByHandleEx(l_h, FileBasicInfo, &l_bi, sizeof(l_bi)) )
-		{
-		a_attr->winattr	   = l_bi.FileAttributes & VBK$M_WA_KEPT;
-		a_attr->haswinattr = 1;
-		}
-
-	if ( GetKernelObjectSecurity(l_h, l_si, (PSECURITY_DESCRIPTOR) s_sd, sizeof(s_sd), &l_need) && IsValidSecurityDescriptor((PSECURITY_DESCRIPTOR) s_sd) )
-		{
-		a_attr->ntsd	= s_sd;
-		a_attr->ntsdlen	= GetSecurityDescriptorLength((PSECURITY_DESCRIPTOR) s_sd);
-
-		if ( GetSecurityDescriptorOwner((PSECURITY_DESCRIPTOR) s_sd, &l_sid, &l_def) && l_sid )
-			a_attr->uname	= s_vbk$sidname(l_sid, s_uname, sizeof(s_uname));
-
-		if ( GetSecurityDescriptorGroup((PSECURITY_DESCRIPTOR) s_sd, &l_sid, &l_def) && l_sid )
-			a_attr->gname	= s_vbk$sidname(l_sid, s_gname, sizeof(s_gname));
-		}
-
+	s_vbk$wingot(l_h, l_si, a_attr);
 	CloseHandle(l_h);
 }
 
@@ -2689,14 +2764,17 @@ int			l_status = STS$K_SUCCESS, l_link = (a_attr->ftype == VBK$K_FT_SYMLINK);
 	if ( !a_attr->ntsd || !a_attr->ntsdlen || (a_opts->ownmode != VBACKUP$K_OWN_ORIGINAL) )
 		return	(1 & l_status) ? STS$K_SUCCESS : STS$K_WARN;
 
-	/* The descriptor out of the saveset: aligned, checked, its parts found */
+	/* The descriptor out of the saveset: long enough for its header, aligned, checked against its length, then its parts found */
+	if ( a_attr->ntsdlen < sizeof(SECURITY_DESCRIPTOR_RELATIVE) )
+		return	$VBKMSG(VBACKUP$_ATTRERR, a_path, "security", EINVAL, "the descriptor in the saveset is not valid"), STS$K_WARN;
+
 	if ( !(l_sd = malloc(a_attr->ntsdlen)) )
 		return	$VBKMSG(VBACKUP$_ATTRERR, a_path, "security", ENOMEM, strerror(ENOMEM)), STS$K_WARN;
 
 	memcpy(l_sd, a_attr->ntsd, a_attr->ntsdlen);
 
-	if ( !IsValidSecurityDescriptor(l_sd) || (GetSecurityDescriptorLength(l_sd) > a_attr->ntsdlen)
-		|| !GetSecurityDescriptorControl(l_sd, &l_ctl, &l_rev) || !(l_ctl & SE_SELF_RELATIVE) )
+	if ( !s_vbk$sdcheck((const uint8_t *) l_sd, a_attr->ntsdlen) || !RtlValidRelativeSecurityDescriptor(l_sd, a_attr->ntsdlen, 0)
+		|| !GetSecurityDescriptorControl(l_sd, &l_ctl, &l_rev) )
 		{
 		free(l_sd);
 

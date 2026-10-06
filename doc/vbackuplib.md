@@ -838,7 +838,8 @@ backup operator - it reads files it has no right to, and /OWNER=ORIGINAL
 is its default, so the owners and the ACL come back as they were. A
 user who is no administrator restores the files as theirs: they take
 the ACL of the directory they go into (give /OWNER=ORIGINAL to have the
-saved one). On Linux a saveset of Windows restores as any other; the
+saved one); /OWNER=user and /BY_OWNER are refused there. On Linux a
+saveset of Windows restores as any other; the
 streams become "user." attributes, the attributes and the ACL are left.
 
 On restore a name Windows cannot hold - a ":" in it, "<>"|?*\", a

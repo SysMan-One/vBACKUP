@@ -825,9 +825,11 @@ the descriptor is not put back, and a restored file takes the ACL its
 directory gives it - a DACL from another machine could leave the user
 who restores without access to the files. `/OWNER=ORIGINAL` asks for the
 descriptor all the same; an owner that cannot be set is reported
-(ATTRERR ... security). `/OWNER=`*user* is not available on Windows. A
-descriptor read from a saveset is checked before use
-(IsValidSecurityDescriptor, its length).
+(ATTRERR ... security). `/OWNER=`*user* and `/BY_OWNER` are refused on
+Windows (QUALUSE): a SID is no user number. A descriptor read from a
+saveset is checked before use - every SID and ACL in it must lie inside
+the item - and a forged one is refused (ATTRERR ... the descriptor in the
+saveset is not valid).
 
 #### Names Windows Cannot Hold
 
