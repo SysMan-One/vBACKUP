@@ -14,6 +14,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 5-OCT-2026	RRL	X-15 : Stage 11: VBKRS by AVX2, SSSE3 or NEON.
+#
 #		 5-OCT-2026	RRL	X-14 : Stage 10: VBKRS, the Reed-Solomon parity of a group
 #					(/PARITY), into VBKCORE, vbkx, vbkx.exe and WCX.
 #

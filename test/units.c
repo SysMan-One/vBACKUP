@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-15"
+#define	__REV__		"1.15.0"
 
 /*
 **++
@@ -26,6 +26,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-15		 5-OCT-2026	RRL
+**		The products of the vector instructions against the portable code.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		Reed-Solomon: every erasure pattern of n <= 10, m <= 4; m + 1
@@ -972,6 +975,35 @@ char		l_spec [1100];
 
 	l_p [2] [5] ^= 1;
 	$CHECK(STS$K_WARN == vbk$rs_repair(6, 3, l_dp, l_dok, l_pp, l_pok, L_LEN), "a forged row left over not found");
+	}
+
+	s_begin("Reed-Solomon: the products of the vector instructions are those of the portable code");
+	{
+	static	uint8_t	l_src [1100], l_d1 [1100], l_d2 [1100];
+	uint32_t	l_bad = 0;
+
+	for ( uint32_t k = 0; k < sizeof(l_src); k++ )
+		l_src [k] = (uint8_t) (k * 131 + (k >> 3));
+
+	printf("%s  the products: %s\n", s_tap ? "#" : "", vbk$rs_simd());
+
+	for ( uint32_t c = 0; c < 256; c += 5 )
+		for ( uint32_t l_off = 0; l_off < 4; l_off++ )
+			for ( uint32_t l_len = 0; l_len < 1090; l_len += 97 )
+				{
+				memset(l_d1, 0xA5, sizeof(l_d1));
+				memset(l_d2, 0xA5, sizeof(l_d2));
+
+				vbk$rs_muladd(l_d1 + l_off, l_src + 3 - (l_off & 1), l_len, (uint8_t) c);
+
+				/* One octet at a time: below a vector, the portable code */
+				for ( uint32_t k = 0; k < l_len; k++ )
+					vbk$rs_muladd(l_d2 + l_off + k, l_src + 3 - (l_off & 1) + k, 1, (uint8_t) c);
+
+				l_bad	+= !!memcmp(l_d1, l_d2, sizeof(l_d1));
+				}
+
+	$CHECK(!l_bad, "%u products differ (%s)", l_bad, vbk$rs_simd());
 	}
 
 	if ( s_tap )
