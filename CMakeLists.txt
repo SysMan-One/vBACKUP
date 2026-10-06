@@ -229,7 +229,7 @@ if ( WIN32 )
 		VBACKUP_K_IDENT="${VBACKUP$K_IDENT}")
 	target_compile_options(vbackup PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/win/vbkwin.h)
 	target_link_libraries(vbackup PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32)
-	target_link_options(vbackup PRIVATE -static -pthread)
+	target_link_options(vbackup PRIVATE -static -pthread -Wl,--stack,8388608)	# 8 MB as on Linux: paths of UTF-16 live on the stack
 
 	#	The vector code: GCC keeps the stack of Windows at 16 octets, a spilled __m256i must not be loaded aligned
 	include(CheckCCompilerFlag)

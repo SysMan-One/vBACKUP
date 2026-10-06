@@ -696,6 +696,18 @@ HANDLE	l_h = INVALID_HANDLE_VALUE;
 BY_HANDLE_FILE_INFORMATION l_bi;
 int	l_fd, l_isdir;
 
+	/* The console (the passphrase, src/vbkkey.c): opened the way a console is, no flags of a file */
+	if ( !wcscmp(a_w, L"CONIN$") )
+		{
+		if ( INVALID_HANDLE_VALUE == (l_h = CreateFileW(a_w, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL)) )
+			return	s_vbk$fail();
+
+		if ( 0 > (l_fd = _open_osfhandle((intptr_t) l_h, 0)) )
+			return	CloseHandle(l_h), errno = EMFILE, -1;
+
+		return	l_fd;
+		}
+
 	switch ( a_flags & (O_RDONLY | O_WRONLY | O_RDWR) )
 		{
 		case	O_WRONLY:	l_access = GENERIC_WRITE;			break;
@@ -862,7 +874,11 @@ int64_t	vbk$w_lseek	(
 }
 
 /*
-**  Read and write at an offset, by the OVERLAPPED of a synchronous handle
+**  Read and write at an offset, by the OVERLAPPED of a synchronous handle.
+**  Unlike POSIX it moves the file pointer: a descriptor is to be read or
+**  written either by offset or in sequence, never both - as every caller
+**  does today (src/vbkrst.c: the file by pwrite, the standard output by
+**  write; src/vbkvms.c: raw records by pwrite, texts by write).
 */
 int64_t	vbk$w_pread	(
 		int		a_fd,
@@ -1022,7 +1038,7 @@ static	int	s_vbk$wunlink	(
 	const	wchar_t *	a_w
 			)
 {
-DWORD	l_attr = GetFileAttributesW(a_w);
+DWORD	l_attr = GetFileAttributesW(a_w), l_err;
 
 	if ( l_attr == INVALID_FILE_ATTRIBUTES )
 		return	s_vbk$fail();
@@ -1041,12 +1057,13 @@ DWORD	l_attr = GetFileAttributesW(a_w);
 	if ( DeleteFileW(a_w) )
 		return	0;
 
-	l_attr	= GetLastError();
+	/* Not removed: the read-only attribute cleared above is put back */
+	l_err	= GetLastError();
 
-	if ( l_attr != ERROR_FILE_NOT_FOUND )
-		SetFileAttributesW(a_w, GetFileAttributesW(a_w));
+	if ( l_attr & FILE_ATTRIBUTE_READONLY )
+		SetFileAttributesW(a_w, l_attr);
 
-	return	errno = s_vbk$errno(l_attr), -1;
+	return	errno = s_vbk$errno(l_err), -1;
 }
 
 int	vbk$w_unlink	(
@@ -1985,6 +2002,14 @@ int		l_same;
 **	None.
 **--
 */
+static	UINT	s_cp;				/* The output code page of the console, put back at exit */
+
+static	void	s_vbk$cpback	(void)
+{
+	if ( s_cp )
+		SetConsoleOutputCP(s_cp);
+}
+
 void	vbk$w_init	(
 		int *		a_argc,
 		char ***	a_argv
@@ -1998,7 +2023,12 @@ int		l_argc, l_len;
 	for ( int i = 0; i < 3; i++ )
 		_setmode(i, _O_BINARY);
 
-	SetConsoleOutputCP(CP_UTF8);
+	/* The console in UTF-8 while this image runs; as it was after */
+	if ( (s_cp = GetConsoleOutputCP()) && (s_cp != CP_UTF8) )
+		{
+		SetConsoleOutputCP(CP_UTF8);
+		atexit(s_vbk$cpback);
+		}
 
 	if ( !(l_wargv = CommandLineToArgvW(GetCommandLineW(), &l_argc)) )
 		return;

@@ -784,7 +784,9 @@ C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
 
 Names are Unicode - UTF-8 in the saveset, as on Linux - and paths may be
 of any length (the `\\?\` form is used where needed). `\` and `/` both
-separate the components of a specification; the stored names use `/`.
+separate the components of a specification - a `\` anywhere on the command
+line is taken for a separator, in `/SELECT` and `/COMMENT` too; the stored
+names use `/`.
 Saved and put back: the data, the modification, access and change times
 and the creation time (BTIME), the read-only attribute (as the mode:
 `0444` or `0644` for a file, `0755` for a directory), directories, hard

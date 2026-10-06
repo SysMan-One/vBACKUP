@@ -822,7 +822,8 @@ C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
 ```
 
 Names are Unicode (UTF-8 in the saveset), paths of any length; "\" and
-"/" both separate. What is saved: data, times (modification, access,
+"/" both separate - a "\" anywhere on the command line is a separator,
+in /SELECT and /COMMENT too. What is saved: data, times (modification, access,
 change and creation), read-only, directories, hard links, symbolic links
 and junctions (as links). What is not: the owner and the ACL, the
 other attributes of NTFS (hidden, system, archive), the streams of

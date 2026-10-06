@@ -207,6 +207,20 @@ WP=$(echo "Z:$S/bs" | tr / '\\')
 vw "$WP\\log" "$WP\\bs.bck" > bs.log 2>&1
 check '[ $? = 0 ] && $VB bs/bs.bck /LIST | grep -q "^log/f "' "a path with backslashes: $(grep -E -- '-[EFW]-' bs.log | head -3)"
 
+#	A name not in ASCII on the command line: the arguments are taken in UTF-16, made UTF-8
+mkdir -p "имя" && echo z > "имя/f"
+vw "имя" cyr.bck > cyr.log 2>&1
+check '[ $? = 0 ] && $VB cyr.bck /LIST | grep -q "^имя/f "' "a Cyrillic name on the command line: $(grep -E -- '-[EFW]-' cyr.log | head -3)"
+
+#	The journal by default: %USERPROFILE%\.vbackup\vbackup.jnl (no HOME); not when one is there already
+WPFX=${WINEPREFIX:-$HOME/.wine}
+JD="$WPFX/drive_c/users/$(id -un)/.vbackup"
+if [ -d "$WPFX/drive_c/users/$(id -un)" ] && [ ! -e "$JD" ]; then
+	env -u HOME WINEPREFIX="$WPFX" timeout 300 $WINE "$VW" "имя" jdef.bck /RECORD > jdef.log 2>&1
+	check '[ $? = 0 ] && [ -s "$JD/vbackup.jnl" ]' "the journal by default not in the profile: $(ls "$JD" 2>&1; grep -E -- '-[EFW]-' jdef.log | head -3)"
+	rm -rf "$JD"
+fi
+
 #
 #	4. A pipe: binary both ways
 #
