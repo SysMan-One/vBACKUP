@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 6-OCT-2026	RRL	X-18 : WINDOWS: attributes, ACL, streams, sparse files, ssh.exe; XATTRSKIP.
+.\"
 .\"		 6-OCT-2026	RRL	X-17 : WINDOWS: vbackup.exe.
 .\"
 .\"		 5-OCT-2026	RRL	X-15 : VBACKUP_NOSIMD.
@@ -296,9 +298,21 @@ Names are Unicode, paths of any length;
 and
 .B /
 both separate.
-Saved there: data, the four times, read-only, directories, hard links,
-symbolic links and junctions; not the owner, the ACL, the other NTFS
-attributes or streams.
+Saved there: data (sparse files with their holes), the four times, the
+NTFS attributes (shown by
+.B /LIST /FULL
+as
+.IR "Windows: HIDDEN ..." ),
+the security descriptor (owner, group, DACL, SACL), the alternate data
+streams as the extended attributes
+.I user.<stream>
+(64 KB each at most, XATTRSKIP beyond), directories, hard links,
+symbolic links and junctions.
+Run as an administrator, it holds the privileges of a backup operator:
+it reads every file and
+.B /OWNER=ORIGINAL
+is its default, the descriptors put back; otherwise restored files take
+the ACL of their directory.
 A name Windows cannot hold (a
 .BR : ,
 a trailing dot,
@@ -307,13 +321,12 @@ is not restored, and said (OPENOUT); two names that differ in case only
 are one file there, the second is not restored, with
 .B /REPLACE
 neither.
-.BR /PHYSICAL ,
-.B /IMAGE
+.B /PHYSICAL
 and
-.I node::file
+.B /IMAGE
 are refused there;
-.B /NOXATTRS
-is the default; the mode of a key file is not checked (its ACL is);
+.I node::file
+goes through ssh.exe; the mode of a key file is not checked (its ACL is);
 the journal is
 .IR %USERPROFILE%\e.vbackup\evbackup.jnl .
 See

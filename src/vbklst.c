@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-17"
-#define	__REV__		"1.17.0"
+#define	__IDENT__	"X01-18"
+#define	__REV__		"1.18.0"
 
 /*
 **++
@@ -23,6 +23,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		/FULL: the attributes of a file saved on Windows.
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Windows: no tm_gmtoff there, VBK$W_GMTOFF.
@@ -217,6 +220,15 @@ const char *	l_ft = (a_attr->ftype < $ARRSZ(s_ftname)) ? s_ftname [a_attr->ftype
 
 			if ( a_attr->link )
 				$VBKFAOP(a_lst->out, "    Link to: !AD\n", a_attr->linklen, a_attr->link);
+
+			/* A file saved on Windows: its attributes there (the catalog has no security descriptors) */
+			if ( a_attr->haswinattr )
+				{
+				char	l_wa [96];
+
+				vbk$winattr(a_attr->winattr, l_wa, sizeof(l_wa));
+				$VBKFAOP(a_lst->out, "    Windows: !AZ\n", l_wa);
+				}
 
 			break;
 

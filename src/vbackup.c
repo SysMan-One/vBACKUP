@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-17"
-#define	__REV__		"1.17.0"
+#define	__IDENT__	"X01-18"
+#define	__REV__		"1.18.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		Stage 14: Windows - /OWNER=ORIGINAL by default for a backup operator
+**		(the restore privilege held), the security descriptors put back then;
+**		/XATTRS by default again: the streams of NTFS are the user. attributes;
+**		/OWNER=user and /BY_OWNER refused there (QUALUSE).
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Stage 13: vbackup.exe, the utility on Windows (src/vbkosw.c,
@@ -654,6 +660,12 @@ ASC		l_val;
 	else if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_CHANGED, NULL) )
 		a_opts->timsrc	= VBACKUP$K_TIM_CHANGED;
 
+#ifdef	_WIN32
+	/* No owner by number on Windows: a SID is no uid */
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_BY_OWNER, NULL) )
+		return	$VBKMSG(VBACKUP$_QUALUSE, "BY_OWNER", "not on Windows");
+#endif
+
 	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_BY_OWNER, l_str, sizeof(l_str)) )
 		{
 		struct passwd	*l_pw = getpwnam(l_str);
@@ -702,6 +714,9 @@ ASC		l_val;
 			a_opts->ownmode	= VBACKUP$K_OWN_ORIGINAL;
 		else if ( !strncasecmp(l_str, "DEFAULT", l_len) )
 			a_opts->ownmode	= VBACKUP$K_OWN_DEFAULT;
+#ifdef	_WIN32
+		else	return	(void) l_pw, $VBKMSG(VBACKUP$_QUALUSE, "OWNER", "only ORIGINAL and DEFAULT on Windows");
+#else
 		else if ( (l_pw = getpwnam(l_str)) )
 			{
 			a_opts->ownmode	= VBACKUP$K_OWN_USER;
@@ -709,6 +724,7 @@ ASC		l_val;
 			a_opts->owngid	= l_pw->pw_gid;
 			}
 		else	return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "OWNER");
+#endif
 		}
 
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_FULL, NULL) && s_vbk$present(a_clictx, VBACKUP$K_QUAL_BRIEF, NULL) )
@@ -936,12 +952,12 @@ size_t		l_cmdlen = 0;
 	l_opts.bsize	= VBK$K_DEFBSZ;
 	l_opts.grpsz	= VBK$K_DEFGRP;
 	l_opts.parity	= 1;
-#ifdef	_WIN32
-	l_opts.xattrs	= 0;			/* Linux ones in a saveset have nowhere to go		*/
-#else
 	l_opts.xattrs	= 1;
-#endif
+#ifdef	_WIN32
+	l_opts.ownmode	= vbk$w_privileged() ? VBACKUP$K_OWN_ORIGINAL : VBACKUP$K_OWN_DEFAULT;
+#else
 	l_opts.ownmode	= geteuid() ? VBACKUP$K_OWN_DEFAULT : VBACKUP$K_OWN_ORIGINAL;
+#endif
 
 	/* The command as it was given, for the SUMMARY; cut at VBK$K_MAXCMD */
 	for ( int i = 0; (i < a_argc) && (l_cmdlen < (sizeof(l_opts.cmdline) - 1)); i++ )

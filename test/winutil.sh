@@ -17,6 +17,7 @@
 #			the objects of vbackup.exe and NM the nm of MinGW-w64
 #			(the imports are looked at: no ANSI call of the C
 #			library), UNITSEXE test/units.c built for Windows,
+#			FAKESSHEXE the stand-in for ssh.exe (test/fakessh.c),
 #			SCRATCH a directory the script may fill and remove.
 #			KEEP=1 keeps it.
 #
@@ -29,6 +30,9 @@
 #	CREATION DATE:	 6-OCT-2026
 #
 #	MODIFICATION HISTORY:
+#
+#		 6-OCT-2026	RRL	X-02 : Stage 14: the attributes of NTFS, the security
+#						descriptors, node::file by ssh.exe (FAKESSHEXE).
 #
 #		 6-OCT-2026	RRL	X-01 : Initial version.
 #
@@ -230,14 +234,65 @@ cat plain.bck | vw - pout > pin.log 2>&1
 check 'same_tree ref/tree pout/tree' "a restore from the standard input differs: $(grep -E -- '-[EF]-' pin.log | grep -v 'Windows' | head -3)"
 
 #
+#	Stage 14: the attributes of NTFS - hidden - saved, listed on Linux,
+#	put back; the security descriptor and the names of the owners; a
+#	saveset on another node through ssh.exe
+#
+mkdir -p wa/t && echo h > wa/t/hid && echo p > wa/t/plain
+$WINE cmd /c "attrib +h wa\\t\\hid" > /dev/null 2>&1
+vw wa/t wa.bck > wa.log 2>&1
+$VB wa.bck /LIST /FULL > wa.lis 2>&1
+check 'sed -n "/^t\/hid$/,+3p" wa.lis | grep -q "Windows: HIDDEN"' "the hidden attribute not in the saveset: $(sed -n '/^t\/hid$/,+3p' wa.lis)"
+check 'grep -q "Owner: .*\\\\" wa.lis' "no owner names (DOMAIN\\user) from the security descriptor: $(grep -m1 Owner: wa.lis)"
+vw wa.bck wa.out /OWNER=ORIGINAL > wa2.log 2>&1
+check '[ $? = 0 ]' "a restore /OWNER=ORIGINAL with the security descriptors: $(grep -E -- '-[EFW]-' wa2.log | head -3)"
+check '$WINE cmd /c "attrib wa.out\\t\\hid" 2>/dev/null | grep -q " H "' "the hidden attribute not put back: $($WINE cmd /c "attrib wa.out\\t\\hid" 2>/dev/null)"
+check '! $WINE cmd /c "attrib wa.out\\t\\plain" 2>/dev/null | grep -q " H "' "a plain file restored hidden"
+
+#	A forged security descriptor - too short, an offset beyond it: refused, never followed
+python3 - sd.bck <<'PYEOF'
+import struct, sys, zlib
+B = 8192; P = B - 64; UU = b'\x22' * 16
+def tlv(t, v): return struct.pack('<HI', t, len(v)) + v
+def rec(t, body): return struct.pack('<HHI', t, 0, len(body)) + body
+def blk(typ, no, recoff, pay):
+	h = b'VBKB' + struct.pack('<HHIBBH', 64, 1, B, typ, 0, 0) + UU + struct.pack('<QIIIIII', no, 1, recoff, len(pay), 0xFFFFFFFF, 0, 0)
+	b = bytearray(h + pay + bytes(P - len(pay)))
+	struct.pack_into('<I', b, 60, zlib.crc32(bytes(b)))
+	return bytes(b)
+def file(no, path, sd):
+	t = tlv(1, struct.pack('<I', no)) + tlv(2, path) + tlv(3, bytes([1])) + tlv(4, struct.pack('<I', 0o644))
+	t += tlv(5, struct.pack('<I', 0)) + tlv(6, struct.pack('<I', 0)) + tlv(9, struct.pack('<Q', 4)) + tlv(10, struct.pack('<qI', 0, 0)) + tlv(22, sd)
+	return rec(2, t)
+def data(no): return rec(3, struct.pack('<IIQ', no, 0, 0) + b'data') + rec(4, tlv(1, struct.pack('<I', no)) + tlv(9, struct.pack('<Q', 4)) + tlv(32, struct.pack('<I', zlib.crc32(b'data'))))
+summ = rec(1, tlv(71, struct.pack('<I', 0)))
+far = struct.pack('<BBHIIII', 1, 0, 0x8004, 0x7FFFFFF0, 0, 0, 0)
+stream = summ + file(1, b'short', b'\x01\x00\x04\x80') + data(1) + file(2, b'far', far) + data(2) + rec(6, b'')
+open(sys.argv[1], 'wb').write(blk(3, 0, 0, summ) + blk(1, 1, 0, stream))
+PYEOF
+vw sd.bck sdout /OWNER=ORIGINAL > sd.log 2>&1
+RC=$?
+check '[ $RC = 1 ] && [ "$(cat sdout/short sdout/far 2>/dev/null)" = datadata ]' "a forged descriptor: completion code $RC, $(grep -E -- '-[EFW]-' sd.log | head -3)"
+check '[ "$(grep -c "security not restored, errno: 22 (the descriptor in the saveset is not valid)" sd.log)" = 2 ]' "a forged descriptor not refused: $(grep -E -- '-[EFW]-' sd.log | head -3)"
+
+if [ -n "$FAKESSHEXE" ] && [ -e "$FAKESSHEXE" ]; then
+	export VBACKUP_RSH="Z:$(echo "$FAKESSHEXE" | tr / '\\')" FAKESSH_VBACKUP="Z:$(echo "$VW" | tr / '\\')"
+	vw ref/tree "node::$S/rsh.bck" > rsh1.log 2>&1
+	check '[ $? = 0 ] && $VB rsh.bck /LIST > /dev/null 2>&1' "a save to node::file through ssh.exe: $(grep -E -- '-[EFW]-' rsh1.log | head -3)"
+	vw "node::$S/rsh.bck" rsh.out > rsh2.log 2>&1
+	check '[ $? = 0 ] && same_tree ref/tree rsh.out/tree' "a restore from node::file through ssh.exe: $(grep -E -- '-[EFW]-' rsh2.log | head -3)"
+	unset VBACKUP_RSH FAKESSH_VBACKUP
+fi
+
+#
 #	5. The command line: what vbackup.exe refuses
 #
 vw ref/tree x.bck /PHYSICAL > q1.log 2>&1
 check '[ $? = 2 ] && grep -q "Qualifier: /PHYSICAL - not on Windows" q1.log' "/PHYSICAL not refused: $(cat q1.log)"
 vw ref/tree x.bck /IMAGE > q2.log 2>&1
 check '[ $? = 2 ] && grep -q "Qualifier: /IMAGE - not on Windows" q2.log' "/IMAGE not refused: $(cat q2.log)"
-vw ref/tree node::x.bck > q3.log 2>&1
-check '[ $? = 2 ] && grep -q "REMOTE, Node: node" q3.log' "a saveset on another node not refused: $(cat q3.log)"
+VBACKUP_RSH=nosuchssh vw ref/tree node::x.bck > q3.log 2>&1
+check '[ $? = 2 ] && grep -q "REMOTE, Node: node" q3.log' "no ssh, and a saveset on another node not refused: $(cat q3.log)"
 
 #
 #	6. Two names that differ in case only - one file on Windows: the second

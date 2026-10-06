@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKATR"
-#define	__IDENT__	"X01-03"
-#define	__REV__		"1.3.0"
+#define	__IDENT__	"X01-18"
+#define	__REV__		"1.18.0"
 
 /*
 **++
@@ -30,6 +30,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		Windows: the attributes of NTFS (WINATTR) and the security descriptor
+**		(NTSD) collected, encoded, decoded and put back - VBK$W_GETWIN,
+**		VBK$W_SETWIN; the streams after the mode, the attributes last.
 **
 **	X01-03		 3-OCT-2026	RRL
 **		XATTR: a counted name (ASCIC) instead of one ended by a NUL;
@@ -340,6 +345,11 @@ int		l_flags, l_status = STS$K_SUCCESS;
 		a_attr->xattrlen	= a_xbuf->len;
 		}
 
+#ifdef	_WIN32
+	/* The attributes of NTFS, the security descriptor and the names of its owner and group */
+	vbk$w_getwin(a_path, a_fd, a_attr);
+#endif
+
 	return	l_status;
 }
 
@@ -403,6 +413,12 @@ int		l_ok = 1;
 	l_ok &= vbk$tlv_u64x2(a_tlvb, VBK$K_TAG_DEVINO, a_attr->dev, a_attr->ino);
 	l_ok &= vbk$tlv_u16(a_tlvb, VBK$K_TAG_BASEIDX, a_attr->baseidx);
 	l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_NLINK, a_attr->nlink);
+
+	if ( a_attr->haswinattr )
+		l_ok &= vbk$tlv_u32(a_tlvb, VBK$K_TAG_WINATTR, a_attr->winattr);
+
+	if ( a_attr->ntsd && a_attr->ntsdlen )
+		l_ok &= vbk$tlv_put(a_tlvb, VBK$K_TAG_NTSD, a_attr->ntsdlen, a_attr->ntsd);
 
 	while ( 1 & vbk$tlv_next(a_attr->xattr, a_attr->xattrlen, &l_pos, &l_tag, &l_vlen, &l_val) )
 		if ( l_tag == VBK$K_TAG_XATTR )
@@ -476,6 +492,16 @@ int		l_status;
 			case	VBK$K_TAG_BTIME:
 				vbk$tlv_gettime(l_vlen, l_val, &a_attr->btime);
 				a_attr->hasbtime = 1;
+				break;
+
+			case	VBK$K_TAG_WINATTR:
+				a_attr->winattr	   = (uint32_t) vbk$tlv_getu(l_vlen, l_val);
+				a_attr->haswinattr = 1;
+				break;
+
+			case	VBK$K_TAG_NTSD:
+				a_attr->ntsd	= l_val;
+				a_attr->ntsdlen	= l_vlen;
 				break;
 
 			case	VBK$K_TAG_FSFLAGS:
@@ -633,10 +659,7 @@ int		l_rc, l_status = STS$K_SUCCESS, l_islnk = (a_attr->ftype == VBK$K_FT_SYMLIN
 			l_status = $VBKMSG(VBACKUP$_ATTRERR, a_path, "protection", errno, strerror(errno));
 		}
 
-	if ( !a_opts->xattrs )
-		return	(1 & l_status) ? STS$K_SUCCESS : STS$K_WARN;
-
-	while ( 1 & vbk$tlv_next(a_attr->xattr, a_attr->xattrlen, &l_pos, &l_tag, &l_vlen, &l_val) )
+	while ( a_opts->xattrs && (1 & vbk$tlv_next(a_attr->xattr, a_attr->xattrlen, &l_pos, &l_tag, &l_vlen, &l_val)) )
 		{
 		char		l_name [256];
 		uint32_t	l_nlen;
@@ -657,6 +680,12 @@ int		l_rc, l_status = STS$K_SUCCESS, l_islnk = (a_attr->ftype == VBK$K_FT_SYMLIN
 		if ( l_rc )
 			l_status = $VBKMSG(VBACKUP$_ATTRERR, a_path, l_name, errno, strerror(errno));
 		}
+
+#ifdef	_WIN32
+	/* Last: the attributes may make the file read-only, the security descriptor take the right to write */
+	if ( !(1 & vbk$w_setwin(a_opts, a_path, a_fd, a_attr)) )
+		l_status = STS$K_WARN;
+#endif
 
 	return	(1 & l_status) ? STS$K_SUCCESS : STS$K_WARN;
 }
@@ -719,6 +748,32 @@ int	l_fd, l_cur = 0, l_new;
 	close(l_fd);
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  The attributes of Windows of a file as words, for /LIST /FULL:
+**  "HIDDEN SYSTEM ARCHIVE"; "-" - none of them
+*/
+void	vbk$winattr	(
+		uint32_t	a_winattr,
+		char *		a_buf,
+		size_t		a_size
+			)
+{
+static	const struct { uint32_t m; const char *n; } s_wa [] = {
+	{ VBK$M_WA_READONLY, "READONLY" }, { VBK$M_WA_HIDDEN, "HIDDEN" }, { VBK$M_WA_SYSTEM, "SYSTEM" },
+	{ VBK$M_WA_ARCHIVE, "ARCHIVE" }, { VBK$M_WA_TEMPORARY, "TEMPORARY" }, { VBK$M_WA_NOINDEX, "NOINDEX" } };
+size_t	l_n = 0;
+
+	a_buf [0] = '\0';
+
+	for ( size_t i = 0; i < $ARRSZ(s_wa); i++ )
+		if ( (a_winattr & s_wa [i].m) && ((l_n + strlen(s_wa [i].n) + 2) < a_size) )
+			l_n += (size_t) $VBKFAOB(a_buf + l_n, a_size - l_n, "!AZ!AZ", l_n ? " " : "", s_wa [i].n);
+
+	if ( !l_n && (a_size > 1) )
+		strcpy(a_buf, "-");
 }
 
 

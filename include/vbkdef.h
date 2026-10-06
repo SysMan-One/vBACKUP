@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-17"
+#define	__IDENT__	"X01-18"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.17.0"
+#define	__REV__		"1.18.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		VBK$ATTR: WINATTR, NTSD - the attributes and the security
+**		descriptor of a file of Windows; XATTRSKIP.
 **
 **	X01-17		 6-OCT-2026	RRL
 **		VBK$ISABS: an absolute path - "C:/dir" too on Windows.
@@ -207,6 +211,7 @@ enum	{
 	VBACKUP$K_MSG_VMSNOCRC,			/* ... written /NOCRC				*/
 	VBACKUP$K_MSG_VMSRAW,			/* ... a file restored as it is, not converted	*/
 	VBACKUP$K_MSG_PARITYERR,		/* v2: the parity of a group disagrees		*/
+	VBACKUP$K_MSG_XATTRSKIP,		/* An extended attribute (a stream) not saved	*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -310,6 +315,7 @@ enum	{
 #define	VBACKUP$_VMSNOCRC	$VBKSTS(VBACKUP$K_MSG_VMSNOCRC,		STS$K_INFO)
 #define	VBACKUP$_VMSRAW		$VBKSTS(VBACKUP$K_MSG_VMSRAW,		STS$K_INFO)
 #define	VBACKUP$_PARITYERR	$VBKSTS(VBACKUP$K_MSG_PARITYERR,	STS$K_WARN)
+#define	VBACKUP$_XATTRSKIP	$VBKSTS(VBACKUP$K_MSG_XATTRSKIP,	STS$K_WARN)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -553,6 +559,10 @@ typedef struct vbk_attr_t
 	VBK$LOC		loc;			/* CATALOG					*/
 	const uint8_t *	xattr;			/* The record body, the XATTR items within	*/
 	uint32_t	xattrlen;
+	uint32_t	winattr;		/* FILE_ATTRIBUTE_* of Windows (WINATTR)	*/
+	int		haswinattr;
+	const uint8_t *	ntsd;			/* The security descriptor of Windows (NTSD)	*/
+	uint32_t	ntsdlen;
 } VBK$ATTR;
 
 /*
@@ -606,6 +616,17 @@ int	vbk$atr_setflags(const char *a_path, uint32_t a_flags);
 const char *	vbk$atr_uname	(uint32_t a_uid);
 const char *	vbk$atr_gname	(uint32_t a_gid);
 int	vbk$atr_xtime	(const VBK$ATTR *a_attr, int a_timsrc, fao_time_t *a_time);
+void	vbk$winattr	(uint32_t a_winattr, char *a_buf, size_t a_size);
+
+#ifdef	_WIN32
+/*
+**  VBKOSW.C - what of a file only Windows has: its attributes, its
+**  security descriptor; the privileges of the backup operator
+*/
+void	vbk$w_getwin	(const char *a_path, int a_fd, VBK$ATTR *a_attr);
+int	vbk$w_setwin	(const VBK$OPTS *a_opts, const char *a_path, int a_fd, const VBK$ATTR *a_attr);
+int	vbk$w_privileged(void);
+#endif
 
 /*
 **  VBKWLK.C

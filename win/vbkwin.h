@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-17"
+#define	__IDENT__	"X01-18"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.17.0"
+#define	__REV__		"1.18.0"
 #endif
 
 /*
@@ -55,6 +55,10 @@
 **  CREATION DATE:  6-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		The extended attributes are the alternate data streams of NTFS
+**		("user.<stream>"), real routines of src/vbkosw.c now.
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Initial version.
@@ -405,15 +409,24 @@ static inline int	sync_file_range (
 }
 
 /*
-**  The extended attributes: none on Windows (the streams of NTFS are stage
-**  two); no list, no value, refused set
+**  The extended attributes are the alternate data streams of NTFS, as
+**  ntfs-3g shows them on Linux: the stream "name" is "user.name".  The
+**  other name spaces of Linux (security., trusted., system.) have no place
+**  on Windows: a set of them is skipped, and succeeds.
 */
-#define	flistxattr(f, l, n)	((void) (f), (void) (l), (void) (n), (ssize_t) 0)
-#define	llistxattr(p, l, n)	((void) (p), (void) (l), (void) (n), (ssize_t) 0)
-#define	fgetxattr(f, a, v, n)	((void) (f), (void) (a), (void) (v), (void) (n), errno = ENODATA, (ssize_t) -1)
-#define	lgetxattr(p, a, v, n)	((void) (p), (void) (a), (void) (v), (void) (n), errno = ENODATA, (ssize_t) -1)
-#define	fsetxattr(f, a, v, n, x) ((void) (f), (void) (a), (void) (v), (void) (n), (void) (x), errno = ENOTSUP, -1)
-#define	lsetxattr(p, a, v, n, x) ((void) (p), (void) (a), (void) (v), (void) (n), (void) (x), errno = ENOTSUP, -1)
+ssize_t	vbk$w_flistxattr	(int a_fd, char *a_list, size_t a_size);
+ssize_t	vbk$w_llistxattr	(const char *a_path, char *a_list, size_t a_size);
+ssize_t	vbk$w_fgetxattr		(int a_fd, const char *a_name, void *a_val, size_t a_size);
+ssize_t	vbk$w_lgetxattr		(const char *a_path, const char *a_name, void *a_val, size_t a_size);
+int	vbk$w_fsetxattr		(int a_fd, const char *a_name, const void *a_val, size_t a_size, int a_flags);
+int	vbk$w_lsetxattr		(const char *a_path, const char *a_name, const void *a_val, size_t a_size, int a_flags);
+
+#define	flistxattr		vbk$w_flistxattr
+#define	llistxattr		vbk$w_llistxattr
+#define	fgetxattr		vbk$w_fgetxattr
+#define	lgetxattr		vbk$w_lgetxattr
+#define	fsetxattr		vbk$w_fsetxattr
+#define	lsetxattr		vbk$w_lsetxattr
 
 /*
 **  The flags of chattr: asked by ioctl(), which refuses (ENOTTY)

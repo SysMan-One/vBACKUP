@@ -823,26 +823,42 @@ C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
 
 Names are Unicode (UTF-8 in the saveset), paths of any length; "\" and
 "/" both separate - a "\" anywhere on the command line is a separator,
-in /SELECT and /COMMENT too. What is saved: data, times (modification, access,
-change and creation), read-only, directories, hard links, symbolic links
-and junctions (as links). What is not: the owner and the ACL, the
-other attributes of NTFS (hidden, system, archive), the streams of
-NTFS - they come in a later stage.
+in /SELECT and /COMMENT too. What is saved: data, times (modification,
+access, change and creation), the attributes (read-only, hidden, system,
+archive, temporary, not indexed), the security descriptor (owner, group,
+DACL; the SACL too for a backup operator), the alternate data streams
+(as the extended attributes "user.<stream>", up to 64 KB each),
+directories, hard links, symbolic links and junctions (as links), sparse
+files with their holes. /LIST /FULL shows the attributes ("Windows:
+HIDDEN ARCHIVE") and the owner as DOMAIN\user.
+
+Run vbackup.exe as an administrator ("Run as administrator") to save
+every file and put everything back: it then holds the privileges of a
+backup operator - it reads files it has no right to, and /OWNER=ORIGINAL
+is its default, so the owners and the ACL come back as they were. A
+user who is no administrator restores the files as theirs: they take
+the ACL of the directory they go into (give /OWNER=ORIGINAL to have the
+saved one); /OWNER=user and /BY_OWNER are refused there. On Linux a
+saveset of Windows restores as any other; the
+streams become "user." attributes, the attributes and the ACL are left.
 
 On restore a name Windows cannot hold - a ":" in it, "<>"|?*\", a
 trailing dot or blank, CON, NUL, COM1 and the like - is not made, and
-said (OPENOUT ... not a valid name on Windows). Two names that differ in
-case only are one file on Windows: the second is not restored
-(FILEEXISTS; with /REPLACE too: OPENOUT ... differs in case only). A FIFO or a device of a Linux saveset is said (UNSUPP).
-A symbolic link needs the right to make links (an administrator, or
-the developer mode of Windows 10/11).
+said (OPENOUT ... not a valid name on Windows). Two names that differ
+in case only are one file on Windows: the second is not restored
+(FILEEXISTS; with /REPLACE too: OPENOUT ... differs in case only). A
+FIFO or a device of a Linux saveset is said (UNSUPP). Of the extended
+attributes of a Linux saveset only "user." ones become streams; the
+others are skipped. A symbolic link needs the right to make links (an
+administrator, or the developer mode of Windows 10/11).
 
-Not on Windows: /PHYSICAL, /IMAGE, a saveset on another node (node::file)
-- refused at once; the read-ahead of files. /XATTRS is off by default
-(Windows has no extended attributes of Linux). The mode of the key file
-is not checked: keep it in your profile, where only you can read it.
-The journal is %USERPROFILE%\.vbackup\vbackup.jnl. A sparse file is
-saved with its zeros (compress them: /DATA_FORMAT=COMPRESSED).
+A saveset on another node (node::file) goes through ssh.exe, the OpenSSH
+client of Windows 10/11 (VBACKUP_RSH names another one). Not on
+Windows: /PHYSICAL and /IMAGE - refused at once; the read-ahead of files;
+the shadow copies (VSS) - a file in use by another program is saved as
+it can be read, or reported. The mode of the key file is not checked:
+keep it in your profile, where only you can read it. The journal is
+%USERPROFILE%\.vbackup\vbackup.jnl.
 
 ## Time -- how a time value is written
 
@@ -985,6 +1001,16 @@ others are. Restore it on Linux, or extract it under another name:
 **On Windows: %VBACKUP-E-QUALUSE, Qualifier: /PHYSICAL - not on
 Windows.** /PHYSICAL and /IMAGE work on Linux only. Save the files
 instead, or do it on Linux.
+
+**%VBACKUP-W-XATTRSKIP.** An extended attribute of the file was not
+saved: it cannot be read, or it is longer than 64 KB. On Windows it is
+an alternate data stream longer than 64 KB. The file itself was saved.
+Copy the stream into a file of its own if it matters, or give /NOXATTRS.
+
+**On Windows: %VBACKUP-W-ATTRERR ... security not restored.** The owner
+of the file could not be set: only an administrator may give a file to
+another account. Run vbackup.exe as an administrator, or restore without
+/OWNER=ORIGINAL - the files are then yours.
 
 **On Windows: a symbolic link is not restored (OPENOUT ... errno: 1).**
 Making links needs a right: run as an administrator, or turn on the
@@ -1213,6 +1239,7 @@ that were in the cache stay there.
 %VBACKUP-I-VMSNOCRC     ... written /NOCRC: damage in its blocks cannot be seen
 %VBACKUP-I-VMSRAW       ... an indexed or relative file restored as its RMS image
 %VBACKUP-W-PARITYERR    /PARITY: the parity of a group disagrees, nothing of it rebuilt
+%VBACKUP-W-XATTRSKIP    an extended attribute (on Windows a stream) not saved: unreadable, or over 64 KB
 ```
 
 A message goes to the standard error. It begins with the date, the

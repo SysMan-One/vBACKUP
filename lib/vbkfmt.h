@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-14"
+#define	__IDENT__	"X01-18"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.14.0"
+#define	__REV__		"1.18.0"
 #endif
 
 /*
@@ -34,6 +34,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		VBK$K_TAG_WINATTR, VBK$K_TAG_NTSD: the attributes and the security
+**		descriptor of a file of Windows (format.md 6.1).
 **
 **	X01-14		 5-OCT-2026	RRL
 **		VBK$K_VERSION2, VBK$K_BT_PARITY, VBK$K_TAG_PARITY; VERSION in
@@ -145,6 +149,8 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_DEVINO,
 	VBK$K_TAG_BASEIDX,
 	VBK$K_TAG_NLINK,
+	VBK$K_TAG_WINATTR,			/* FILE: FILE_ATTRIBUTE_* of Windows, u32	*/
+	VBK$K_TAG_NTSD,				/* FILE: the security descriptor, self-relative	*/
 
 	VBK$K_TAG_CRC	= 32,
 	VBK$K_TAG_STATUS,
@@ -213,6 +219,19 @@ enum	{					/* FTYPE					*/
 	VBK$K_FT_FIFO,
 	VBK$K_FT_SOCK
 	};
+
+/*
+**  WINATTR: the attributes of Windows a saveset keeps - the values of
+**  FILE_ATTRIBUTE_*; the others (directory, reparse point, sparse,
+**  compressed, offline) say how a file is stored, not what it is
+*/
+#define	VBK$M_WA_READONLY	0x00000001
+#define	VBK$M_WA_HIDDEN		0x00000002
+#define	VBK$M_WA_SYSTEM		0x00000004
+#define	VBK$M_WA_ARCHIVE	0x00000020
+#define	VBK$M_WA_TEMPORARY	0x00000100
+#define	VBK$M_WA_NOINDEX	0x00002000
+#define	VBK$M_WA_KEPT		(VBK$M_WA_READONLY | VBK$M_WA_HIDDEN | VBK$M_WA_SYSTEM | VBK$M_WA_ARCHIVE | VBK$M_WA_TEMPORARY | VBK$M_WA_NOINDEX)
 
 enum	{					/* STATUS of FEND				*/
 	VBK$K_FS_OK	= 0,

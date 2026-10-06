@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKOSW"
-#define	__IDENT__	"X01-17"
-#define	__REV__		"1.17.0"
+#define	__IDENT__	"X01-18"
+#define	__REV__		"1.18.0"
 
 /*
 **++
@@ -43,6 +43,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-18		 6-OCT-2026	RRL
+**		Stage 14: the backup privileges; the attributes of NTFS and the
+**		security descriptor (VBK$W_GETWIN, VBK$W_SETWIN); the alternate data
+**		streams as the user. extended attributes; the holes of sparse files
+**		(SEEK_DATA, SEEK_HOLE, a file made sparse when a hole is written).
+**
 **	X01-17		 6-OCT-2026	RRL
 **		Initial version.
 **
@@ -53,10 +59,20 @@
 
 #include	<winioctl.h>
 #include	<shellapi.h>
+#include	<aclapi.h>
+#include	<sddl.h>
 
 #define	VBK$K_WMAX	32768			/* UTF-16 units of a path, \\?\ and all		*/
 #define	VBK$K_LONG	240			/* From here on the \\?\ prefix			*/
 #define	VBK$K_ENVS	32			/* Environment variables remembered in UTF-8	*/
+#define	VBK$K_SDMAX	65536			/* A security descriptor at most		*/
+#define	VBK$K_SIDS	16			/* Account names remembered			*/
+#define	VBK$K_STRMAX	65536			/* The list of the streams of a file		*/
+
+#define	VBK$M_PRIV_BACKUP	1		/* The privileges held and enabled		*/
+#define	VBK$M_PRIV_RESTORE	2
+#define	VBK$M_PRIV_SECURITY	4
+#define	VBK$M_PRIV_SYMLINK	8
 
 #ifndef	SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
 #define	SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE	0x2
@@ -117,7 +133,27 @@ typedef struct vbk_env_t
 	char *		value;
 } VBK$ENV;
 
+typedef struct vbk_sidname_t
+{
+	uint8_t		sid [SECURITY_MAX_SID_SIZE];
+	char		name [256];
+} VBK$SIDNAME;
+
 static	VBK$ENV		s_envs [VBK$K_ENVS];
+static	unsigned	s_privs;			/* VBK$M_PRIV_*				*/
+static	VBK$SIDNAME	s_sids [VBK$K_SIDS];
+static	unsigned	s_nsids;
+static	uint8_t		s_sd [VBK$K_SDMAX];		/* VBK$W_GETWIN: valid to the next call	*/
+static	char		s_uname [256], s_gname [256];
+
+static	void	s_vbk$privs	(void);
+
+/*
+**  The check of a self-relative security descriptor against its length
+**  (ntdll): IsValidSecurityDescriptor follows the offsets in it without
+**  knowing where the buffer ends
+*/
+NTSYSAPI BOOLEAN NTAPI	RtlValidRelativeSecurityDescriptor (PSECURITY_DESCRIPTOR a_sd, ULONG a_len, SECURITY_INFORMATION a_req);
 static	pthread_mutex_t	s_envlock = PTHREAD_MUTEX_INITIALIZER;
 
 
@@ -861,14 +897,117 @@ int	l_fd;
 }
 
 
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	SEEK_DATA and SEEK_HOLE of Linux on a sparse file of NTFS, by the
+**	allocated ranges of FSCTL_QUERY_ALLOCATED_RANGES.  A file that is
+**	not sparse is all data: EINVAL, and the caller reads it whole, as
+**	on a file system of Linux without the question.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_h		The file
+**	a_off		Where to look from
+**	a_hole		1 - the next hole, 0 - the next data
+**
+**  RETURN VALUE:
+**	The offset; -1 and errno: ENXIO - no data from <a_off> on, or
+**	<a_off> is at the end; EINVAL - not sparse, or no answer.
+**--
+*/
+static	int64_t	s_vbk$seekdata	(
+		HANDLE		a_h,
+		int64_t		a_off,
+		int		a_hole
+			)
+{
+BY_HANDLE_FILE_INFORMATION	l_bi;
+FILE_ALLOCATED_RANGE_BUFFER	l_in, l_out [64];
+LARGE_INTEGER			l_size;
+DWORD				l_n;
+int64_t				l_end;
+
+	if ( !GetFileInformationByHandle(a_h, &l_bi) || !(l_bi.dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) || !GetFileSizeEx(a_h, &l_size) )
+		return	errno = EINVAL, -1;
+
+	if ( (a_off < 0) || (a_off >= l_size.QuadPart) )
+		return	errno = ENXIO, -1;
+
+	for ( l_end = a_off; ; )
+		{
+		l_in.FileOffset.QuadPart = l_end;
+		l_in.Length.QuadPart	 = l_size.QuadPart - l_end;
+
+		if ( !DeviceIoControl(a_h, FSCTL_QUERY_ALLOCATED_RANGES, &l_in, sizeof(l_in), l_out, sizeof(l_out), &l_n, NULL)
+			&& (GetLastError() != ERROR_MORE_DATA) )
+			return	errno = EINVAL, -1;
+
+		l_n	/= sizeof(l_out [0]);
+
+		if ( !a_hole )
+			{
+			/* The first range from here on: where the data is */
+			if ( !l_n )
+				return	errno = ENXIO, -1;
+
+			return	(l_out [0].FileOffset.QuadPart > a_off) ? l_out [0].FileOffset.QuadPart : a_off;
+			}
+
+		/* The hole: the end of the ranges that follow one another from here */
+		if ( !l_n || (l_out [0].FileOffset.QuadPart > l_end) )
+			return	l_end;
+
+		for ( DWORD i = 0; i < l_n; i++ )
+			{
+			if ( l_out [i].FileOffset.QuadPart > l_end )
+				return	l_end;
+
+			l_end	= l_out [i].FileOffset.QuadPart + l_out [i].Length.QuadPart;
+			}
+
+		if ( (l_n < 64) || (l_end >= l_size.QuadPart) )
+			return	(l_end < l_size.QuadPart) ? l_end : l_size.QuadPart;
+		}
+}
+
+/*
+**  A hole is about to be made - a write past the end, or the end moved
+**  on: the file is made sparse first, so the hole takes no clusters, as on
+**  Linux
+*/
+static	void	s_vbk$sparse	(
+		HANDLE		a_h,
+		int64_t		a_from
+			)
+{
+BY_HANDLE_FILE_INFORMATION	l_bi;
+LARGE_INTEGER			l_size;
+DWORD				l_n;
+
+	if ( (GetFileType(a_h) != FILE_TYPE_DISK) || !GetFileSizeEx(a_h, &l_size) || (a_from <= l_size.QuadPart) )
+		return;
+
+	if ( GetFileInformationByHandle(a_h, &l_bi) && !(l_bi.dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) )
+		DeviceIoControl(a_h, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &l_n, NULL);
+}
+
 int64_t	vbk$w_lseek	(
 		int		a_fd,
 		int64_t		a_off,
 		int		a_whence
 			)
 {
+HANDLE	l_h;
+
 	if ( (a_whence == SEEK_DATA) || (a_whence == SEEK_HOLE) )
-		return	errno = EINVAL, -1;
+		{
+		if ( INVALID_HANDLE_VALUE == (l_h = (HANDLE) _get_osfhandle(a_fd)) )
+			return	errno = EBADF, -1;
+
+		return	s_vbk$seekdata(l_h, a_off, a_whence == SEEK_HOLE);
+		}
 
 	return	_lseeki64(a_fd, a_off, a_whence);
 }
@@ -920,23 +1059,37 @@ DWORD		l_n = 0;
 	l_ov.Offset	= (DWORD) a_off;
 	l_ov.OffsetHigh	= (DWORD) ((uint64_t) a_off >> 32);
 
+	s_vbk$sparse(l_h, a_off);
+
 	if ( !WriteFile(l_h, a_buf, (DWORD) ((a_len > 0x40000000U) ? 0x40000000U : a_len), &l_n, &l_ov) )
 		return	s_vbk$fail();
 
 	return	(int64_t) l_n;
 }
 
+/*
+**  ftruncate(): the end moved by FileEndOfFileInfo - _chsize of the C
+**  library writes the zeros of a longer file, and a hole would take its
+**  clusters
+*/
 int	vbk$w_ftruncate	(
 		int		a_fd,
 		int64_t		a_len
 			)
 {
-errno_t	l_rc;
+HANDLE			l_h = (HANDLE) _get_osfhandle(a_fd);
+FILE_END_OF_FILE_INFO	l_eof;
 
-	if ( (l_rc = _chsize_s(a_fd, a_len)) )
-		return	errno = l_rc, -1;
+	if ( l_h == INVALID_HANDLE_VALUE )
+		return	errno = EBADF, -1;
 
-	return	0;
+	if ( a_len < 0 )
+		return	errno = EINVAL, -1;
+
+	s_vbk$sparse(l_h, a_len);
+	l_eof.EndOfFile.QuadPart = a_len;
+
+	return	SetFileInformationByHandle(l_h, FileEndOfFileInfo, &l_eof, sizeof(l_eof)) ? 0 : s_vbk$fail();
 }
 
 /*
@@ -2023,6 +2176,8 @@ int		l_argc, l_len;
 	for ( int i = 0; i < 3; i++ )
 		_setmode(i, _O_BINARY);
 
+	s_vbk$privs();
+
 	/* The console in UTF-8 while this image runs; as it was after */
 	if ( (s_cp = GetConsoleOutputCP()) && (s_cp != CP_UTF8) )
 		{
@@ -2049,6 +2204,670 @@ int		l_argc, l_len;
 
 	*a_argc	= l_argc;
 	*a_argv	= l_argv;
+}
+
+
+/*
+**  The final path of an open file in UTF-16, \\?\ and all
+*/
+static	int	s_vbk$hpath	(
+		HANDLE		a_h,
+		wchar_t *	a_w
+			)
+{
+DWORD	l_n;
+
+	if ( !(l_n = GetFinalPathNameByHandleW(a_h, a_w, VBK$K_WMAX - 300, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS)) || (l_n >= (VBK$K_WMAX - 300)) )
+		return	s_vbk$fail(), 0;
+
+	return	1;
+}
+
+/*
+**  The stream of "user.name": "<file>:name"; 0 - not a name of the user
+**  space, or not one a stream may have (ENODATA, EINVAL)
+*/
+static	int	s_vbk$stream	(
+		wchar_t *	a_w,
+	const	char *		a_name
+			)
+{
+size_t	l_len = wcslen(a_w);
+
+	if ( strncmp(a_name, "user.", 5) || !a_name [5] )
+		return	errno = ENODATA, 0;
+
+	if ( strpbrk(a_name + 5, ":/\\") )
+		return	errno = EINVAL, 0;
+
+	a_w [l_len++] = L':';
+
+	if ( !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, a_name + 5, -1, a_w + l_len, (int) (VBK$K_WMAX - l_len)) )
+		return	errno = EINVAL, 0;
+
+	return	1;
+}
+
+/*
+**  The streams of an open file as the list of listxattr(): "user.name\0"
+**  each; the unnamed stream - the data - is not one of them.  A file
+**  system without streams (FAT) has none.
+*/
+static	ssize_t	s_vbk$liststreams	(
+		HANDLE		a_h,
+		char *		a_list,
+		size_t		a_size
+			)
+{
+uint8_t *	l_buf;
+size_t		l_n = 0;
+char		l_name [NAME_MAX * 3 + 8];
+int		l_len;
+
+	if ( !(l_buf = malloc(VBK$K_STRMAX)) )
+		return	errno = ENOMEM, -1;
+
+	if ( !GetFileInformationByHandleEx(a_h, FileStreamInfo, l_buf, VBK$K_STRMAX) )
+		{
+		free(l_buf);
+
+		return	0;
+		}
+
+	for ( FILE_STREAM_INFO *l_si = (FILE_STREAM_INFO *) l_buf; ; l_si = (FILE_STREAM_INFO *) ((uint8_t *) l_si + l_si->NextEntryOffset) )
+		{
+		/* ":name:$DATA" - the unnamed one is "::$DATA" */
+		const wchar_t *	l_s = l_si->StreamName;
+		int		l_wl = (int) (l_si->StreamNameLength / sizeof(wchar_t)), l_e;
+
+		for ( l_e = 1; (l_e < l_wl) && (l_s [l_e] != L':'); l_e++ )
+			;
+
+		if ( (l_wl > 7) && (l_e > 1) && (l_e < l_wl) && !wcsncmp(l_s + l_e, L":$DATA", 6) )
+			{
+			memcpy(l_name, "user.", 5);
+
+			if ( 0 < (l_len = WideCharToMultiByte(CP_UTF8, 0, l_s + 1, l_e - 1, l_name + 5, (int) sizeof(l_name) - 6, NULL, NULL)) )
+				{
+				if ( (l_n + 5 + (size_t) l_len + 1) > a_size )
+					{
+					free(l_buf);
+
+					return	errno = ERANGE, -1;
+					}
+
+				memcpy(a_list + l_n, l_name, 5 + (size_t) l_len);
+				l_n	+= 5 + (size_t) l_len;
+				a_list [l_n++] = '\0';
+				}
+			}
+
+		if ( !l_si->NextEntryOffset )
+			break;
+		}
+
+	free(l_buf);
+
+	return	(ssize_t) l_n;
+}
+
+ssize_t	vbk$w_flistxattr	(
+		int		a_fd,
+		char *		a_list,
+		size_t		a_size
+			)
+{
+HANDLE	l_h = (HANDLE) _get_osfhandle(a_fd);
+
+	if ( l_h == INVALID_HANDLE_VALUE )
+		return	errno = EBADF, -1;
+
+	return	s_vbk$liststreams(l_h, a_list, a_size);
+}
+
+ssize_t	vbk$w_llistxattr	(
+	const	char *		a_path,
+		char *		a_list,
+		size_t		a_size
+			)
+{
+wchar_t	l_w [VBK$K_WMAX];
+HANDLE	l_h = INVALID_HANDLE_VALUE;
+DWORD	l_tag;
+ssize_t	l_n;
+
+	if ( !s_vbk$wpath(a_path, l_w) || s_vbk$create(l_w, FILE_READ_ATTRIBUTES, OPEN_EXISTING, 0, 1, &l_h, &l_tag) )
+		return	-1;
+
+	/* A link has no streams of its own here */
+	l_n	= l_tag ? 0 : s_vbk$liststreams(l_h, a_list, a_size);
+	CloseHandle(l_h);
+
+	return	l_n;
+}
+
+/*
+**  The value of "user.name": the stream read whole; ERANGE - longer than
+**  the buffer (64 KB, the limit of a value on Linux)
+*/
+static	ssize_t	s_vbk$getstream	(
+		wchar_t *	a_w,
+	const	char *		a_name,
+		void *		a_val,
+		size_t		a_size
+			)
+{
+HANDLE		l_h;
+LARGE_INTEGER	l_size;
+DWORD		l_n;
+size_t		l_got = 0;
+
+	if ( !s_vbk$stream(a_w, a_name) )
+		return	-1;
+
+	if ( INVALID_HANDLE_VALUE == (l_h = CreateFileW(a_w, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS, NULL)) )
+		return	(GetLastError() == ERROR_FILE_NOT_FOUND) ? (errno = ENODATA, -1) : s_vbk$fail();
+
+	if ( !GetFileSizeEx(l_h, &l_size) || ((uint64_t) l_size.QuadPart > a_size) )
+		{
+		CloseHandle(l_h);
+
+		return	errno = ERANGE, -1;
+		}
+
+	while ( (l_got < (size_t) l_size.QuadPart) && ReadFile(l_h, (uint8_t *) a_val + l_got, (DWORD) ((size_t) l_size.QuadPart - l_got), &l_n, NULL) && l_n )
+		l_got	+= l_n;
+
+	CloseHandle(l_h);
+
+	return	(ssize_t) l_got;
+}
+
+ssize_t	vbk$w_fgetxattr	(
+		int		a_fd,
+	const	char *		a_name,
+		void *		a_val,
+		size_t		a_size
+			)
+{
+wchar_t	l_w [VBK$K_WMAX];
+HANDLE	l_h = (HANDLE) _get_osfhandle(a_fd);
+
+	if ( l_h == INVALID_HANDLE_VALUE )
+		return	errno = EBADF, -1;
+
+	return	s_vbk$hpath(l_h, l_w) ? s_vbk$getstream(l_w, a_name, a_val, a_size) : -1;
+}
+
+ssize_t	vbk$w_lgetxattr	(
+	const	char *		a_path,
+	const	char *		a_name,
+		void *		a_val,
+		size_t		a_size
+			)
+{
+wchar_t	l_w [VBK$K_WMAX];
+
+	return	s_vbk$wpath(a_path, l_w) ? s_vbk$getstream(l_w, a_name, a_val, a_size) : -1;
+}
+
+/*
+**  "user.name" set: the stream written whole.  A file restored read-only
+**  is made writable for it and read-only again.  A name of another space
+**  of Linux (security., trusted., system.) has no place here: skipped.
+*/
+static	int	s_vbk$setstream	(
+		wchar_t *	a_w,
+	const	char *		a_name,
+	const	void *		a_val,
+		size_t		a_size
+			)
+{
+HANDLE	l_h;
+DWORD	l_attr, l_n = 0;
+size_t	l_base = wcslen(a_w);
+int	l_rc = 0;
+
+	if ( strncmp(a_name, "user.", 5) )
+		return	0;
+
+	if ( !s_vbk$stream(a_w, a_name) )
+		return	-1;
+
+	a_w [l_base] = L'\0';
+	l_attr	= GetFileAttributesW(a_w);
+
+	if ( (l_attr != INVALID_FILE_ATTRIBUTES) && (l_attr & FILE_ATTRIBUTE_READONLY) )
+		SetFileAttributesW(a_w, l_attr & ~FILE_ATTRIBUTE_READONLY);
+
+	a_w [l_base] = L':';
+
+	if ( INVALID_HANDLE_VALUE == (l_h = CreateFileW(a_w, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, CREATE_ALWAYS,
+			FILE_FLAG_BACKUP_SEMANTICS, NULL)) )
+		l_rc	= s_vbk$fail();
+	else	{
+		if ( a_size && (!WriteFile(l_h, a_val, (DWORD) a_size, &l_n, NULL) || (l_n != a_size)) )
+			l_rc	= s_vbk$fail();
+
+		CloseHandle(l_h);
+		}
+
+	if ( (l_attr != INVALID_FILE_ATTRIBUTES) && (l_attr & FILE_ATTRIBUTE_READONLY) )
+		{
+		a_w [l_base] = L'\0';
+		SetFileAttributesW(a_w, l_attr);
+		}
+
+	return	l_rc;
+}
+
+int	vbk$w_fsetxattr	(
+		int		a_fd,
+	const	char *		a_name,
+	const	void *		a_val,
+		size_t		a_size,
+		int		a_flags
+			)
+{
+wchar_t	l_w [VBK$K_WMAX];
+HANDLE	l_h = (HANDLE) _get_osfhandle(a_fd);
+
+	(void) a_flags;
+
+	if ( l_h == INVALID_HANDLE_VALUE )
+		return	errno = EBADF, -1;
+
+	return	s_vbk$hpath(l_h, l_w) ? s_vbk$setstream(l_w, a_name, a_val, a_size) : -1;
+}
+
+int	vbk$w_lsetxattr	(
+	const	char *		a_path,
+	const	char *		a_name,
+	const	void *		a_val,
+		size_t		a_size,
+		int		a_flags
+			)
+{
+wchar_t	l_w [VBK$K_WMAX];
+
+	(void) a_flags;
+
+	return	s_vbk$wpath(a_path, l_w) ? s_vbk$setstream(l_w, a_name, a_val, a_size) : -1;
+}
+
+
+/*
+**  The name of an account, "DOMAIN\user", remembered: the owner of every
+**  file of a tree is mostly one, and a lookup may ask a domain controller
+*/
+static	const char *	s_vbk$sidname	(
+		PSID		a_sid,
+		char *		a_out,
+		size_t		a_size
+			)
+{
+wchar_t		l_name [256], l_dom [256], l_full [520];
+DWORD		l_nl = 256, l_dl = 256;
+SID_NAME_USE	l_use;
+DWORD		l_len = GetLengthSid(a_sid);
+
+	/* Remembered - a name, or "" when it had none: a SID of a deleted account would be asked again for every file */
+	for ( unsigned i = 0; i < s_nsids; i++ )
+		if ( EqualSid(a_sid, (PSID) s_sids [i].sid) )
+			return	s_sids [i].name [0] ? (vbk$strcpy(a_size, a_out, s_sids [i].name), a_out) : NULL;
+
+	if ( !LookupAccountSidW(NULL, a_sid, l_name, &l_nl, l_dom, &l_dl, &l_use) )
+		{
+		if ( (s_nsids < VBK$K_SIDS) && (l_len <= SECURITY_MAX_SID_SIZE) )
+			{
+			CopySid(SECURITY_MAX_SID_SIZE, (PSID) s_sids [s_nsids].sid, a_sid);
+			s_sids [s_nsids++].name [0] = '\0';
+			}
+
+		return	NULL;
+		}
+
+	if ( l_dom [0] )
+		_snwprintf(l_full, 520, L"%ls\\%ls", l_dom, l_name);
+	else	wcscpy(l_full, l_name);
+
+	l_full [519] = L'\0';
+
+	if ( 0 > s_vbk$utf8(l_full, -1, a_out, a_size) )
+		return	NULL;
+
+	/* s_vbk$utf8 made the '\' of DOMAIN\user a '/': put back */
+	for ( char *l_p = a_out; *l_p; l_p++ )
+		if ( *l_p == '/' )
+			*l_p = '\\';
+
+	if ( (s_nsids < VBK$K_SIDS) && (l_len <= SECURITY_MAX_SID_SIZE) )
+		{
+		CopySid(SECURITY_MAX_SID_SIZE, (PSID) s_sids [s_nsids].sid, a_sid);
+		vbk$strcpy(sizeof(s_sids [s_nsids].name), s_sids [s_nsids].name, a_out);
+		s_nsids++;
+		}
+
+	return	a_out;
+}
+
+
+/*
+**  A self-relative security descriptor out of a saveset, checked by its
+**  own bytes before Windows sees it: the owner and the group SIDs, the
+**  DACL and the SACL each inside the item, of a size that fits.  Not left
+**  to RtlValidRelativeSecurityDescriptor alone - its strictness differs
+**  between Windows and wine.  1 - it may be used.
+*/
+static	int	s_vbk$sdcheck	(
+	const	uint8_t *	a_sd,
+		uint32_t	a_len
+			)
+{
+const SECURITY_DESCRIPTOR_RELATIVE *l_r = (const SECURITY_DESCRIPTOR_RELATIVE *) a_sd;
+DWORD	l_off [4] = { l_r->Owner, l_r->Group, l_r->Sacl, l_r->Dacl };
+
+	if ( (a_len < sizeof(*l_r)) || (l_r->Revision != SECURITY_DESCRIPTOR_REVISION) || !(l_r->Control & SE_SELF_RELATIVE) )
+		return	0;
+
+	for ( int i = 0; i < 4; i++ )
+		{
+		uint32_t	l_o = l_off [i], l_size;
+
+		if ( !l_o )
+			continue;
+
+		if ( (l_o < sizeof(*l_r)) || (l_o > (a_len - 8)) )
+			return	0;
+
+		/* A SID: 8 octets and 4 for each subauthority; an ACL: its AclSize, 8 at least */
+		l_size	= (i < 2) ? (8 + 4 * (uint32_t) a_sd [l_o + 1]) : ((uint32_t) a_sd [l_o + 2] | ((uint32_t) a_sd [l_o + 3] << 8));
+
+		if ( ((i < 2) && (a_sd [l_o + 1] > SID_MAX_SUB_AUTHORITIES)) || (l_size < 8) || (l_size > (a_len - l_o)) )
+			return	0;
+		}
+
+	return	1;
+}
+
+
+/*
+**  The attributes of NTFS and the security descriptor of an open file
+*/
+static	void	s_vbk$wingot	(
+		HANDLE		a_h,
+		SECURITY_INFORMATION a_si,
+		VBK$ATTR *	a_attr
+			)
+{
+FILE_BASIC_INFO	l_bi;
+DWORD		l_need = 0;
+PSID		l_sid;
+BOOL		l_def;
+
+	if ( GetFileInformationByHandleEx(a_h, FileBasicInfo, &l_bi, sizeof(l_bi)) )
+		{
+		a_attr->winattr	   = l_bi.FileAttributes & VBK$M_WA_KEPT;
+		a_attr->haswinattr = 1;
+		}
+
+	if ( !GetKernelObjectSecurity(a_h, a_si, (PSECURITY_DESCRIPTOR) s_sd, sizeof(s_sd), &l_need) || !IsValidSecurityDescriptor((PSECURITY_DESCRIPTOR) s_sd) )
+		return;
+
+	a_attr->ntsd	= s_sd;
+	a_attr->ntsdlen	= GetSecurityDescriptorLength((PSECURITY_DESCRIPTOR) s_sd);
+
+	if ( GetSecurityDescriptorOwner((PSECURITY_DESCRIPTOR) s_sd, &l_sid, &l_def) && l_sid )
+		a_attr->uname	= s_vbk$sidname(l_sid, s_uname, sizeof(s_uname));
+
+	if ( GetSecurityDescriptorGroup((PSECURITY_DESCRIPTOR) s_sd, &l_sid, &l_def) && l_sid )
+		a_attr->gname	= s_vbk$sidname(l_sid, s_gname, sizeof(s_gname));
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	What of a file only Windows has, into its attributes: the
+**	attributes of NTFS (WINATTR), the security descriptor - owner,
+**	group, DACL, and the SACL when the security privilege is held
+**	(NTSD) - and the names of the owner and the group (UNAME, GNAME).
+**	What cannot be read is left out, silently: a file system without
+**	ACL (FAT) has no descriptor.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_path		The file
+**	a_fd		Its descriptor, -1 - none (a link)
+**	a_attr		The attributes, FTYPE filled in; NTSD, UNAME, GNAME
+**			point into module buffers valid to the next call
+**
+**  RETURN VALUE:
+**	None.
+**--
+*/
+void	vbk$w_getwin	(
+	const	char *		a_path,
+		int		a_fd,
+		VBK$ATTR *	a_attr
+			)
+{
+wchar_t			l_w [VBK$K_WMAX];
+HANDLE			l_h = INVALID_HANDLE_VALUE;
+SECURITY_INFORMATION	l_si = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+DWORD			l_access = READ_CONTROL | FILE_READ_ATTRIBUTES;
+int			l_link = (a_attr->ftype == VBK$K_FT_SYMLINK);
+
+	/* The handle of the data, when there is one and no SACL is asked: READ_CONTROL is in GENERIC_READ, and it is the same file */
+	if ( (a_fd >= 0) && !(s_privs & VBK$M_PRIV_SECURITY) && (INVALID_HANDLE_VALUE != (l_h = (HANDLE) _get_osfhandle(a_fd))) )
+		{
+		s_vbk$wingot(l_h, l_si, a_attr);
+
+		return;
+		}
+
+	if ( !s_vbk$wpath(a_path, l_w) )
+		return;
+
+	if ( s_privs & VBK$M_PRIV_SECURITY )
+		{
+		l_si	 |= SACL_SECURITY_INFORMATION;
+		l_access |= ACCESS_SYSTEM_SECURITY;
+		}
+
+	if ( s_vbk$create(l_w, l_access, OPEN_EXISTING, 0, l_link, &l_h, NULL) )
+		{
+		l_si	&= ~SACL_SECURITY_INFORMATION;
+
+		if ( s_vbk$create(l_w, READ_CONTROL | FILE_READ_ATTRIBUTES, OPEN_EXISTING, 0, l_link, &l_h, NULL)
+			&& s_vbk$create(l_w, FILE_READ_ATTRIBUTES, OPEN_EXISTING, 0, l_link, &l_h, NULL) )
+			return;
+		}
+
+	s_vbk$wingot(l_h, l_si, a_attr);
+	CloseHandle(l_h);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Put back on a restored file what of it only Windows has: its
+**	attributes of NTFS, and - /OWNER=ORIGINAL, the default of a backup
+**	operator - its security descriptor: the owner and the group, the
+**	DACL (protected or inheriting, as it was), the SACL when the
+**	security privilege is held.  Without /OWNER=ORIGINAL the file takes
+**	what its directory gives: a DACL from another machine could leave
+**	the user who restores without access to the files restored.  A
+**	descriptor from a saveset is checked before use - a saveset is a
+**	file anybody may have made.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_opts		The command: /OWNER
+**	a_path		The file
+**	a_fd		Its descriptor, -1 - none
+**	a_attr		The attributes
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS - all put back; STS$K_WARN - something was not, reported.
+**--
+*/
+int	vbk$w_setwin	(
+	const	VBK$OPTS *	a_opts,
+	const	char *		a_path,
+		int		a_fd,
+	const	VBK$ATTR *	a_attr
+			)
+{
+wchar_t			l_w [VBK$K_WMAX];
+HANDLE			l_h = INVALID_HANDLE_VALUE;
+FILE_BASIC_INFO		l_bi;
+SECURITY_DESCRIPTOR_CONTROL l_ctl;
+SECURITY_INFORMATION	l_si;
+PSECURITY_DESCRIPTOR	l_sd;
+PSID			l_owner = NULL, l_group = NULL;
+PACL			l_dacl = NULL, l_sacl = NULL;
+BOOL			l_def, l_has;
+DWORD			l_rev, l_access, l_rc;
+int			l_status = STS$K_SUCCESS, l_link = (a_attr->ftype == VBK$K_FT_SYMLINK);
+
+	/* The attributes - not of a link: they would go to its target */
+	if ( a_attr->haswinattr && !l_link )
+		{
+		int	l_own = 0;
+
+		if ( (a_fd >= 0) && (INVALID_HANDLE_VALUE != (l_h = (HANDLE) _get_osfhandle(a_fd))) )
+			;
+		else if ( s_vbk$wpath(a_path, l_w) && !s_vbk$create(l_w, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, OPEN_EXISTING, 0, 1, &l_h, NULL) )
+			l_own	= 1;
+		else	l_h	= INVALID_HANDLE_VALUE;
+
+		if ( (l_h == INVALID_HANDLE_VALUE) || !GetFileInformationByHandleEx(l_h, FileBasicInfo, &l_bi, sizeof(l_bi)) )
+			l_status = $VBKMSG(VBACKUP$_ATTRERR, a_path, "attributes", errno, strerror(errno));
+		else	{
+			l_bi.FileAttributes = (l_bi.FileAttributes & ~VBK$M_WA_KEPT) | (a_attr->winattr & VBK$M_WA_KEPT);
+			l_bi.FileAttributes = l_bi.FileAttributes ? l_bi.FileAttributes : FILE_ATTRIBUTE_NORMAL;
+			memset(&l_bi.CreationTime, 0, sizeof(LARGE_INTEGER) * 4);
+
+			if ( !SetFileInformationByHandle(l_h, FileBasicInfo, &l_bi, sizeof(l_bi)) )
+				s_vbk$fail(), l_status = $VBKMSG(VBACKUP$_ATTRERR, a_path, "attributes", errno, strerror(errno));
+			}
+
+		if ( l_own )
+			CloseHandle(l_h);
+		}
+
+	if ( !a_attr->ntsd || !a_attr->ntsdlen || (a_opts->ownmode != VBACKUP$K_OWN_ORIGINAL) )
+		return	(1 & l_status) ? STS$K_SUCCESS : STS$K_WARN;
+
+	/* The descriptor out of the saveset: long enough for its header, aligned, checked against its length, then its parts found */
+	if ( a_attr->ntsdlen < sizeof(SECURITY_DESCRIPTOR_RELATIVE) )
+		return	$VBKMSG(VBACKUP$_ATTRERR, a_path, "security", EINVAL, "the descriptor in the saveset is not valid"), STS$K_WARN;
+
+	if ( !(l_sd = malloc(a_attr->ntsdlen)) )
+		return	$VBKMSG(VBACKUP$_ATTRERR, a_path, "security", ENOMEM, strerror(ENOMEM)), STS$K_WARN;
+
+	memcpy(l_sd, a_attr->ntsd, a_attr->ntsdlen);
+
+	if ( !s_vbk$sdcheck((const uint8_t *) l_sd, a_attr->ntsdlen) || !RtlValidRelativeSecurityDescriptor(l_sd, a_attr->ntsdlen, 0)
+		|| !GetSecurityDescriptorControl(l_sd, &l_ctl, &l_rev) )
+		{
+		free(l_sd);
+
+		return	$VBKMSG(VBACKUP$_ATTRERR, a_path, "security", EINVAL, "the descriptor in the saveset is not valid"), STS$K_WARN;
+		}
+
+	GetSecurityDescriptorOwner(l_sd, &l_owner, &l_def);
+	GetSecurityDescriptorGroup(l_sd, &l_group, &l_def);
+	GetSecurityDescriptorDacl(l_sd, &l_has, &l_dacl, &l_def);
+	GetSecurityDescriptorSacl(l_sd, &l_has, &l_sacl, &l_def);
+
+	l_si	 = DACL_SECURITY_INFORMATION | ((l_ctl & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION);
+	l_access = WRITE_DAC | READ_CONTROL;
+
+	if ( l_owner )
+		l_si |= OWNER_SECURITY_INFORMATION, l_access |= WRITE_OWNER;
+
+	if ( l_group )
+		l_si |= GROUP_SECURITY_INFORMATION, l_access |= WRITE_OWNER;
+
+	if ( l_sacl && (s_privs & VBK$M_PRIV_SECURITY) )
+		{
+		l_si	 |= SACL_SECURITY_INFORMATION | ((l_ctl & SE_SACL_PROTECTED) ? PROTECTED_SACL_SECURITY_INFORMATION : UNPROTECTED_SACL_SECURITY_INFORMATION);
+		l_access |= ACCESS_SYSTEM_SECURITY;
+		}
+
+	if ( !s_vbk$wpath(a_path, l_w) || s_vbk$create(l_w, l_access, OPEN_EXISTING, 0, 1, &l_h, NULL) )
+		l_status = $VBKMSG(VBACKUP$_ATTRERR, a_path, "security", errno, strerror(errno));
+	else	{
+		if ( ERROR_SUCCESS != (l_rc = SetSecurityInfo(l_h, SE_FILE_OBJECT, l_si, l_owner, l_group, l_dacl, l_sacl)) )
+			{
+			errno	 = s_vbk$errno(l_rc);
+			l_status = $VBKMSG(VBACKUP$_ATTRERR, a_path, "security", errno, strerror(errno));
+			}
+
+		CloseHandle(l_h);
+		}
+
+	free(l_sd);
+
+	return	(1 & l_status) ? STS$K_SUCCESS : STS$K_WARN;
+}
+
+
+/*
+**  The privileges of a backup operator, enabled when the account holds
+**  them (an elevated administrator does): BACKUP reads every file,
+**  RESTORE writes every file and sets any owner, SECURITY reads and sets
+**  the SACL, the symbolic link one makes links
+*/
+static	int	s_vbk$priv	(
+		HANDLE		a_tok,
+	const	wchar_t *	a_name
+			)
+{
+TOKEN_PRIVILEGES	l_tp = { .PrivilegeCount = 1 };
+
+	if ( !LookupPrivilegeValueW(NULL, a_name, &l_tp.Privileges [0].Luid) )
+		return	0;
+
+	l_tp.Privileges [0].Attributes = SE_PRIVILEGE_ENABLED;
+
+	return	AdjustTokenPrivileges(a_tok, FALSE, &l_tp, sizeof(l_tp), NULL, NULL) && (GetLastError() == ERROR_SUCCESS);
+}
+
+static	void	s_vbk$privs	(void)
+{
+HANDLE	l_tok;
+
+	if ( !OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &l_tok) )
+		return;
+
+	if ( s_vbk$priv(l_tok, L"SeBackupPrivilege") )
+		s_privs	|= VBK$M_PRIV_BACKUP;
+
+	if ( s_vbk$priv(l_tok, L"SeRestorePrivilege") )
+		s_privs	|= VBK$M_PRIV_RESTORE;
+
+	if ( s_vbk$priv(l_tok, L"SeSecurityPrivilege") )
+		s_privs	|= VBK$M_PRIV_SECURITY;
+
+	if ( s_vbk$priv(l_tok, L"SeCreateSymbolicLinkPrivilege") )
+		s_privs	|= VBK$M_PRIV_SYMLINK;
+
+	CloseHandle(l_tok);
+}
+
+/*
+**  The image may restore the owners of the files - the root of Linux
+*/
+int	vbk$w_privileged	(void)
+{
+	return	(s_privs & VBK$M_PRIV_RESTORE) != 0;
 }
 
 
