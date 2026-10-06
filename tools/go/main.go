@@ -114,6 +114,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-16		 6-OCT-2026	RRL
+**		The products of the repair faster without vector instructions
+**		(none to be had in one source file of Go): the XOR eight octets
+**		at a time, the table loop without bounds checks in it, four
+**		octets a turn.
+**
 **	X01-14		 5-OCT-2026	RRL
 **		Version 2 (format.md 4.1): PARITY blocks, the tag PARITY, groups
 **		of GRPSZ + m blocks, any m bad blocks of a group rebuilt by
@@ -193,7 +199,7 @@ const (
 	rtEnd     = 6
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
 
-	ident = "X01-14"
+	ident = "X01-16"
 
 	maxData  = 1 << 20 // the most octets a DATA or DATAZ record holds
 	codecLZ4 = 1
@@ -847,14 +853,34 @@ func rsMulAdd(dst, src []byte, c byte) {
 	if c == 0 {
 		return
 	}
+	n := len(dst)
+	if len(src) < n {
+		n = len(src)
+	}
+	dst, src = dst[:n], src[:n]
+	i := 0
+	if c == 1 {
+		for ; i+8 <= n; i += 8 {
+			binary.LittleEndian.PutUint64(dst[i:], binary.LittleEndian.Uint64(dst[i:])^binary.LittleEndian.Uint64(src[i:]))
+		}
+		for ; i < n; i++ {
+			dst[i] ^= src[i]
+		}
+		return
+	}
 	var t [256]byte
 	for x := 1; x < 256; x++ {
 		t[x] = gfMul(c, byte(x))
 	}
-	for i := range dst {
-		if i < len(src) {
-			dst[i] ^= t[src[i]]
-		}
+	for ; i+4 <= n; i += 4 {
+		d, s := dst[i:i+4:i+4], src[i:i+4:i+4]
+		d[0] ^= t[s[0]]
+		d[1] ^= t[s[1]]
+		d[2] ^= t[s[2]]
+		d[3] ^= t[s[3]]
+	}
+	for ; i < n; i++ {
+		dst[i] ^= t[src[i]]
 	}
 }
 

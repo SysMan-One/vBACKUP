@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-14.
+VBACKUP X01-15.
 
-**Software Version:** VBACKUP X01-15
+**Software Version:** VBACKUP X01-16
 
 **Operating System:** Linux (x86_64, aarch64); Windows for vbkx.exe and
 the WCX plugin
@@ -22,7 +22,7 @@ the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-15 as built from
+The information in this document reflects VBACKUP X01-16 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.

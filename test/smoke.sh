@@ -29,6 +29,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-16 : An output .../full in an existing directory is a name.
+#
 #		 5-OCT-2026	RRL	X-14 : /PARITY: three bad blocks of a group rebuilt, four
 #					lost, version 2, /TRANSFER, the refusals; vbkx.
 #
@@ -641,6 +643,10 @@ $VB 'src/tree/.../*.txt' w2.sav/sav/log > w2.log 2>&1
 check '[ $? = 0 ] && grep -q GLUED w2.log && grep -q SAVESUMM w2.log && [ -s w2.sav ]' "w2.sav/sav/log: the glued qualifiers not taken: $(head -2 w2.log)"
 $VB w2.sav /LIST /FORMAT=LS > w2.lst 2> /dev/null
 check 'grep -q "\.txt$" w2.lst && [ -z "$(grep "^-" w2.lst | grep -v "\.txt$")" ]' "a pattern saved more than its files: $(grep "^-" w2.lst | grep -v "\.txt$" | head -2)"
+#	A name in an existing directory whose last part looks like a qualifier: a name (X01-15 took "/full" for /FULL)
+rm -rf $S/wout; mkdir -p $S/wout
+$VB w2.sav $S/wout/full > wfull.log 2>&1
+check '[ $? = 0 ] && [ -d $S/wout/full ] && ! grep -q GLUED wfull.log' "an output .../full in an existing directory taken for /FULL: $(head -2 wfull.log)"
 #	Qualifiers glued to one another and to nothing: /LIST/FULL is a listing (X01-12 restored into /LIST)
 $VB w2.sav /LIST/FULL > w2f.lst 2> w2f.log
 check '[ $? = 0 ] && grep -q "^Listing of save set" w2f.lst && ! grep -q "STARTED" w2f.log && [ ! -d /LIST/src ]' "/LIST/FULL glued: not a listing: $(head -2 w2f.log)"

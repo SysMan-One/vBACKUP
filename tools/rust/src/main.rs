@@ -117,6 +117,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-16		 6-OCT-2026	RRL
+**		The products of the repair by the vector instructions: AVX2 or
+**		SSSE3 (found at run time), NEON on aarch64 - the nibble tables of
+**		a coefficient, checked against the portable code once; the CRC
+**		eight octets a step (slicing-by-8).
+**
 **	X01-14		 5-OCT-2026	RRL
 **		Savesets of version 2 (/PARITY=m, format.md 4.1): PARITY
 **		blocks, groups of GRPSZ + m blocks, up to m bad blocks of a
@@ -218,6 +224,7 @@ macro_rules! msg {
 /* CRC-32/IEEE, section 1: reflected 0xEDB88320, init and final XOR 0xFFFFFFFF */
 struct Crc {
     table: [u32; 256],
+    t8: Vec<[u32; 256]>, /* slicing-by-8: T[k][b] = the CRC of b followed by k zero octets */
 }
 
 impl Crc {
@@ -230,13 +237,35 @@ impl Crc {
             }
             *t = c;
         }
-        Crc { table }
+        let mut t8 = vec![[0u32; 256]; 8];
+        t8[0] = table;
+        for k in 1..8 {
+            for b in 0..256 {
+                let p = t8[k - 1][b];
+                t8[k][b] = (p >> 8) ^ table[(p & 0xFF) as usize];
+            }
+        }
+        Crc { table, t8 }
     }
 
     /* Chained as zlib's crc32(crc, buf): update(0, b) is the CRC of b */
     fn update(&self, crc: u32, buf: &[u8]) -> u32 {
         let mut c = !crc;
-        for &b in buf {
+        let t = &self.t8;
+        let mut chunks = buf.chunks_exact(8);
+        for w in &mut chunks {
+            let lo = c ^ u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+            let hi = u32::from_le_bytes([w[4], w[5], w[6], w[7]]);
+            c = t[7][(lo & 0xFF) as usize]
+                ^ t[6][((lo >> 8) & 0xFF) as usize]
+                ^ t[5][((lo >> 16) & 0xFF) as usize]
+                ^ t[4][(lo >> 24) as usize]
+                ^ t[3][(hi & 0xFF) as usize]
+                ^ t[2][((hi >> 8) & 0xFF) as usize]
+                ^ t[1][((hi >> 16) & 0xFF) as usize]
+                ^ t[0][(hi >> 24) as usize];
+        }
+        for &b in chunks.remainder() {
             c = self.table[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8);
         }
         !c
@@ -606,11 +635,79 @@ fn decrypt(k: &Keys, h: &Bhdr, pay: &mut [u8]) {
 struct Gf {
     exp: [u8; 512],
     log: [u8; 256],
+    simd: u8, /* 0 the portable code, 1 SSSE3, 2 AVX2, 3 NEON - checked against the portable code */
+}
+
+/*
+**  dst ^= c * src by vector instructions: LO[x] = c * x, HI[x] = c * (x << 4),
+**  an octet b is LO[b & 15] ^ HI[b >> 4]; whole vectors only, the octets
+**  done are returned
+*/
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "ssse3")]
+unsafe fn vec_ssse3(dst: &mut [u8], src: &[u8], lo: &[u8; 16], hi: &[u8; 16]) -> usize {
+    use std::arch::x86_64::*;
+    let n = dst.len().min(src.len()) & !15;
+    let l = _mm_loadu_si128(lo.as_ptr() as *const __m128i);
+    let h = _mm_loadu_si128(hi.as_ptr() as *const __m128i);
+    let m = _mm_set1_epi8(0x0F);
+    let mut i = 0;
+    while i < n {
+        let s = _mm_loadu_si128(src.as_ptr().add(i) as *const __m128i);
+        let p = _mm_xor_si128(
+            _mm_shuffle_epi8(l, _mm_and_si128(s, m)),
+            _mm_shuffle_epi8(h, _mm_and_si128(_mm_srli_epi64(s, 4), m)),
+        );
+        let d = dst.as_mut_ptr().add(i) as *mut __m128i;
+        _mm_storeu_si128(d, _mm_xor_si128(_mm_loadu_si128(d), p));
+        i += 16;
+    }
+    n
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn vec_avx2(dst: &mut [u8], src: &[u8], lo: &[u8; 16], hi: &[u8; 16]) -> usize {
+    use std::arch::x86_64::*;
+    let n = dst.len().min(src.len()) & !31;
+    let l = _mm256_broadcastsi128_si256(_mm_loadu_si128(lo.as_ptr() as *const __m128i));
+    let h = _mm256_broadcastsi128_si256(_mm_loadu_si128(hi.as_ptr() as *const __m128i));
+    let m = _mm256_set1_epi8(0x0F);
+    let mut i = 0;
+    while i < n {
+        let s = _mm256_loadu_si256(src.as_ptr().add(i) as *const __m256i);
+        let p = _mm256_xor_si256(
+            _mm256_shuffle_epi8(l, _mm256_and_si256(s, m)),
+            _mm256_shuffle_epi8(h, _mm256_and_si256(_mm256_srli_epi64(s, 4), m)),
+        );
+        let d = dst.as_mut_ptr().add(i) as *mut __m256i;
+        _mm256_storeu_si256(d, _mm256_xor_si256(_mm256_loadu_si256(d), p));
+        i += 32;
+    }
+    n
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn vec_neon(dst: &mut [u8], src: &[u8], lo: &[u8; 16], hi: &[u8; 16]) -> usize {
+    use std::arch::aarch64::*;
+    let n = dst.len().min(src.len()) & !15;
+    let l = vld1q_u8(lo.as_ptr());
+    let h = vld1q_u8(hi.as_ptr());
+    let m = vdupq_n_u8(0x0F);
+    let mut i = 0;
+    while i < n {
+        let s = vld1q_u8(src.as_ptr().add(i));
+        let p = veorq_u8(vqtbl1q_u8(l, vandq_u8(s, m)), vqtbl1q_u8(h, vshrq_n_u8(s, 4)));
+        let d = dst.as_mut_ptr().add(i);
+        vst1q_u8(d, veorq_u8(vld1q_u8(d), p));
+        i += 16;
+    }
+    n
 }
 
 impl Gf {
     fn new() -> Gf {
-        let mut g = Gf { exp: [0; 512], log: [0; 256] };
+        let mut g = Gf { exp: [0; 512], log: [0; 256], simd: 0 };
         let mut x: u32 = 1;
         for i in 0..255usize {
             g.exp[i] = x as u8;
@@ -623,7 +720,72 @@ impl Gf {
         }
         g.exp[510] = g.exp[0];
         g.exp[511] = g.exp[0];
+        g.simd = g.pick();
         g
+    }
+    /* The vector instructions there are, when they give the bytes of the portable code */
+    fn pick(&self) -> u8 {
+        if std::env::var("VBACKUP_NOSIMD").map(|v| v == "1").unwrap_or(false) {
+            return 0;
+        }
+        #[allow(unused_mut)]
+        let mut k: u8 = 0;
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                k = 2;
+            } else if is_x86_feature_detected!("ssse3") {
+                k = 1;
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            k = 3;
+        }
+        if k == 0 {
+            return 0;
+        }
+        let src: Vec<u8> = (0..203u32).map(|i| (i * 37 + 11) as u8).collect();
+        let mut probe = Gf { exp: self.exp, log: self.log, simd: 0 };
+        for c in (2..256u32).step_by(7) {
+            let mut a = vec![0x5Au8; 203];
+            let mut b = vec![0x5Au8; 203];
+            probe.simd = 0;
+            probe.muladd(&mut a[1..], &src[1..], c as u8);
+            probe.simd = k;
+            probe.muladd(&mut b[1..], &src[1..], c as u8);
+            if a != b {
+                return 0;
+            }
+        }
+        k
+    }
+    /* The vector instructions chosen: the octets they did */
+    #[allow(unused_variables)]
+    fn vec(&self, dst: &mut [u8], src: &[u8], lo: &[u8; 16], hi: &[u8; 16]) -> usize {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            return match self.simd {
+                2 => vec_avx2(dst, src, lo, hi),
+                1 => vec_ssse3(dst, src, lo, hi),
+                _ => 0,
+            };
+        }
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            return vec_neon(dst, src, lo, hi);
+        }
+        #[allow(unreachable_code)]
+        0
+    }
+    /* What makes the products */
+    fn simd_name(&self) -> &'static str {
+        match self.simd {
+            1 => "SSSE3",
+            2 => "AVX2",
+            3 => "NEON",
+            _ => "portable",
+        }
     }
     fn mul(&self, a: u8, b: u8) -> u8 {
         if a == 0 || b == 0 {
@@ -650,6 +812,20 @@ impl Gf {
         if c == 1 {
             for (d, s) in dst.iter_mut().zip(src.iter()) {
                 *d ^= *s;
+            }
+            return;
+        }
+        let n = dst.len().min(src.len());
+        if self.simd != 0 && n >= 16 {
+            let mut lo = [0u8; 16];
+            let mut hi = [0u8; 16];
+            for x in 0..16usize {
+                lo[x] = self.mul(c, x as u8);
+                hi[x] = self.mul(c, (x << 4) as u8);
+            }
+            let done = self.vec(&mut dst[..n], &src[..n], &lo, &hi);
+            for i in done..n {
+                dst[i] ^= lo[(src[i] & 15) as usize] ^ hi[(src[i] >> 4) as usize];
             }
             return;
         }
@@ -846,6 +1022,34 @@ fn selftest() -> i32 {
         good &= g.repair(&mut d, &dok, &par, &[true, true, true]) == 2;
         good &= g.coef(0, 7) == 1;
         said("Reed-Solomon GF(2^8) 0x11D, scaled Cauchy, every pattern of 6 + 3", good);
+    }
+    {
+        /* The products of the vector instructions against those of the portable code, octet by octet */
+        let g = Gf::new();
+        let src: Vec<u8> = (0..1100u32).map(|k| (k * 131 + (k >> 3)) as u8).collect();
+        let mut same = true;
+        for c in (0..256u32).step_by(5) {
+            for off in 0..4usize {
+                for len in (0..1090usize).step_by(97) {
+                    let mut a = vec![0xA5u8; 1100];
+                    let mut b = vec![0xA5u8; 1100];
+                    let s0 = 3 - (off & 1);
+                    g.muladd(&mut a[off..off + len], &src[s0..s0 + len], c as u8);
+                    for k in 0..len {
+                        g.muladd(&mut b[off + k..off + k + 1], &src[s0 + k..s0 + k + 1], c as u8);
+                    }
+                    same &= a == b;
+                }
+            }
+        }
+        said(&format!("Reed-Solomon products by {} = the portable ones", g.simd_name()), same);
+        let crc = Crc::new();
+        let data: Vec<u8> = (0..1000u32).map(|k| (k * 7 + 1) as u8).collect();
+        let mut slow = !0u32;
+        for &b in &data {
+            slow = crc.table[((slow ^ b as u32) & 0xFF) as usize] ^ (slow >> 8);
+        }
+        said("CRC-32/IEEE eight octets a step = one at a time", crc.update(0, &data) == !slow && crc.update(0, b"123456789") == 0xCBF4_3926);
     }
     if failed == 0 {
         println!("selftest: all primitives right");

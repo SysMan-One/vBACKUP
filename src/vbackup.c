@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-15"
-#define	__REV__		"1.15.0"
+#define	__IDENT__	"X01-16"
+#define	__REV__		"1.16.0"
 
 /*
 **++
@@ -40,6 +40,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-16		 6-OCT-2026	RRL
+**		A word whose part before what looks like qualifiers is an existing
+**		directory is a name in it: /backup/restore/full is not cut into
+**		/backup/restore and /FULL, nor /work/r into /work and "/r".
 **
 **	X01-15		 5-OCT-2026	RRL
 **		Stage 11: the parity of /PARITY by the vector instructions of the
@@ -782,7 +787,8 @@ ASC		l_val;
 **  qualifier - and only when the word is not the name of a file as a
 **  whole.  A value with a slash in it (/JOURNAL=/var/...) is not taken
 **  from a glued word: it is given apart.  A word that is qualifiers
-**  from its first octet on - /LIST/FULL - is all qualifiers.  Returns the
+**  from its first octet on - /LIST/FULL - is all qualifiers; a word whose
+**  part before the qualifiers is an existing directory is a name in it.  Returns the
 **  length of the parameter, 0 - no parameter in it, (size_t) -1 - the
 **  word is not cut.
 */
@@ -819,7 +825,28 @@ int		l_ok;
 			}
 
 		if ( l_ok )
+			{
+			/*
+			**  What comes before is an existing directory: the word is a name
+			**  in it, to be made - /backup/restore/full is no restore into
+			**  /backup/restore with /FULL (X01-15)
+			*/
+			if ( l_p != a_word )
+				{
+				char	l_dir [VBACKUP$K_SZ_PATH];
+
+				if ( (size_t) (l_p - a_word) < sizeof(l_dir) )
+					{
+					memcpy(l_dir, a_word, (size_t) (l_p - a_word));
+					l_dir [l_p - a_word] = '\0';
+
+					if ( !stat(l_dir, &l_st) && S_ISDIR(l_st.st_mode) )
+						return	(size_t) -1;
+					}
+				}
+
 			return	(size_t) (l_p - a_word);
+			}
 		}
 
 	return	(size_t) -1;
