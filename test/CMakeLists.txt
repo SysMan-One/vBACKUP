@@ -8,6 +8,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-20 : memcheck.sh - valgrind, with -DVBACKUP$M_MEMCHECK=ON.
+#
 #		 6-OCT-2026	RRL	X-18 : winutil.sh gets fakessh.exe.
 #
 #		 6-OCT-2026	RRL	X-17 : winutil.sh - vbackup.exe under wine.
@@ -81,6 +83,21 @@ if ( VBACKUP_GEEKS )
 	endif()
 
 	add_test(NAME geeks COMMAND ${CMAKE_COMMAND} -E env ${L_ENV} sh ${CMAKE_CURRENT_SOURCE_DIR}/geeks.sh)
+endif()
+
+#	valgrind memcheck over the utility and test/units: asked for only - slow on a small board
+option(VBACKUP$M_MEMCHECK "Run VBACKUP and test/units under valgrind memcheck (test memcheck)" OFF)
+
+if ( VBACKUP$M_MEMCHECK )
+	find_program(VBACKUP_VALGRIND valgrind)
+
+	if ( VBACKUP_VALGRIND )
+		add_test(NAME memcheck COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> UNITS=$<TARGET_FILE:units>
+			VALGRIND=${VBACKUP_VALGRIND} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/memcheck.d sh ${CMAKE_CURRENT_SOURCE_DIR}/memcheck.sh)
+		set_tests_properties(memcheck PROPERTIES TIMEOUT 7200)
+	else()
+		message(STATUS "VBACKUP: VBACKUP$M_MEMCHECK - no valgrind")
+	endif()
 endif()
 
 #	vbkx.exe under wine: only when both are there (a few seconds)

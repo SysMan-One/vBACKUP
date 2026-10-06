@@ -461,7 +461,7 @@ vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6
 
 `/LEVEL=1` es el rápido (igual que `/DATA_FORMAT=COMPRESSED`); `/LEVEL=5`
 es como zip; `/LEVEL=9` es como 7-Zip. Las cartas se reducen unas 2 veces
-con 1, casi 4 con 5 y 4,5 con 9.
+con 1, casi 4 con 5 y casi 5 con 9.
 
 **¿Es seguro?** Sí. VBACKUP desempaqueta cada trozo justo después de
 empaquetarlo y lo compara con tu archivo. Solo se guarda empaquetado el

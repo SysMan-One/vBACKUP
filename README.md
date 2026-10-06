@@ -144,6 +144,58 @@ for media you put on a shelf.  tar is everywhere and every tool reads it.
 VBACKUP is young: its format is fixed and tested by its own damage tests,
 but it has not had the decades of use the others have.
 
+## Compression and speed
+
+`/DATA_FORMAT=COMPRESSED` or `/LEVEL=n` (1..9) compresses on all cores;
+every compressed record is decompressed again and compared before it is
+written, so a saveset never depends on the compressor being right.
+Measured on the build host (Xeon E5-2680 v4, 8 compression threads).
+
+One record of 1 MB, one core, the check included:
+
+| /LEVEL | Codec | Text | Binaries | Save | Restore | Close to (on the text) |
+|---|---|---|---|---|---|---|
+| 1 | LZ4 | 2.10x | 1.48x | 128 MB/s | 400 MB/s | lz4 -1 (2.28x) |
+| 2 | Deflate | 3.18x | 1.94x | 33 MB/s | 190 MB/s | gzip -1 (2.95x) |
+| 5 | Deflate | 3.71x | 2.06x | 11 MB/s | 230 MB/s | gzip -9 (3.71x) |
+| 6 | LZMA, fast parse | 4.02x | 2.28x | 12 MB/s | 54 MB/s | xz -1 (4.10x) |
+| 8 | LZMA, optimal parse | 4.82x | 2.43x | 1.9 MB/s | 64 MB/s | xz -6 (4.84x) |
+| 9 | LZMA, optimal parse | 4.85x | 2.44x | 1.7 MB/s | 64 MB/s | xz -6 (4.84x) |
+
+Whole trees, saveset size (it holds one repair block in ten, ~10%) and
+time; `tar | gzip` and `tar | xz` for comparison:
+
+| /usr/include, 210 MB | Size | Save | Restore |
+|---|---|---|---|
+| uncompressed | 239 MB | 1.0 s | 1.9 s |
+| /LEVEL=1 | 81 MB | 1.3 s | 2.1 s |
+| /LEVEL=2 | 60 MB | 1.5 s | 2.5 s |
+| /LEVEL=5 | 55 MB | 2.7 s | 2.4 s |
+| /LEVEL=6 | 56 MB | 2.5 s | 4.6 s |
+| /LEVEL=9 | 53 MB | 24.5 s | 4.5 s |
+| tar, gzip -6 | 28 MB | 5.0 s | |
+| tar, xz -T8 -6 | 19 MB | 9.9 s | |
+
+| /usr/lib/python3, 512 MB | Size | Save | Restore |
+|---|---|---|---|
+| uncompressed | 571 MB | 2.9 s | 2.6 s |
+| /LEVEL=1 | 269 MB | 2.5 s | 3.3 s |
+| /LEVEL=2 | 200 MB | 4.4 s | 5.0 s |
+| /LEVEL=5 | 187 MB | 11.4 s | 4.7 s |
+| /LEVEL=6 | 172 MB | 9.6 s | 12.5 s |
+| /LEVEL=9 | 163 MB | 50.8 s | 12.2 s |
+| tar, gzip -6 | 149 MB | 22.1 s | |
+| tar, xz -T8 -6 | 96 MB | 29.3 s | |
+
+What the numbers say: on big files VBACKUP compresses as gzip or xz do,
+and faster than one-thread gzip at level 1..5. On many small files it
+gives less than one tar of them: each file is compressed on its own -
+that is what keeps a bad block to one file - so what one file shares
+with the next is not used. Restore is fast at every level. Since X01-20
+levels 8 and 9 use the optimal parse of xz (+8% over X01-19 on text),
+and the compression pool keeps its cores busy on small files (/LEVEL=8 on
+/usr/include: 37 s -> 16 s).
+
 ## For geeks: vbkx-go, vbkx-rs, vbkx-pl
 
 Two more extractors of last resort, for the day everything else is

@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-18.
+VBACKUP X01-19.
 
-**Software Version:** VBACKUP X01-19
+**Software Version:** VBACKUP X01-20
 
 **Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
 vbackup.exe, vbkx.exe and the WCX plugin
@@ -22,7 +22,7 @@ vbackup.exe, vbkx.exe and the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-19 as built from
+The information in this document reflects VBACKUP X01-20 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -413,14 +413,24 @@ files.
 |---|---|---|---|---|---|
 | 1 (default) | LZ4 | 2.1x | 1.5x | 130 MB/s | 400 MB/s |
 | 2 .. 5 | Deflate | 3.2x .. 3.7x | 1.9x .. 2.1x | 33 .. 11 MB/s | 110 .. 230 MB/s |
-| 6 .. 9 | LZMA | 4.0x .. 4.5x | 2.3x | 12 .. 2 MB/s | 30 .. 60 MB/s |
+| 6, 7 | LZMA, fast parse | 4.0x .. 4.2x | 2.3x | 12 .. 8 MB/s | 30 .. 60 MB/s |
+| 8, 9 | LZMA, optimal parse | 4.8x .. 4.85x | 2.4x | 1.9 .. 1.7 MB/s | 30 .. 65 MB/s |
 
 The ratios were measured on this host on 1 MB records of the vBACKUP
 source tree and of program binaries; the speeds are those of one core,
 the check of every record included - the compression runs on several
 threads (Section 1.12), and the saveset does not depend on their number.
 A restore is fast at every level: faster than most disks for LZ4 and
-Deflate, tens of MB/s for LZMA.
+Deflate, tens of MB/s for LZMA. Levels 8 and 9 choose the cheapest coding
+of every stretch of data by the prices of the model (the optimal parse
+of xz) and compress as `xz -6` does on a record of 1 MB; they are slow to
+save, as xz is, and as fast to restore as 6 and 7.
+
+Many small files compress less than one tar of them: each file is
+compressed on its own, so what one file shares with the next is not
+used - that is what keeps a bad block to one file. On `/usr/include`
+(210 MB of headers) `/LEVEL=9` gives 53 MB where `tar | xz -6` gives
+19 MB; on big files the two are alike.
 
 Every record is compressed on its own (format.md 6.7): a bad block costs
 that record alone, and the XOR and parity repair works as for

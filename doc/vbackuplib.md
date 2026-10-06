@@ -363,8 +363,10 @@ is fast at every level.
 ```
 
 Measured on one core (a text, 1 MB): LZ4 2.1 times smaller at 130 MB/s;
-Deflate 3.2 to 3.7 times at 33 to 11 MB/s; LZMA 4.0 to 4.5 times at 12
-to 2 MB/s. All cores work (VBACKUP_ZTHREADS).
+Deflate 3.2 to 3.7 times at 33 to 11 MB/s; LZMA at 6, 7 4.0 to 4.2 times
+at 12 to 8 MB/s; at 8, 9 - the optimal parse of xz - 4.8 times at 2 MB/s,
+as xz -6. All cores work (VBACKUP_ZTHREADS). Many small files compress
+less than one tar of them: each file is compressed on its own.
 
 Every piece VBACKUP compresses is decompressed again at once and
 compared with the data; only a piece that comes back the same is

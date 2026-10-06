@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-20"
+#define	__REV__		"1.20.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-20		 6-OCT-2026	RRL
+**		Stage 16: /LEVEL=8, 9 by the optimal parse of LZMA; the pool of the
+**		compression keeps its cores busy on small files.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		Stage 15: /LEVEL=n - 1 LZ4, 2 .. 5 Deflate, 6 .. 9 LZMA; it compresses
