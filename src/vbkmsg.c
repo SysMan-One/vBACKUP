@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -19,6 +19,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		VBK$MKPATH: on Windows the names Windows takes for something else are
+**		refused too (VBK$W_BADNAME): a stream, a device, a trailing dot.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		PARITYERR: the parity of a group disagrees, nothing of it rebuilt.
@@ -681,6 +685,11 @@ size_t	l_dirlen = strlen(a_dir);
 
 	if ( !a_namelen || (a_name [0] == '/') || memchr(a_name, '\0', a_namelen) )
 		return	STS$K_ERROR;
+
+#ifdef	_WIN32
+	if ( vbk$w_badname(a_name, a_namelen) )
+		return	STS$K_ERROR;
+#endif
 
 	/* No component may be ".." */
 	for ( uint32_t i = 0; i < a_namelen; )

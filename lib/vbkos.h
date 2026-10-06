@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-08"
+#define	__IDENT__	"X01-17"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.8.0"
+#define	__REV__		"1.17.0"
 #endif
 
 /*
@@ -30,6 +30,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		VBK_STARLET: vbackup.exe, the utility on Windows, has StarLet -
+**		its status values and its CRC; VBK$OS_RANDOM by the generator
+**		of the system (BCryptGenRandom), the writer is there now.
 **
 **	X01-08		 5-OCT-2026	RRL
 **		VBK$OS_STDIN, VBK$OS_READ: a saveset read from a pipe.
@@ -58,7 +63,7 @@
 #include	<errno.h>
 #include	<fcntl.h>
 
-#if	defined(_WIN32) || defined(VBK_NOSTARLET)
+#if	(defined(_WIN32) && !defined(VBK_STARLET)) || defined(VBK_NOSTARLET)
 
 /*
 **  No StarLet - Windows, or a plugin that must not link it (VBK_NOSTARLET:
@@ -118,9 +123,16 @@ const	uint8_t *	l_p = (const uint8_t *) a_buf;
 #ifdef	_WIN32
 
 #include	<windows.h>
+#include	<bcrypt.h>
 #include	<io.h>
 #include	<sys/types.h>
 #include	<sys/stat.h>
+
+#ifdef	VBK_STARLET
+#include	"utility_routines.h"
+
+#define	$VBK_CRC(crc, buf, len)		((uint32_t) __util$crc32c((unsigned) (crc), (buf), (size_t) (len)))
+#endif
 
 /*
 **  A name in UTF-8 - as a saveset and the command line give it - turned
@@ -137,18 +149,15 @@ static inline int	vbk$os_wide (
 }
 
 /*
-**  The random octets of a saveset UUID: only the writer wants them, and
-**  there is no writer on Windows
+**  Random octets - a saveset UUID, a salt, a nonce - from the generator
+**  of the system; only vbackup.exe calls it (linked with bcrypt)
 */
 static inline int	vbk$os_random (
 		void *		a_buf,
 		size_t		a_len
 			)
 {
-	(void) a_buf;
-	(void) a_len;
-
-	return	STS$K_ERROR;
+	return	BCRYPT_SUCCESS(BCryptGenRandom(NULL, (PUCHAR) a_buf, (ULONG) a_len, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) ? STS$K_SUCCESS : STS$K_ERROR;
 }
 
 static inline void	vbk$os_seq (

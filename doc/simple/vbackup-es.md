@@ -1356,6 +1356,47 @@ de datos). Se copió tal cual; solo OpenVMS puede leerlo.
 
 ---
 
+## 16. VBACKUP en un ordenador con Windows
+
+**Para qué:** tienes un ordenador con Windows y quieres hacer cajas allí,
+o abrir una caja hecha en Linux.
+
+Existe `vbackup.exe` para Windows. Es el mismo VBACKUP: las mismas
+órdenes, las mismas cajas. Una caja hecha en Linux se abre en Windows, y
+una caja hecha en Windows se abre en Linux.
+
+**Meter una carpeta en una caja:**
+
+```
+C:\> vbackup C:\Users\ivan\Documents D:\docs.bck
+```
+
+**Ver qué hay dentro y sacarlo todo:**
+
+```
+C:\> vbackup D:\docs.bck /LIST
+C:\> vbackup D:\docs.bck C:\restore
+```
+
+**Algunos nombres no pueden vivir en Windows.** En Linux un archivo puede
+llamarse `a:b`, `qué?` o `con.txt`. Windows no permite esos nombres.
+VBACKUP no crea esos archivos y te lo dice:
+
+```
+%VBACKUP-E-OPENOUT, File: tree/a:b, errno: 22 - cannot be created as output (not a valid name on Windows)
+```
+
+Todos los demás archivos salen. Para sacar uno de esos, abre la caja en Linux.
+
+**Mayúsculas y minúsculas.** En Linux `README` y `readme` son dos archivos.
+En Windows son uno. VBACKUP saca el primero y te avisa del segundo.
+Nunca escribe uno encima del otro.
+
+**Lo que Windows no puede hacer:** `/PHYSICAL`, `/IMAGE` y una caja en
+otro ordenador (`node::file`). Usa Linux para eso.
+
+---
+
 ## Pequeño diccionario
 
 - **Carpeta** — un sitio donde viven los archivos. Como un cajón de un armario.

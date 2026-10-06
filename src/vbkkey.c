@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKKEY"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -33,6 +33,11 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-17		 6-OCT-2026	RRL
+**		Windows: the passphrase from the console - ReadConsoleW, no echo, in
+**		UTF-8 as on Linux, or a saveset made on one would not open on the other;
+**		the mode of a key file is not looked at there - its ACL rules it.
+**
 **	X01-07		 5-OCT-2026	RRL
 **		The prompt made by FAO.
 **
@@ -49,8 +54,11 @@
 #include	<fcntl.h>
 #include	<signal.h>
 #include	<unistd.h>
-#include	<termios.h>
 #include	<sys/stat.h>
+
+#ifndef	_WIN32
+#include	<termios.h>
+#endif
 
 #include	"vbkdef.h"
 #include	"vbkrd.h"
@@ -60,8 +68,10 @@ static	char		s_pass [VBK$K_PASSMAX + 2];	/* The passphrase of this command	*/
 static	size_t		s_plen;
 static	int		s_have;
 
+#ifndef	_WIN32
 static	int		s_ttyfd = -1;		/* The terminal while its echo is off		*/
 static	struct termios	s_ttysave;
+#endif
 
 
 /*
@@ -75,6 +85,62 @@ void	vbk$key_wipe	(void)
 }
 
 
+#ifdef	_WIN32
+/*
+**  One line from the console of Windows, no echo: <a_fd> is CONIN$.
+**  Read in UTF-16 and made UTF-8 - the passphrase must be the same octets
+**  as the one typed on Linux.  Returns its length, -1 - none.
+*/
+static	int	s_vbk$ttyread	(
+		int		a_fd,
+	const	char *		a_prompt,
+		char *		a_buf,
+		size_t		a_size
+			)
+{
+HANDLE	l_in = (HANDLE) _get_osfhandle(a_fd), l_out;
+DWORD	l_mode, l_n = 0;
+wchar_t	l_w [1100];
+int	l_len;
+
+	if ( (l_in == INVALID_HANDLE_VALUE) || !GetConsoleMode(l_in, &l_mode) )
+		return	-1;
+
+	if ( INVALID_HANDLE_VALUE != (l_out = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL)) )
+		WriteConsoleA(l_out, a_prompt, (DWORD) strlen(a_prompt), NULL, NULL);
+
+	SetConsoleMode(l_in, (l_mode | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT) & ~ENABLE_ECHO_INPUT);
+
+	if ( !ReadConsoleW(l_in, l_w, (DWORD) (sizeof(l_w) / sizeof(l_w [0]) - 1), &l_n, NULL) )
+		l_n	= 0;
+
+	SetConsoleMode(l_in, l_mode);
+
+	if ( l_out != INVALID_HANDLE_VALUE )
+		{
+		WriteConsoleA(l_out, "\n", 1, NULL, NULL);
+		CloseHandle(l_out);
+		}
+
+	/* No end of line read: longer than the buffer, or ^Z */
+	if ( !l_n || (l_w [l_n - 1] != L'\n') )
+		return	vbk$crp_wipe(l_w, sizeof(l_w)), -1;
+
+	while ( l_n && ((l_w [l_n - 1] == L'\n') || (l_w [l_n - 1] == L'\r')) )
+		l_n--;
+
+	l_len	= l_n ? WideCharToMultiByte(CP_UTF8, 0, l_w, (int) l_n, a_buf, (int) a_size - 1, NULL, NULL) : 0;
+	vbk$crp_wipe(l_w, sizeof(l_w));
+
+	if ( l_n && (l_len <= 0) )
+		return	-1;
+
+	a_buf [l_len] = '\0';
+
+	return	l_len;
+}
+
+#else
 /*
 **  ^C or ^Z while the echo is off: the terminal is given back as it was
 */
@@ -167,6 +233,7 @@ ssize_t		l_rc;
 
 	return	(int) l_n;
 }
+#endif
 
 
 /*
@@ -192,12 +259,15 @@ int		l_fd;
 		return	$VBKMSG(VBACKUP$_KEYFILE, a_spec, "not a regular file");
 		}
 
+#ifndef	_WIN32
+	/* On Windows its ACL says who may read it, not a mode: the profile of the user is the place for it */
 	if ( l_st.st_mode & (S_IRWXG | S_IRWXO) )
 		{
 		close(l_fd);
 
 		return	$VBKMSG(VBACKUP$_KEYFILE, a_spec, "others may read or change it - chmod 600 it");
 		}
+#endif
 
 	l_rc	= read(l_fd, l_buf, sizeof(l_buf));
 	close(l_fd);

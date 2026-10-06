@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-16"
-#define	__REV__		"1.16.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		Stage 13: vbackup.exe, the utility on Windows (src/vbkosw.c,
+**		win/vbkwin.h): the command line in UTF-8; /PHYSICAL and /IMAGE
+**		refused there; the extended attributes not by default - there
+**		are none on Windows.
 **
 **	X01-16		 6-OCT-2026	RRL
 **		A word whose part before what looks like qualifiers is an existing
@@ -719,6 +725,10 @@ ASC		l_val;
 		{
 		a_opts->physical = 1;
 
+#ifdef	_WIN32
+		return	$VBKMSG(VBACKUP$_QUALUSE, "PHYSICAL", "not on Windows");
+#endif
+
 		if ( a_opts->timefilter || a_opts->record || a_opts->incremental || a_opts->nselect || a_opts->nexclude || a_opts->hasowner )
 			return	$VBKMSG(VBACKUP$_CONFQUAL, "PHYSICAL", a_opts->timefilter ? "SINCE, /BEFORE" : a_opts->record ? "RECORD"
 				: a_opts->incremental ? "INCREMENTAL" : a_opts->hasowner ? "BY_OWNER" : "SELECT, /EXCLUDE");
@@ -728,6 +738,10 @@ ASC		l_val;
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_IMAGE, NULL) )
 		{
 		a_opts->image	= 1;
+
+#ifdef	_WIN32
+		return	$VBKMSG(VBACKUP$_QUALUSE, "IMAGE", "not on Windows");
+#endif
 
 		if ( a_opts->physical || a_opts->incremental || a_opts->nselect || a_opts->nexclude || a_opts->hasowner )
 			return	$VBKMSG(VBACKUP$_CONFQUAL, "IMAGE", a_opts->physical ? "PHYSICAL" : a_opts->incremental ? "INCREMENTAL"
@@ -909,6 +923,10 @@ int		l_rverify = 0;
 int		l_vms = 0, l_argc = 1, l_wordcnt = 0, l_sep = a_argc, l_usage = 0, l_status, l_list = 0;
 size_t		l_cmdlen = 0;
 
+#ifdef	_WIN32
+	vbk$w_init(&a_argc, &a_argv);
+#endif
+
 	vbk$inimsg();
 
 	/* The cores for the encryption: the stripes of a block, the blocks of a group (VBACKUP_CTHREADS) */
@@ -918,7 +936,11 @@ size_t		l_cmdlen = 0;
 	l_opts.bsize	= VBK$K_DEFBSZ;
 	l_opts.grpsz	= VBK$K_DEFGRP;
 	l_opts.parity	= 1;
+#ifdef	_WIN32
+	l_opts.xattrs	= 0;			/* Linux ones in a saveset have nowhere to go		*/
+#else
 	l_opts.xattrs	= 1;
+#endif
 	l_opts.ownmode	= geteuid() ? VBACKUP$K_OWN_DEFAULT : VBACKUP$K_OWN_ORIGINAL;
 
 	/* The command as it was given, for the SUMMARY; cut at VBK$K_MAXCMD */

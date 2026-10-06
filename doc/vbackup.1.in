@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 6-OCT-2026	RRL	X-17 : WINDOWS: vbackup.exe.
+.\"
 .\"		 5-OCT-2026	RRL	X-15 : VBACKUP_NOSIMD.
 .\"
 .\"		 5-OCT-2026	RRL	X-14 : /PARITY: several bad blocks of a group repaired.
@@ -281,6 +283,41 @@ the cores by default (at most 8), 1 \- none.
 .B VBACKUP_PREFETCH
 The number of threads that read files ahead in a save or a copy;
 8 by default, 0 \- none.
+.SH WINDOWS
+.B vbackup.exe
+is the same utility built for Windows with MinGW-w64
+(cmake with
+.IR cmake/mingw-w64.cmake ,
+the StarLet sources in
+.BR VBACKUP_STARLET_SRC ).
+Savesets go both ways between Linux and Windows.
+Names are Unicode, paths of any length;
+.B \e
+and
+.B /
+both separate.
+Saved there: data, the four times, read-only, directories, hard links,
+symbolic links and junctions; not the owner, the ACL, the other NTFS
+attributes or streams.
+A name Windows cannot hold (a
+.BR : ,
+a trailing dot,
+.BR CON ...)
+is not restored, and said (OPENOUT); two names that differ in case only
+are one file there, the second is not restored, with
+.B /REPLACE
+neither.
+.BR /PHYSICAL ,
+.B /IMAGE
+and
+.I node::file
+are refused there;
+.B /NOXATTRS
+is the default; the mode of a key file is not checked (its ACL is);
+the journal is
+.IR %USERPROFILE%\e.vbackup\evbackup.jnl .
+See
+.BR "vbackup /HELP WINDOWS" .
 .SH NOTES
 The pages of a saveset are dropped from the page cache once written
 or read, and so are the pages of a file that was not in the cache

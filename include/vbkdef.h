@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-14"
+#define	__IDENT__	"X01-17"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.14.0"
+#define	__REV__		"1.17.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		VBK$ISABS: an absolute path - "C:/dir" too on Windows.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		PARITY of the options; PARITYERR.
@@ -703,6 +706,22 @@ void	vbk$key_wipe	(void);
 **  STS$K_WARN when HELP was not found at configuration time
 */
 int	vbk$help	(int a_wordcnt, char **a_words, int a_page);
+
+/*
+**  Is a path absolute?  "/dir" on Linux; on Windows "C:/dir" too, the
+**  form realpath() gives there - a BASE of a saveset made on Windows
+*/
+static inline int	vbk$isabs	(
+	const	char *		a_path
+			)
+{
+#ifdef	_WIN32
+	if ( ((((unsigned char) a_path [0] | 0x20) >= 'a') && (((unsigned char) a_path [0] | 0x20) <= 'z')) && (a_path [1] == ':') && (a_path [2] == '/') )
+		return	1;
+#endif
+
+	return	a_path [0] == '/';
+}
 
 #ifdef	__cplusplus
 }

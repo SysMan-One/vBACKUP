@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKJNL"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -29,6 +29,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		Windows: no tm_gmtoff there, VBK$W_GMTOFF; a base "C:/dir" is
+**		absolute (VBK$ISABS).
 **
 **	X01-07		 5-OCT-2026	RRL
 **		The listing of the journal and every name made by FAO.
@@ -609,8 +613,13 @@ unsigned short	l_len = 0;
 struct tm	l_tm;
 time_t		l_t = (time_t) a_sec;
 
+#ifdef	_WIN32
+	(void) l_tm;
+	a_sec	+= vbk$w_gmtoff(l_t);
+#else
 	if ( localtime_r(&l_t, &l_tm) )
 		a_sec	+= l_tm.tm_gmtoff;
+#endif
 
 	if ( !(1 & __util$fao("!%D", &l_len, &l_dsc, (fao_prm_t) a_sec)) )
 		l_len	= 0;
@@ -869,7 +878,7 @@ uint64_t	l_nrec = 0;
 						&& (l_attr.ftype != VBK$K_FT_DIR) && (l_attr.baseidx < l_nbase) && l_base [l_attr.baseidx] )
 						{
 						/* A catalog of X01-01 has no CTIME and DEVINO: such an entry is of no use */
-						if ( !l_attr.hasctime || !l_attr.hasdevino || (l_base [l_attr.baseidx][0] != '/') )
+						if ( !l_attr.hasctime || !l_attr.hasdevino || !vbk$isabs(l_base [l_attr.baseidx]) )
 							l_bare++;
 						else if ( $VBKFAOB(l_path, sizeof(l_path), "!AZ!AZ!AD", l_base [l_attr.baseidx],
 								strcmp(l_base [l_attr.baseidx], "/") ? "/" : "", l_attr.pathlen, l_attr.path) < (int) sizeof(l_path) )

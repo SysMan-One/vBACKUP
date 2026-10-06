@@ -199,6 +199,28 @@ symbolic links where Windows allows them (developer mode).  A name
 Windows cannot hold (`a:b`, `x?`, `con.txt`, ...) is not extracted, and
 said.  `test/win.sh` runs it under wine.
 
+## vbackup on Windows
+
+`vbackup.exe` is the whole utility on Windows - save, restore, list,
+compare, the journal and incremental savesets, encryption, parity,
+volumes, pipes - and its savesets go both ways between Linux and
+Windows.  It is built on Linux with MinGW-w64 and the StarLet sources
+(StarLet itself is not changed for it):
+
+    $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
+          -DVBACKUP_STARLET_SRC=/root/Works/starlet-1.6.8
+    $ cmake --build build-win                        # vbackup.exe, vbkx.exe, units.exe
+
+The Linux build makes it by itself when MinGW-w64 and the StarLet kit
+(`../starlet-x.y.z`) are there, and `test/winutil.sh` runs it under
+wine, both ways.  Names are Unicode, paths of any length; data, the
+four times, read-only, directories, hard links, symbolic links and
+junctions are saved.  Not in this version: the owner and the ACL, the
+other NTFS attributes, the streams; `/PHYSICAL`, `/IMAGE`,
+`node::file`.  A name Windows cannot hold is not restored, and said;
+two names that differ in case only - one file there - are never
+written over each other.  `vbackup /HELP WINDOWS` tells the rest.
+
 ## File managers
 
 A saveset opens like a folder in the file managers below: list, view,

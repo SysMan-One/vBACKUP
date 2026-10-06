@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -32,6 +32,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		Windows: a name Windows cannot hold is said so, not "leads out"; /REPLACE
+**		does not replace a name that differs in case only (VBK$W_SAMECASE);
+**		/ORIGINAL takes a base "C:/dir" (VBK$ISABS).
 **
 **	X01-08		 5-OCT-2026	RRL
 **		A pipe: no NOTRAILER at the start - its TRAILER comes at its end;
@@ -307,6 +312,12 @@ struct stat	l_st;
 	if ( !a_rst->opts->replace )
 		return	$VBKMSG(VBACKUP$_FILEEXISTS, a_rst->path), STS$K_WARN;
 
+#ifdef	_WIN32
+	/* "README" there, "readme" here: one file on Windows - perhaps the one just restored; not replaced */
+	if ( !vbk$w_samecase(a_rst->path) )
+		return	$VBKMSG(VBACKUP$_OPENOUT, a_rst->path, EEXIST, "a name that differs in case only is there - one file on Windows"), STS$K_WARN;
+#endif
+
 	if ( S_ISDIR(l_st.st_mode) ? rmdir(a_rst->path) : unlink(a_rst->path) )
 		return	$VBKMSG(VBACKUP$_OPENOUT, a_rst->path, errno, strerror(errno)), STS$K_WARN;
 
@@ -403,7 +414,16 @@ int		l_status;
 		l_outdir = a_rst->bases [l_a->baseidx];
 
 	if ( !(1 & vbk$mkpath(l_outdir, l_a->path, l_a->pathlen, a_rst->path, sizeof(a_rst->path))) )
-		return	$VBKMSG(VBACKUP$_OPENOUT, l_name, EINVAL, "a name that leads out of the output directory"), STS$K_SUCCESS;
+		{
+		const char *	l_why = "a name that leads out of the output directory";
+
+#ifdef	_WIN32
+		if ( vbk$w_badname(l_a->path, l_a->pathlen) )
+			l_why	= "not a valid name on Windows";
+#endif
+
+		return	$VBKMSG(VBACKUP$_OPENOUT, l_name, EINVAL, l_why), STS$K_SUCCESS;
+		}
 
 	if ( l_o->confirm )
 		{
@@ -1244,7 +1264,7 @@ unsigned	l_n = 0;
 		if ( l_tag == VBK$K_TAG_KIND )
 			l_kind	= 1;
 
-		if ( (l_tag != VBK$K_TAG_BASE) || !l_vlen || (l_val [0] != '/') || (l_vlen >= VBACKUP$K_SZ_PATH) || memchr(l_val, 0, l_vlen) )
+		if ( (l_tag != VBK$K_TAG_BASE) || !l_vlen || !vbk$isabs((const char *) l_val) || (l_vlen >= VBACKUP$K_SZ_PATH) || memchr(l_val, 0, l_vlen) )
 			continue;
 
 		{
