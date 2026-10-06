@@ -8,6 +8,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-17 : winutil.sh - vbackup.exe under wine.
+#
 #		 5-OCT-2026	RRL	X-14 : damage.sh and smoke.sh with /PARITY.
 #
 #		 5-OCT-2026	RRL	X-13 : VMS, the savesets of OpenVMS BACKUP.
@@ -84,6 +86,16 @@ if ( VBACKUP_WINVBKX AND VBACKUP_WINE )
 	add_test(NAME win COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
 		VBKXEXE=${VBACKUP_WINVBKX} WINE=${VBACKUP_WINE} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/win.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/win.sh)
+endif()
+
+#	vbackup.exe under wine, both ways (half a minute); its objects for the look at its imports
+if ( VBACKUP_WINEXE AND VBACKUP_WINE )
+	find_program(VBACKUP_MINGWNM x86_64-w64-mingw32-nm)
+
+	add_test(NAME winutil COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBACKUPEXE=${VBACKUP_WINEXE}
+		WINE=${VBACKUP_WINE} OBJDIR=${CMAKE_BINARY_DIR}/winexe/CMakeFiles/vbackup.dir NM=${VBACKUP_MINGWNM}
+		UNITSEXE=${CMAKE_BINARY_DIR}/winexe/units.exe
+		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/winutil.d sh ${CMAKE_CURRENT_SOURCE_DIR}/winutil.sh)
 endif()
 
 #

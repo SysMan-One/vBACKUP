@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRSH"
-#define	__IDENT__	"X01-11"
-#define	__REV__		"1.11.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -35,6 +35,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-17		 6-OCT-2026	RRL
+**		Windows: no saveset on another node yet (stage two: ssh.exe of
+**		Windows) - REMOTE, ENOSYS; VBK$RSH_PARSE is the same.
+**
 **	X01-11		 5-OCT-2026	RRL
 **		Initial version.
 **
@@ -48,7 +52,10 @@
 #include	<fcntl.h>
 #include	<signal.h>
 #include	<unistd.h>
+
+#ifndef	_WIN32
 #include	<sys/wait.h>
+#endif
 
 #include	"vbkdef.h"
 
@@ -77,6 +84,44 @@ const char *	l_p = strstr(a_spec, "::");
 	return	1;
 }
 
+
+#ifdef	_WIN32
+/*
+**  vbackup.exe: a node::file is recognized, and refused
+*/
+int	vbk$rsh_open	(
+	const	char *		a_node,
+	const	char *		a_file,
+		int		a_output,
+		int		a_replace,
+		pid_t *		a_pid
+			)
+{
+	(void) a_file;
+	(void) a_output;
+	(void) a_replace;
+
+	*a_pid	= 0;
+
+	return	$VBKMSG(VBACKUP$_REMOTE, a_node, ENOSYS, "not on Windows yet");
+}
+
+int	vbk$rsh_close	(
+	const	char *		a_node,
+		int		a_output,
+		int		a_early,
+		pid_t		a_pid
+			)
+{
+	(void) a_node;
+	(void) a_output;
+	(void) a_early;
+	(void) a_pid;
+
+	return	STS$K_ERROR;
+}
+
+#else
 
 /*
 **  A word for the shell of the other node: in single quotes, a quote as '\''
@@ -242,3 +287,5 @@ int	l_wst = 0, l_code, l_null;
 
 	return	$VBKMSG(VBACKUP$_REMOTEERR, a_node, l_code);
 }
+
+#endif	/* _WIN32 */

@@ -29,6 +29,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-17 : The cold-file check tried three times: on a loaded host
+#						the eviction before the save is not always done at once.
+#
 #		 6-OCT-2026	RRL	X-16 : An output .../full in an existing directory is a name.
 #
 #		 5-OCT-2026	RRL	X-14 : /PARITY: three bad blocks of a group rebuilt, four
@@ -420,11 +423,17 @@ check '[ $? = 0 ] && same_tree src/tree cpre/tree' "a copy with the read-ahead d
 if command -v fincore > /dev/null 2>&1; then
 	mkdir -p cold && for i in 1 2 3 4 5 6 7 8; do head -c 200000 /dev/urandom > cold/f$i; done
 	sync
-	python3 -c 'import os,sys
+
+	#	Evicted, saved, looked at - up to three times: a regression stays, a busy host's delay does not
+	for TRY in 1 2 3; do
+		python3 -c 'import os,sys
 for f in sys.argv[1:]:
     fd=os.open(f,os.O_RDONLY); os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED); os.close(fd)' cold/f*
-	VBACKUP_PREFETCH=4 $VB cold cold.bck > /dev/null 2>&1
-	check '[ "$(fincore -nb -o RES cold/f* | awk "{s+=\$1} END {print s+0}")" = 0 ]' "a cold file read ahead stayed in the page cache"
+		VBACKUP_PREFETCH=4 $VB cold cold.bck /REPLACE > /dev/null 2>&1
+		[ "$(fincore -nb -o RES cold/f* | awk "{s+=\$1} END {print s+0}")" = 0 ] && break
+		sleep 2
+	done
+	check '[ "$(fincore -nb -o RES cold/f* | awk "{s+=\$1} END {print s+0}")" = 0 ]' "a cold file read ahead stayed in the page cache (3 tries)"
 	cat cold/f* > /dev/null
 	VBACKUP_PREFETCH=4 $VB cold cold.bck /REPLACE > /dev/null 2>&1
 	check '[ "$(fincore -nb -o RES cold/f* | awk "{s+=\$1} END {print s+0}")" -ge 1600000 ]' "a warm file was dropped from the page cache"

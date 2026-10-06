@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		Windows: a name Windows cannot hold is said so, not "leads out".
 **
 **	X01-08		 5-OCT-2026	RRL
 **		A pipe: no NOTRAILER at the start - its TRAILER comes at its end;
@@ -403,7 +406,16 @@ int		l_status;
 		l_outdir = a_rst->bases [l_a->baseidx];
 
 	if ( !(1 & vbk$mkpath(l_outdir, l_a->path, l_a->pathlen, a_rst->path, sizeof(a_rst->path))) )
-		return	$VBKMSG(VBACKUP$_OPENOUT, l_name, EINVAL, "a name that leads out of the output directory"), STS$K_SUCCESS;
+		{
+		const char *	l_why = "a name that leads out of the output directory";
+
+#ifdef	_WIN32
+		if ( vbk$w_badname(l_a->path, l_a->pathlen) )
+			l_why	= "not a valid name on Windows";
+#endif
+
+		return	$VBKMSG(VBACKUP$_OPENOUT, l_name, EINVAL, l_why), STS$K_SUCCESS;
+		}
 
 	if ( l_o->confirm )
 		{

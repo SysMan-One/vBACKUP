@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -23,6 +23,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		 6-OCT-2026	RRL
+**		Windows: no tm_gmtoff there, VBK$W_GMTOFF.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		The heading says the parity of a saveset of version 2.
@@ -88,8 +91,13 @@ struct tm	l_tm;
 time_t		l_t = (time_t) a_sec;
 
 	/* !%D shows the time it is given as UTC: the local one is handed over, as OpenVMS shows it */
+#ifdef	_WIN32
+	(void) l_tm;
+	a_sec	+= vbk$w_gmtoff(l_t);
+#else
 	if ( localtime_r(&l_t, &l_tm) )
 		a_sec	+= l_tm.tm_gmtoff;
+#endif
 
 	if ( !(1 & __util$fao("!%D", &l_len, &l_dsc, (fao_prm_t) a_sec)) )
 		l_len	= 0;

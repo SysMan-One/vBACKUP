@@ -14,6 +14,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-17 : Stage 13: vbackup.exe, the utility on Windows (MinGW-w64,
+#						StarLet from its source kit), test/winutil.sh.
+#
 #		 6-OCT-2026	RRL	X-16 : Stage 12: the extractors for the geeks faster.
 #
 #		 5-OCT-2026	RRL	X-15 : Stage 11: VBKRS by AVX2, SSSE3 or NEON.
@@ -135,7 +138,8 @@ file(GLOB VBACKUP$K_MODULES
 	${CMAKE_CURRENT_SOURCE_DIR}/lib/*.c
 	${CMAKE_CURRENT_SOURCE_DIR}/lib/*.h
 	${CMAKE_CURRENT_SOURCE_DIR}/include/*.h
-	${CMAKE_CURRENT_SOURCE_DIR}/test/*.c)
+	${CMAKE_CURRENT_SOURCE_DIR}/test/*.c
+	${CMAKE_CURRENT_SOURCE_DIR}/win/*.h)
 
 s_vbackup_check_ident(${VBACKUP$K_MODULES})
 
@@ -160,10 +164,24 @@ if ( VBACKUP$M_STRICT )
 endif()
 
 #
+#	vbackup.exe, the utility on Windows (stage 13): the modules of the
+#	Linux image less /PHYSICAL, /IMAGE and the read-ahead (vbkphy, vbkimg,
+#	vbkpre), with the layer of src/vbkosw.c under them - win/vbkwin.h,
+#	put in front of every source, gives the POSIX names to its routines.
+#	StarLet is compiled from its source kit, VBACKUP_STARLET_SRC (by
+#	default the newest ../starlet-<version> beside this tree): an installed StarLet
+#	is a library of Linux.
+#
+set(VBACKUP_WINLIB lib/vbkfmt.c lib/vbkwrt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c lib/vbkpar.c)
+set(VBACKUP_WINSRC src/vbackup.c src/vbkmsg.c src/vbkatr.c src/vbkwlk.c src/vbksav.c src/vbkrst.c src/vbklst.c src/vbkcmp.c
+	src/vbkhlp.c src/vbkhsh.c src/vbkjnl.c src/vbkcpy.c src/vbkzpl.c src/vbkkey.c src/vbkxfr.c src/vbkrsh.c src/vbkvms.c src/vbkosw.c)
+
+#
 #	Windows (cmake -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake, or the
-#	MinGW of Windows itself): VBKX alone - the reading core and the
-#	extractor, statically.  No StarLet there (lib/vbkos.h has its own
-#	CRC), no writer, no utility, no tests.
+#	MinGW of Windows itself): VBKX - the reading core and the extractor,
+#	statically, no StarLet (lib/vbkos.h has its own CRC) - the WCX
+#	plugin, and vbackup.exe when the StarLet sources are found.  No tests:
+#	the Linux build runs them under wine (test/winutil.sh).
 #
 if ( WIN32 )
 	add_executable(vbkx tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c)
@@ -187,7 +205,56 @@ if ( WIN32 )
 
 	install(TARGETS vbkwcx LIBRARY DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-	message(STATUS "VBACKUP: Windows - vbkx.exe and the WCX plugin alone")
+	#	The newest StarLet kit beside this tree (or beside its parent), unless one is named
+	file(GLOB L_SLDIRS ${CMAKE_CURRENT_SOURCE_DIR}/../starlet-* ${CMAKE_CURRENT_SOURCE_DIR}/../../starlet-*)
+	list(SORT L_SLDIRS COMPARE NATURAL ORDER DESCENDING)
+	find_path(VBACKUP_STARLET_SRC NAMES utility_routines.c cli_routines.c PATHS ${L_SLDIRS} NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+
+	if ( NOT VBACKUP_STARLET_SRC )
+		message(STATUS "VBACKUP: Windows - vbkx.exe and the WCX plugin alone: no StarLet sources (VBACKUP_STARLET_SRC)")
+
+		return()
+	endif()
+
+	#	StarLet as it is: its few gaps on Windows are filled by win/vbkwcrt.h, put in front
+	add_library(vbkstarletw STATIC ${VBACKUP_STARLET_SRC}/utility_routines.c ${VBACKUP_STARLET_SRC}/cli_routines.c ${VBACKUP_STARLET_SRC}/starlet.c)
+	target_include_directories(vbkstarletw PUBLIC ${VBACKUP_STARLET_SRC} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win/inc)
+	target_compile_definitions(vbkstarletw PRIVATE _FILE_OFFSET_BITS=64 NDEBUG)
+	target_compile_options(vbkstarletw PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/win/vbkwcrt.h -w)
+
+	add_executable(vbackup ${VBACKUP_WINSRC} ${VBACKUP_WINLIB})
+	target_include_directories(vbackup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win/inc ${CMAKE_CURRENT_SOURCE_DIR}/win
+		${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+	target_compile_definitions(vbackup PRIVATE _FILE_OFFSET_BITS=64 __USE_MINGW_ANSI_STDIO=1 NDEBUG VBK_STARLET
+		VBACKUP_K_IDENT="${VBACKUP$K_IDENT}")
+	target_compile_options(vbackup PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/win/vbkwin.h)
+	target_link_libraries(vbackup PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32)
+	target_link_options(vbackup PRIVATE -static -pthread)
+
+	#	The vector code: GCC keeps the stack of Windows at 16 octets, a spilled __m256i must not be loaded aligned
+	include(CheckCCompilerFlag)
+	check_c_compiler_flag(-Wa,-muse-unaligned-vector-move VBACKUP_HAVE_UNALIGNED)
+
+	if ( VBACKUP_HAVE_UNALIGNED )
+		target_compile_options(vbackup PRIVATE -Wa,-muse-unaligned-vector-move)
+	endif()
+
+	install(TARGETS vbackup RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+	#	test/units.c on Windows: the core, the parity by the vector code, the cipher - run under wine by test/winutil.sh
+	add_executable(units test/units.c src/vbkosw.c src/vbkmsg.c ${VBACKUP_WINLIB})
+	target_include_directories(units PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win/inc ${CMAKE_CURRENT_SOURCE_DIR}/win
+		${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+	target_compile_definitions(units PRIVATE _FILE_OFFSET_BITS=64 __USE_MINGW_ANSI_STDIO=1 NDEBUG VBK_STARLET)
+	target_compile_options(units PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/win/vbkwin.h)
+	target_link_libraries(units PRIVATE vbkstarletw vbackup_options bcrypt shell32 ws2_32)
+	target_link_options(units PRIVATE -static -pthread)
+
+	if ( VBACKUP_HAVE_UNALIGNED )
+		target_compile_options(units PRIVATE -Wa,-muse-unaligned-vector-move)
+	endif()
+
+	message(STATUS "VBACKUP: Windows - vbackup.exe, vbkx.exe and the WCX plugin; StarLet from ${VBACKUP_STARLET_SRC}")
 
 	return()
 endif()
@@ -349,6 +416,37 @@ if ( VBACKUP$M_WINVBKX )
 
 		set(VBACKUP_WINVBKX ${CMAKE_CURRENT_BINARY_DIR}/win/vbkx.exe)
 		message(STATUS "VBACKUP: vbkx.exe by ${VBACKUP_MINGW}")
+	endif()
+endif()
+
+#
+#	vbackup.exe, stage 13: this very tree built for Windows in a tree of
+#	its own - the WIN32 branch above, by cmake/mingw-w64.cmake - when
+#	MinGW-w64 and the sources of StarLet (the kit of the version found)
+#	are at hand; test/winutil.sh runs it under wine
+#
+set(VBACKUP_WINEXE "")
+
+if ( VBACKUP$M_WINVBKX AND VBACKUP_MINGW )
+	file(GLOB L_SLDIRS ${CMAKE_CURRENT_SOURCE_DIR}/../starlet-${StarLet_VERSION} ${CMAKE_CURRENT_SOURCE_DIR}/../../starlet-${StarLet_VERSION})
+	find_path(VBACKUP_STARLET_SRC NAMES utility_routines.c cli_routines.c PATHS ${L_SLDIRS} NO_DEFAULT_PATH)
+
+	if ( VBACKUP_STARLET_SRC )
+		include(ExternalProject)
+
+		ExternalProject_Add(vbackup-exe
+			SOURCE_DIR	${CMAKE_CURRENT_SOURCE_DIR}
+			BINARY_DIR	${CMAKE_CURRENT_BINARY_DIR}/winexe
+			CMAKE_ARGS	-DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/mingw-w64.cmake -DCMAKE_BUILD_TYPE=Release
+					-DVBACKUP_STARLET_SRC=${VBACKUP_STARLET_SRC}
+			INSTALL_COMMAND	""
+			BUILD_ALWAYS	ON
+			BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/winexe/vbackup.exe)
+
+		set(VBACKUP_WINEXE ${CMAKE_CURRENT_BINARY_DIR}/winexe/vbackup.exe)
+		message(STATUS "VBACKUP: vbackup.exe by ${VBACKUP_MINGW}, StarLet from ${VBACKUP_STARLET_SRC}")
+	else()
+		message(STATUS "VBACKUP: no vbackup.exe - no StarLet ${StarLet_VERSION} sources beside this tree (VBACKUP_STARLET_SRC)")
 	endif()
 endif()
 
