@@ -1355,6 +1355,47 @@ It was copied as it is; only OpenVMS can read it.
 
 ---
 
+## 16. VBACKUP on a Windows computer
+
+**Why:** you have a Windows computer, and you want to make boxes there,
+or open a box made on Linux.
+
+There is `vbackup.exe` for Windows. It is the same VBACKUP: the same
+commands, the same boxes. A box made on Linux opens on Windows, and a
+box made on Windows opens on Linux.
+
+**Put a folder into a box:**
+
+```
+C:\> vbackup C:\Users\ivan\Documents D:\docs.bck
+```
+
+**See what is inside, and take everything out:**
+
+```
+C:\> vbackup D:\docs.bck /LIST
+C:\> vbackup D:\docs.bck C:\restore
+```
+
+**Some names cannot live on Windows.** On Linux a file may be called
+`a:b`, `what?` or `con.txt`. Windows does not allow such names. VBACKUP
+does not make these files, and it tells you:
+
+```
+%VBACKUP-E-OPENOUT, File: tree/a:b, errno: 22 - cannot be created as output (not a valid name on Windows)
+```
+
+All the other files come out. To get such a file, open the box on Linux.
+
+**Big and small letters.** On Linux `README` and `readme` are two files.
+On Windows they are one. VBACKUP takes out the first one and tells you
+about the second one. It never writes one over the other.
+
+**What Windows cannot do:** `/PHYSICAL`, `/IMAGE` and a box on another
+computer (`node::file`). Use Linux for them.
+
+---
+
 ## Little dictionary
 
 - **Folder** — a place where files live. Like a drawer in a cupboard.

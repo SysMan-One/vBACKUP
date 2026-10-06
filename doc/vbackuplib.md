@@ -800,6 +800,49 @@ VBACKUP's (through vbackup); MultiArc of far2l (it knows a saveset by
 "VBKB" at its start, which BACKUP does not write), the WCX plugin of
 Total and Double Commander and vbkx-go, vbkx-rs, vbkx-pl do not. doc/vmsbackup.md tells the format.
 
+## Windows -- vbackup.exe, the utility on Windows
+
+vbackup.exe is VBACKUP built for Windows (MinGW-w64): the same command,
+the same savesets. A saveset made on Linux is listed, restored and
+compared there; one made there is read on Linux and by vbkx. It is
+built from this tree on Linux, when MinGW-w64 and the sources of StarLet
+are at hand:
+
+```
+$ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
+        -DVBACKUP_STARLET_SRC=/root/Works/starlet-1.6.8
+$ cmake --build build-win                vbackup.exe, vbkx.exe, units.exe
+```
+
+```
+C:\> vbackup C:\Users\ivan\Documents D:\docs.bck /LOG
+C:\> vbackup D:\docs.bck /LIST
+C:\> vbackup D:\docs.bck C:\restore
+C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
+```
+
+Names are Unicode (UTF-8 in the saveset), paths of any length; "\" and
+"/" both separate. What is saved: data, times (modification, access,
+change and creation), read-only, directories, hard links, symbolic links
+and junctions (as links). What is not: the owner and the ACL, the
+other attributes of NTFS (hidden, system, archive), the streams of
+NTFS - they come in a later stage.
+
+On restore a name Windows cannot hold - a ":" in it, "<>"|?*\", a
+trailing dot or blank, CON, NUL, COM1 and the like - is not made, and
+said (OPENOUT ... not a valid name on Windows). Two names that differ in
+case only are one file on Windows: the second is not restored
+(FILEEXISTS; with /REPLACE too: OPENOUT ... differs in case only). A FIFO or a device of a Linux saveset is said (UNSUPP).
+A symbolic link needs the right to make links (an administrator, or
+the developer mode of Windows 10/11).
+
+Not on Windows: /PHYSICAL, /IMAGE, a saveset on another node (node::file)
+- refused at once; the read-ahead of files. /XATTRS is off by default
+(Windows has no extended attributes of Linux). The mode of the key file
+is not checked: keep it in your profile, where only you can read it.
+The journal is %USERPROFILE%\.vbackup\vbackup.jnl. A sparse file is
+saved with its zeros (compress them: /DATA_FORMAT=COMPRESSED).
+
 ## Time -- how a time value is written
 
 ```
@@ -931,6 +974,20 @@ saveset, and the output does not look like one. When you save, give
 
 **%VBACKUP-E-MAXPARM, too many parameters: .log.** A qualifier was
 typed without its slash. Write /LOG, not .log.
+
+**On Windows: %VBACKUP-E-OPENOUT ... not a valid name on Windows.**
+The saveset holds a name Windows cannot have: a ":" or "?" in it, a dot
+or blank at its end, CON, NUL, COM1... The file is not restored; the
+others are. Restore it on Linux, or extract it under another name:
+/EXTRACT="a:b" ab.txt.
+
+**On Windows: %VBACKUP-E-QUALUSE, Qualifier: /PHYSICAL - not on
+Windows.** /PHYSICAL and /IMAGE work on Linux only. Save the files
+instead, or do it on Linux.
+
+**On Windows: a symbolic link is not restored (OPENOUT ... errno: 1).**
+Making links needs a right: run as an administrator, or turn on the
+developer mode of Windows (Settings, For developers).
 
 **%VBACKUP-E-WRONGKEY.** The passphrase does not open the saveset.
 Check the key file: only its first line counts, and capitals matter.

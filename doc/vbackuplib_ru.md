@@ -800,6 +800,52 @@ saveset-ов /IMAGE и /PHYSICAL. /COMPARE, /INCREMENTAL, /ORIGINAL,
 узнаёт saveset по "VBKB" в начале, а BACKUP этого не пишет), модуль WCX
 для Total и Double Commander и vbkx-go, vbkx-rs, vbkx-pl -- нет. Формат описан в doc/vmsbackup.md.
 
+## Windows -- vbackup.exe, утилита в Windows
+
+vbackup.exe -- это VBACKUP, собранный для Windows (MinGW-w64): та же
+команда, те же saveset-ы. Saveset, сделанный в Linux, там листается,
+восстанавливается и сравнивается; сделанный там читается в Linux и
+vbkx. Собирается из этого дерева в Linux, когда есть MinGW-w64 и
+исходники StarLet:
+
+```
+$ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
+        -DVBACKUP_STARLET_SRC=/root/Works/starlet-1.6.8
+$ cmake --build build-win                vbackup.exe, vbkx.exe, units.exe
+```
+
+```
+C:\> vbackup C:\Users\ivan\Documents D:\docs.bck /LOG
+C:\> vbackup D:\docs.bck /LIST
+C:\> vbackup D:\docs.bck C:\restore
+C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
+```
+
+Имена -- в Юникоде (в saveset-е UTF-8), пути любой длины; разделяют и
+"\", и "/". Что сохраняется: данные, время (изменения, доступа, смены
+атрибутов и создания), признак "только чтение", каталоги, жёсткие
+ссылки, символьные ссылки и junction-ы (как ссылки). Что нет: владелец
+и ACL, прочие атрибуты NTFS (скрытый, системный, архивный), потоки
+NTFS -- это следующий этап.
+
+При восстановлении имя, которое Windows не может хранить -- с ":",
+"<>"|?*\", с точкой или пробелом в конце, CON, NUL, COM1 и подобные,
+-- не создаётся, и об этом сказано (OPENOUT ... not a valid name on
+Windows). Два имени, отличающихся только регистром, в Windows -- один
+файл: второе не восстанавливается (FILEEXISTS; и с /REPLACE тоже:
+OPENOUT ... differs in case only). FIFO и устройства
+из Linux-saveset-а называются (UNSUPP). Для символьной ссылки нужно
+право создавать ссылки (администратор или режим разработчика Windows
+10/11).
+
+Нет в Windows: /PHYSICAL, /IMAGE, saveset на другом узле (node::file)
+-- отвергаются сразу; упреждающего чтения файлов. /XATTRS по умолчанию
+выключен (расширенных атрибутов Linux в Windows нет). Права файла
+ключа не проверяются: держите его в своём профиле, где читать его
+можете только вы. Журнал -- %USERPROFILE%\.vbackup\vbackup.jnl.
+Разреженный файл сохраняется вместе с нулями (сожмите их:
+/DATA_FORMAT=COMPRESSED).
+
 ## Время -- как записывается время
 
 ```
@@ -931,6 +977,20 @@ exists).** Saveset с таким именем уже есть. Дайте дру
 
 **%VBACKUP-E-MAXPARM, too many parameters: .log.** Квалификатор набран
 без косой черты. Пишите /LOG, а не .log.
+
+**В Windows: %VBACKUP-E-OPENOUT ... not a valid name on Windows.**
+В saveset-е есть имя, которого в Windows не бывает: с ":" или "?",
+с точкой или пробелом в конце, CON, NUL, COM1... Этот файл не
+восстановлен, остальные -- да. Восстановите его в Linux или извлеките
+под другим именем: /EXTRACT="a:b" ab.txt.
+
+**В Windows: %VBACKUP-E-QUALUSE, Qualifier: /PHYSICAL - not on
+Windows.** /PHYSICAL и /IMAGE работают только в Linux. Сохраните
+файлы или сделайте это в Linux.
+
+**В Windows: символьная ссылка не восстановлена (OPENOUT ... errno:
+1).** Для ссылок нужно право: запустите от имени администратора или
+включите режим разработчика Windows (Параметры, Для разработчиков).
 
 **%VBACKUP-E-WRONGKEY.** Пароль не открывает saveset. Проверьте файл
 ключа: считается только первая строка, регистр букв важен. Ничего не

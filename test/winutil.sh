@@ -194,6 +194,19 @@ check 'grep -q "Total of 2 savesets" jl.log' "the journal does not list both sav
 vw f.bck,i.bck incr /INCREMENTAL > inc3.log 2>&1
 check '[ $? = 0 ] && [ ! -e incr/inc/a ] && [ "$(cat incr/inc/b)" = 22 ] && [ "$(cat incr/inc/c)" = 3 ]' "the incremental chain not restored right: $(ls incr/inc 2>&1)"
 
+#	/ORIGINAL: the base of a saveset made on Windows is "Z:/..." - absolute there
+mkdir -p orig/d && echo o > orig/d/f
+vw orig/d orig.bck > /dev/null 2>&1
+rm -f orig/d/f
+vw orig.bck /ORIGINAL > orig.log 2>&1
+check '[ $? = 0 ] && [ "$(cat orig/d/f 2>/dev/null)" = o ]' "/ORIGINAL by vbackup.exe: $(grep -E -- '-[EFW]-' orig.log | head -3)"
+
+#	A path in the form of Windows: "\" separates, "log" is a directory, not /LOG
+mkdir -p "bs/log" && echo b > bs/log/f
+WP=$(echo "Z:$S/bs" | tr / '\\')
+vw "$WP\\log" "$WP\\bs.bck" > bs.log 2>&1
+check '[ $? = 0 ] && $VB bs/bs.bck /LIST | grep -q "^log/f "' "a path with backslashes: $(grep -E -- '-[EFW]-' bs.log | head -3)"
+
 #
 #	4. A pipe: binary both ways
 #
@@ -213,7 +226,19 @@ vw ref/tree node::x.bck > q3.log 2>&1
 check '[ $? = 2 ] && grep -q "REMOTE, Node: node" q3.log' "a saveset on another node not refused: $(cat q3.log)"
 
 #
-#	6. test/units.c on Windows: the core, the parity by the vector code of
+#	6. Two names that differ in case only - one file on Windows: the second
+#	is not restored, with /REPLACE neither (it would replace the first)
+#
+mkdir -p case/t && echo upper > case/t/README && echo lower > case/t/readme
+$VB case/t case.bck > /dev/null 2>&1
+vw case.bck case1 > case1.log 2>&1
+check 'grep -q "readme - already exists, not restored" case1.log && [ "$(cat case1/t/*)" = upper ]' "case: the second name not refused, $(cat case1.log | head -3)"
+vw case.bck case2 /REPLACE > case2.log 2>&1
+check 'grep -q "differs in case only is there - one file on Windows" case2.log && [ "$(cat case2/t/*)" = upper ]' \
+	"case: /REPLACE replaced the file of the other name, $(grep -E -- '-[EW]-' case2.log | head -3)"
+
+#
+#	7. test/units.c on Windows: the core, the parity by the vector code of
 #	this CPU, the cipher and its pool of threads
 #
 if [ -n "$UNITSEXE" ] && [ -e "$UNITSEXE" ]; then

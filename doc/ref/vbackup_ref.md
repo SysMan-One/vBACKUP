@@ -11,18 +11,18 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-15.
+VBACKUP X01-16.
 
-**Software Version:** VBACKUP X01-16
+**Software Version:** VBACKUP X01-17
 
-**Operating System:** Linux (x86_64, aarch64); Windows for vbkx.exe and
-the WCX plugin
+**Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
+vbackup.exe, vbkx.exe and the WCX plugin
 
 ---
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-16 as built from
+The information in this document reflects VBACKUP X01-17 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -752,6 +752,80 @@ and `/PHYSICAL` savesets, are not read. `/COMPARE`, `/INCREMENTAL`,
 `/ORIGINAL`, `/IMAGE`, `/PHYSICAL` and `/TRANSFER` are not valid with such
 a saveset. The stand-alone extractor `vbkx` reads it the same way. The
 format, as VBACKUP reads it, is described in `doc/vmsbackup.md`.
+
+### 1.17 VBACKUP on Windows
+
+`vbackup.exe` is VBACKUP built for Windows with MinGW-w64: the same
+command, the same qualifiers, the same savesets. A saveset made on Linux
+is listed, restored and compared on Windows; one made on Windows is read
+on Linux, by `vbkx` and by every extractor of last resort. It is built on
+Linux from the same tree, with the StarLet sources (a StarLet installed
+for Linux does not serve):
+
+```
+$ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
+        -DVBACKUP_STARLET_SRC=/root/Works/starlet-1.6.8
+$ cmake --build build-win
+```
+
+The Linux build makes it by itself (`build/winexe/vbackup.exe`) when
+MinGW-w64 and the StarLet kit of the installed version (`../starlet-x.y.z`
+beside the source tree) are at hand, and `test/winutil.sh` runs it under
+wine. The image is static: copy `vbackup.exe` anywhere and run it.
+
+```
+C:\> vbackup C:\Users\ivan\Documents D:\docs.bck /LOG
+C:\> vbackup D:\docs.bck /LIST /FULL
+C:\> vbackup D:\docs.bck C:\restore
+C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
+```
+
+#### What Is Saved and Restored
+
+Names are Unicode - UTF-8 in the saveset, as on Linux - and paths may be
+of any length (the `\\?\` form is used where needed). `\` and `/` both
+separate the components of a specification; the stored names use `/`.
+Saved and put back: the data, the modification, access and change times
+and the creation time (BTIME), the read-only attribute (as the mode:
+`0444` or `0644` for a file, `0755` for a directory), directories, hard
+links (by the file ID and the volume serial number of NTFS, as by the
+inode and device on Linux), symbolic links and junctions (as symbolic
+links). Not saved in this version: the owner and the ACL, the other
+attributes of NTFS (hidden, system, archive), the alternate data streams.
+The owner of every file is shown as `0,0`.
+
+#### Names Windows Cannot Hold
+
+A Linux saveset may hold names that Windows does not allow or reads as
+something else: a `:` (a stream of another file), `< > " | ? * \`, a
+control character, a trailing dot or blank (dropped by Windows - two
+names, one file), the names of devices (`CON`, `PRN`, `AUX`, `NUL`,
+`COM1`-`COM9`, `LPT1`-`LPT9`, with an extension too). Such a file is not
+created: OPENOUT names it with errno 22 and the reason `not a valid name on
+Windows`, and the restore goes on with the others. Two names that differ
+in case only (`README`, `readme`) are one file on Windows: the second is not
+restored - FILEEXISTS, and with `/REPLACE` OPENOUT (`a name that differs in
+case only is there`), so that it never replaces the first. A FIFO, a
+socket or a device is not made (UNSUPP).
+
+#### Differences from Linux
+
+- `/PHYSICAL`, `/IMAGE` and a saveset on another node (`node::file`) are
+  refused at once (QUALUSE, REMOTE).
+- The read-ahead of files is not there (`VBACKUP_PREFETCH` has no effect);
+  the writer thread, the pool of the encryption and of the compression are.
+- `/XATTRS` is off by default: Windows has no extended attributes of
+  Linux, and those of a Linux saveset would each be refused.
+- The mode of a key file is not checked: its ACL says who reads it. Keep
+  it in your profile, where only you and the administrators can.
+- A symbolic link is made only with the right to make links: an
+  administrator, or the developer mode of Windows 10 and 11. Without it
+  OPENOUT says errno 1.
+- The journal is `%USERPROFILE%\.vbackup\vbackup.jnl` (HOME, when it is set).
+- A sparse file is saved with its zeros, and restored without holes;
+  `/DATA_FORMAT=COMPRESSED` makes the zeros cost nothing in the saveset.
+- The passphrase is read from the console without echo, in UTF-8: a
+  saveset encrypted on Linux opens on Windows with the same passphrase.
 
 ## Chapter 2 VBACKUP Usage Summary
 
@@ -3207,6 +3281,9 @@ change it - chmod 600 it`; `its first line is longer than 1024 bytes`; `its
 first line is empty`; or, for the terminal, `an empty passphrase` or `longer
 than 1024 bytes, or no line`. Nothing was read or written.
 
+On Windows the mode of the key file is not looked at: its ACL decides who
+may read it.
+
 **User Action:** Make the key file a regular file of its owner only (`chmod
 600 file`) with the passphrase in its first line.
 
@@ -3465,7 +3542,9 @@ temporary catalog spool, the output of a `/PHYSICAL` or `/IMAGE` restore.
 With errno 22 and the reason `a name that leads out of the output
 directory`, the saveset holds a name with `..` or a leading `/`; such a file
 is never written. A name whose way leads through a symbolic link is
-refused in the same way.
+refused in the same way. On Windows, errno 22 with `not a valid name on
+Windows` is a name Windows cannot hold (section 1.17), and errno 17 with `a
+name that differs in case only is there` a second name of one file there.
 
 **User Action:** Check the permissions and the free space; give `/REPLACE` to
 overwrite a saveset. A name that leads out of the output directory means
@@ -3666,6 +3745,9 @@ saveset`) or more than one saveset (`one saveset at a time`); `/ORIGINAL`
 with an output specifier, or with `/INCREMENTAL` and a saveset of several
 bases.
 
+On Windows, `not on Windows` is said of `/PHYSICAL` and `/IMAGE`:
+`vbackup.exe` has neither (section 1.17).
+
 **User Action:** Correct the command as the reason says.
 
 ---
@@ -3702,6 +3784,9 @@ could not make the pipe to VBACKUP there, nor start the process for ssh
 (or for the command of `VBACKUP_RSH`). Nothing was sent or read. A
 command that cannot be run, or a node that cannot be reached, is not
 reported here but by REMOTEERR.
+
+On Windows, errno 40 with `not on Windows yet`: `vbackup.exe` does not reach
+savesets on other nodes in this version.
 
 **User Action:** Most often the system is short of processes or file
 descriptors: look at *reason*, and repeat the operation.
@@ -3870,6 +3955,9 @@ an older saveset.
 `an unknown file type`; `a special file` that could not be created (a device
 file restored by a user other than root, a socket); or, for `/EXTRACT`,
 `anything but a regular file`.
+
+On Windows every FIFO, socket and device of a Linux saveset is said so
+(errno 40, Function not implemented): Windows has no such files.
 
 **User Action:** Restore device files as root. Only regular files can be
 extracted.

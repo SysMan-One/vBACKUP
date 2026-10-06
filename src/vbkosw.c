@@ -1943,6 +1943,33 @@ static	const char * const s_dev [] = { "CON", "PRN", "AUX", "NUL", "COM", "LPT",
 
 
 /*
+**  Is the file there under this very name, or under one that differs in
+**  case only - the name of another file of a saveset from Linux, where
+**  "README" and "readme" are two?  1 - the same name, 0 - another case.
+*/
+int	vbk$w_samecase	(
+	const	char *		a_path
+			)
+{
+wchar_t		l_w [VBK$K_WMAX];
+WIN32_FIND_DATAW l_fd;
+HANDLE		l_h;
+const wchar_t *	l_last;
+int		l_same;
+
+	if ( !s_vbk$wpath(a_path, l_w) || (INVALID_HANDLE_VALUE == (l_h = FindFirstFileExW(l_w, FindExInfoBasic, &l_fd, FindExSearchNameMatch, NULL, 0))) )
+		return	1;
+
+	FindClose(l_h);
+
+	l_last	= wcsrchr(l_w, L'\\') ? (wcsrchr(l_w, L'\\') + 1) : l_w;
+	l_same	= !wcscmp(l_last, l_fd.cFileName);
+
+	return	l_same;
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **

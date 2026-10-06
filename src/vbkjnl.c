@@ -31,7 +31,8 @@
 **  MODIFICATION HISTORY:
 **
 **	X01-17		 6-OCT-2026	RRL
-**		Windows: no tm_gmtoff there, VBK$W_GMTOFF.
+**		Windows: no tm_gmtoff there, VBK$W_GMTOFF; a base "C:/dir" is
+**		absolute (VBK$ISABS).
 **
 **	X01-07		 5-OCT-2026	RRL
 **		The listing of the journal and every name made by FAO.
@@ -877,7 +878,7 @@ uint64_t	l_nrec = 0;
 						&& (l_attr.ftype != VBK$K_FT_DIR) && (l_attr.baseidx < l_nbase) && l_base [l_attr.baseidx] )
 						{
 						/* A catalog of X01-01 has no CTIME and DEVINO: such an entry is of no use */
-						if ( !l_attr.hasctime || !l_attr.hasdevino || (l_base [l_attr.baseidx][0] != '/') )
+						if ( !l_attr.hasctime || !l_attr.hasdevino || !vbk$isabs(l_base [l_attr.baseidx]) )
 							l_bare++;
 						else if ( $VBKFAOB(l_path, sizeof(l_path), "!AZ!AZ!AD", l_base [l_attr.baseidx],
 								strcmp(l_base [l_attr.baseidx], "/") ? "/" : "", l_attr.pathlen, l_attr.path) < (int) sizeof(l_path) )

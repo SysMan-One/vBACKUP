@@ -1362,6 +1362,48 @@ vbackup USERS.BCK /EXTRACT=SMITH/LOGIN.COM login.com
 
 ---
 
+## 16. VBACKUP на компьютере с Windows
+
+**Зачем:** у вас компьютер с Windows, и вы хотите делать коробки там
+или открыть коробку, сделанную в Linux.
+
+Для Windows есть `vbackup.exe`. Это тот же VBACKUP: те же команды, те же
+коробки. Коробка, сделанная в Linux, открывается в Windows, а сделанная
+в Windows — в Linux.
+
+**Положить папку в коробку:**
+
+```
+C:\> vbackup C:\Users\ivan\Documents D:\docs.bck
+```
+
+**Посмотреть, что внутри, и достать всё:**
+
+```
+C:\> vbackup D:\docs.bck /LIST
+C:\> vbackup D:\docs.bck C:\restore
+```
+
+**Некоторые имена в Windows жить не могут.** В Linux файл может
+называться `a:b`, `что?` или `con.txt`. Windows таких имён не позволяет.
+VBACKUP такие файлы не создаёт и говорит об этом:
+
+```
+%VBACKUP-E-OPENOUT, File: tree/a:b, errno: 22 - cannot be created as output (not a valid name on Windows)
+```
+
+Все остальные файлы достаются. Чтобы достать такой файл, откройте
+коробку в Linux.
+
+**Большие и маленькие буквы.** В Linux `README` и `readme` — два файла.
+В Windows — один. VBACKUP достаёт первый и сообщает о втором. Один
+никогда не записывается поверх другого.
+
+**Чего Windows не умеет:** `/PHYSICAL`, `/IMAGE` и коробка на другом
+компьютере (`node::file`). Для них берите Linux.
+
+---
+
 ## Словарик
 
 - **Папка** — место, где лежат файлы. Как ящик в шкафу.

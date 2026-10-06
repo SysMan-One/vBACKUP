@@ -254,6 +254,7 @@ struct	utsname
 */
 void	vbk$w_init	(int *a_argc, char ***a_argv);
 int	vbk$w_badname	(const char *a_name, uint32_t a_len);
+int	vbk$w_samecase	(const char *a_path);
 int	vbk$w_open	(const char *a_path, int a_flags, ...);
 int	vbk$w_openat	(int a_dirfd, const char *a_name, int a_flags, ...);
 FILE *	vbk$w_fopen	(const char *a_path, const char *a_mode);
