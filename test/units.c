@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-15"
-#define	__REV__		"1.15.0"
+#define	__IDENT__	"X01-19"
+#define	__REV__		"1.19.0"
 
 /*
 **++
@@ -26,6 +26,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-19		 6-OCT-2026	RRL
+**		Codecs 2 and 3: every effort round trip and the same octets twice,
+**		streams of zlib and liblzma read, damage never read past the end,
+**		VBK$DATA_PACK by /LEVEL.
 **
 **	X01-15		 5-OCT-2026	RRL
 **		The products of the vector instructions against the portable code.
@@ -65,6 +70,8 @@
 #include	"vbkrd.h"
 #include	"vbkos.h"
 #include	"vbklz4.h"
+#include	"vbkdfl.h"
+#include	"vbklzm.h"
 #include	"vbkrs.h"
 #include	"vbkcrp.h"
 
@@ -1004,6 +1011,132 @@ char		l_spec [1100];
 				}
 
 	$CHECK(!l_bad, "%u products differ (%s)", l_bad, vbk$rs_simd());
+	}
+
+	s_begin("Deflate and LZMA: every effort gives back what it was given, and the same data the same octets");
+	{
+	static	uint8_t	l_src [200000], l_z1 [VBK$LZM_BOUND(200000) + VBK$DFL_BOUND(200000)], l_z2 [sizeof(l_z1)], l_out [200000];
+	static	const uint32_t	l_lens [] = { 1, 2, 3, 17, 258, 1000, 65535, 65536, 70001, 200000 };
+	uint32_t	l_bad = 0, l_z1len, l_z2len;
+
+	for ( int l_kind = 0; l_kind < 4; l_kind++ )
+		{
+		/* Text-like, zeros, noise, a run broken now and then */
+		for ( uint32_t k = 0; k < sizeof(l_src); k++ )
+			l_src [k] = (l_kind == 0) ? (uint8_t) "the quick brown fox jumps over the lazy dog\n" [(k * 7 + k / 91) % 44]
+				  : (l_kind == 1) ? 0 : (l_kind == 2) ? (uint8_t) ((k * 2654435761U) >> 13) : (uint8_t) ((k % 977) ? 'A' : k);
+
+		for ( size_t i = 0; i < $ARRSZ(l_lens); i++ )
+			for ( int l_codec = 0; l_codec < 2; l_codec++ )
+				for ( int e = 1; e <= 4; e++ )
+					{
+					int	l_s1 = l_codec ? vbk$lzm_compress(l_src, l_lens [i], l_z1, sizeof(l_z1), &l_z1len, e)
+							       : vbk$dfl_compress(l_src, l_lens [i], l_z1, sizeof(l_z1), &l_z1len, e);
+					int	l_s2 = l_codec ? vbk$lzm_compress(l_src, l_lens [i], l_z2, sizeof(l_z2), &l_z2len, e)
+							       : vbk$dfl_compress(l_src, l_lens [i], l_z2, sizeof(l_z2), &l_z2len, e);
+					int	l_d = l_codec ? vbk$lzm_decompress(l_z1, l_z1len, l_out, l_lens [i])
+							      : vbk$dfl_decompress(l_z1, l_z1len, l_out, l_lens [i]);
+
+					l_bad	+= !(1 & l_s1) || !(1 & l_s2) || (l_z1len != l_z2len) || memcmp(l_z1, l_z2, l_z1len)
+						|| (l_d != STS$K_SUCCESS) || memcmp(l_out, l_src, l_lens [i]);
+					}
+		}
+
+	$CHECK(!l_bad, "%u round trips failed or were not the same twice", l_bad);
+	}
+
+	s_begin("Deflate and LZMA: streams of zlib (fixed, dynamic, stored) and of liblzma are read");
+	{
+	static	const uint8_t	l_text [] = "hello hello hello hello, vBACKUP!\nhello hello hello hello, vBACKUP!\nhello hello hello hello, vBACKUP!\n";
+	static	const uint8_t	l_fixed [] = { 0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x57, 0xC8, 0x40, 0x27, 0x75, 0x14, 0xCA, 0x9C, 0x1C, 0x9D, 0xBD, 0x43,
+					0x03, 0x14, 0xB9, 0x30, 0xE4, 0xC8, 0x50, 0x01, 0x00 };
+	static	const uint8_t	l_dyn [] = { 0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x57, 0xC8, 0x40, 0x27, 0x75, 0x14, 0xCA, 0x9C, 0x1C, 0x9D, 0xBD, 0x43,
+					0x03, 0x14, 0xB9, 0x32, 0xA8, 0xA0, 0x02, 0x00 };
+	static	const uint8_t	l_lzma [] = { 0x00, 0x34, 0x19, 0x49, 0xEE, 0x8D, 0xE9, 0x56, 0x0A, 0xE7, 0x79, 0x9C, 0xDF, 0x9A, 0x67, 0xBE, 0x49,
+					0x2D, 0x51, 0x99, 0x12, 0xCF, 0x74, 0x7D, 0x3E, 0xB5, 0x6F, 0xFF, 0xFF, 0x4D, 0xA8, 0x00, 0x00 };
+	uint8_t		l_stored [5 + 102], l_out [102];
+	uint32_t	l_n = sizeof(l_text) - 1;
+
+	/* A stored block, as zlib makes it at level 0 */
+	l_stored [0] = 1; l_stored [1] = (uint8_t) l_n; l_stored [2] = 0; l_stored [3] = (uint8_t) ~l_n; l_stored [4] = 0xFF;
+	memcpy(l_stored + 5, l_text, l_n);
+
+	$CHECK((STS$K_SUCCESS == vbk$dfl_decompress(l_fixed, sizeof(l_fixed), l_out, l_n)) && !memcmp(l_out, l_text, l_n), "zlib, fixed codes");
+	$CHECK((STS$K_SUCCESS == vbk$dfl_decompress(l_dyn, sizeof(l_dyn), l_out, l_n)) && !memcmp(l_out, l_text, l_n), "zlib, dynamic codes");
+	$CHECK((STS$K_SUCCESS == vbk$dfl_decompress(l_stored, sizeof(l_stored), l_out, l_n)) && !memcmp(l_out, l_text, l_n), "zlib, stored");
+	$CHECK((STS$K_SUCCESS == vbk$lzm_decompress(l_lzma, sizeof(l_lzma), l_out, l_n)) && !memcmp(l_out, l_text, l_n), "liblzma, raw LZMA1");
+	$CHECK(STS$K_SUCCESS != vbk$dfl_decompress(l_dyn, sizeof(l_dyn), l_out, l_n - 1), "Deflate: a byte too many taken");
+	$CHECK(STS$K_SUCCESS != vbk$lzm_decompress(l_lzma, sizeof(l_lzma) - 1, l_out, l_n), "LZMA: a stream cut short taken");
+	}
+
+	s_begin("Deflate and LZMA: a damaged stream never writes past its length");
+	{
+	static	uint8_t	l_src [50000], l_z [VBK$LZM_BOUND(50000) + VBK$DFL_BOUND(50000)], l_d [sizeof(l_z)], l_out [50000 + 64];
+	uint32_t	l_zlen, l_over = 0, l_seed = 12345;
+
+	for ( uint32_t k = 0; k < sizeof(l_src); k++ )
+		l_src [k] = (uint8_t) "lorem ipsum dolor sit amet, consectetur adipiscing elit " [(k * 3 + k / 77) % 56];
+
+	for ( int l_codec = 0; l_codec < 2; l_codec++ )
+		{
+		if ( l_codec )
+			vbk$lzm_compress(l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen, 2);
+		else	vbk$dfl_compress(l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen, 2);
+
+		for ( int t = 0; t < 400; t++ )
+			{
+			int	l_s;
+
+			memcpy(l_d, l_z, l_zlen);
+			l_seed	= l_seed * 1103515245U + 12345U;
+			l_d [(l_seed >> 8) % l_zlen] ^= (uint8_t) (1U << ((l_seed >> 4) & 7));
+			memset(l_out + sizeof(l_src), 0xA5, 64);
+
+			/*
+			**  Refused, or other octets: neither codec has a checksum of its
+			**  own - the CRC of the block and of the file (FEND) find it.
+			**  What must never be is a write past the length.
+			*/
+			l_s	= l_codec ? vbk$lzm_decompress(l_d, l_zlen, l_out, sizeof(l_src)) : vbk$dfl_decompress(l_d, l_zlen, l_out, sizeof(l_src));
+			(void) l_s;
+
+			for ( int k = 0; k < 64; k++ )
+				l_over	+= (l_out [sizeof(l_src) + k] != 0xA5);
+			}
+		}
+
+	$CHECK(!l_over, "%u octets written past the end", l_over);
+	}
+
+	s_begin("VBK$DATA_PACK: the codec of each /LEVEL, checked; what does not compress is stored");
+	{
+	static	uint8_t	l_src [300000], l_z [VBK$LZ4_BOUND(300000)], l_chk [300000];
+	uint32_t	l_zlen, l_codec, l_bad = 0;
+
+	for ( uint32_t k = 0; k < sizeof(l_src); k++ )
+		l_src [k] = (uint8_t) "records of a saveset, compressed, decompressed and compared " [(k * 5 + k / 61) % 60];
+
+	for ( int l = 1; l <= VBK$K_ZLEVELS; l++ )
+		l_bad += (STS$K_SUCCESS != vbk$data_pack(l, l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen, &l_codec, l_chk)) || (l_codec != vbk$data_codec(l))
+			|| (l_codec != (uint32_t) ((l == 1) ? VBK$K_CODEC_LZ4 : (l <= 5) ? VBK$K_CODEC_DEFLATE : VBK$K_CODEC_LZMA));
+
+	$CHECK(!l_bad, "%u levels did not compress as they should", l_bad);
+
+	/* Noise: xorshift */
+	for ( uint32_t k = 0, l_x = 2463534242U; k < sizeof(l_src); k++ )
+		{
+		l_x ^= l_x << 13;
+		l_x ^= l_x >> 17;
+		l_x ^= l_x << 5;
+		l_src [k] = (uint8_t) (l_x >> 24);
+		}
+
+	l_bad	= 0;
+
+	for ( int l = 1; l <= VBK$K_ZLEVELS; l++ )
+		l_bad += (STS$K_WARN != vbk$data_pack(l, l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen, &l_codec, l_chk));
+
+	$CHECK(!l_bad, "%u levels compressed noise", l_bad);
 	}
 
 	if ( s_tap )

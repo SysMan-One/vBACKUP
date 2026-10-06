@@ -327,7 +327,8 @@ system types (minix, ntfs, ...): use /PHYSICAL.
 ```
 
 COMPRESSED makes the saveset smaller: text, programs and documents
-often shrink to half, or less. Files that are compressed already
+often shrink to half, or less. /LEVEL says how hard (below); without
+it COMPRESSED is /LEVEL=1, fast. Files that are compressed already
 (photos, video, .gz, .zip) stay as they are - VBACKUP tries the first
 64 KB of each piece and stores it plain when it does not shrink, which
 costs almost no time. The checksums and the repair of bad blocks work
@@ -345,6 +346,35 @@ compressed data. They do not write wrong files: they report the
 compressed files as damaged (CRCERR, FILDAMAGED). Update them.
 
 Example: vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
+
+## /LEVEL -- how hard to compress
+
+```
+/LEVEL=n      n from 1 to 9; it compresses by itself
+```
+
+The higher, the smaller the saveset and the slower the save. A restore
+is fast at every level.
+
+```
+/LEVEL=1        LZ4: fast, about half (the default of /DATA_FORMAT=COMPRESSED)
+/LEVEL=2 .. 5   Deflate (the method of zip and gzip): smaller, slower
+/LEVEL=6 .. 9   LZMA (the method of xz and 7-Zip): the smallest, slowest
+```
+
+Measured on one core (a text, 1 MB): LZ4 2.1 times smaller at 130 MB/s;
+Deflate 3.2 to 3.7 times at 33 to 11 MB/s; LZMA 4.0 to 4.5 times at 12
+to 2 MB/s. All cores work (VBACKUP_ZTHREADS).
+
+Every piece VBACKUP compresses is decompressed again at once and
+compared with the data; only a piece that comes back the same is
+written compressed (else it is stored plain, and ZCHECK says so). Each
+piece is compressed on its own: a bad block costs that piece alone,
+and the repair of bad blocks works as always. vbkx and vbkx-go, -rs,
+-pl read every level. VBACKUP and vbkx before X01-19 do not read levels
+2 to 9: they say the files are damaged, they never write them wrong.
+
+Example: vbackup /home /mnt/usb/home.bck /LEVEL=6
 
 ## /TRANSFER -- a saveset to a saveset, block for block
 
@@ -1002,6 +1032,11 @@ others are. Restore it on Linux, or extract it under another name:
 Windows.** /PHYSICAL and /IMAGE work on Linux only. Save the files
 instead, or do it on Linux.
 
+**%VBACKUP-W-ZCHECK.** A piece of data VBACKUP compressed did not come
+back the same when it was checked. It was stored uncompressed: the
+saveset is right. It is a fault of VBACKUP: please report it with the
+file and the /LEVEL.
+
 **%VBACKUP-W-XATTRSKIP.** An extended attribute of the file was not
 saved: it cannot be read, or it is longer than 64 KB. On Windows it is
 an alternate data stream longer than 64 KB. The file itself was saved.
@@ -1240,6 +1275,7 @@ that were in the cache stay there.
 %VBACKUP-I-VMSRAW       ... an indexed or relative file restored as its RMS image
 %VBACKUP-W-PARITYERR    /PARITY: the parity of a group disagrees, nothing of it rebuilt
 %VBACKUP-W-XATTRSKIP    an extended attribute (on Windows a stream) not saved: unreadable, or over 64 KB
+%VBACKUP-W-ZCHECK       a compressed piece did not come back the same: stored plain (report it)
 ```
 
 A message goes to the standard error. It begins with the date, the

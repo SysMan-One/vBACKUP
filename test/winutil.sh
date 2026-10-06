@@ -31,6 +31,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-03 : /LEVEL: Deflate and LZMA both ways.
+#
 #		 6-OCT-2026	RRL	X-02 : Stage 14: the attributes of NTFS, the security
 #						descriptors, node::file by ssh.exe (FAKESSHEXE).
 #
@@ -182,6 +184,13 @@ for b in (21, 22, 23):
 PYEOF
 vw wv.bck wv.wout > wvd.log 2>&1
 check '[ $? = 0 ] && same_tree ref/tree wv.wout/tree' "vbackup.exe did not repair three bad blocks by /PARITY=3: $(grep -E -- '-[EFW]-' wvd.log | head -3)"
+
+#	/LEVEL (codecs 2 and 3): made by vbackup.exe, read on Linux; made on Linux, read by vbackup.exe
+vw ref/tree wz.bck /LEVEL=7 > wz.log 2>&1
+check '[ $? = 0 ] && $VB wz.bck wz.lout > wz.lr 2>&1 && same_tree ref/tree wz.lout/tree' "/LEVEL=7 by vbackup.exe, restored on Linux: $(grep -E -- '-[EFW]-' wz.log wz.lr | head -3)"
+$VB src/tree lz.bck /LEVEL=3 > /dev/null 2>&1
+vw lz.bck lz.wout > lz.wr 2>&1
+check 'same_tree ref/tree lz.wout/tree' "/LEVEL=3 from Linux, restored by vbackup.exe: $(grep -E -- '-[EF]-' lz.wr | grep -v Windows | head -3)"
 
 #
 #	3. The journal and the incremental chain, by vbackup.exe

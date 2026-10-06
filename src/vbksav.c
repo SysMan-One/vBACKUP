@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-18"
-#define	__REV__		"1.18.0"
+#define	__IDENT__	"X01-19"
+#define	__REV__		"1.19.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-19		 6-OCT-2026	RRL
+**		The codec of /LEVEL (VBK$DATA_PACK), every record checked before it
+**		is written (ZCHECK); COMPRESS of the SUMMARY is that codec.
 **
 **	X01-18		 6-OCT-2026	RRL
 **		A catalog entry carries WINATTR: /LIST /FULL shows the attributes of
@@ -120,6 +124,7 @@ typedef struct vbk_save_t
 	FILE *		spool;			/* The catalog entries, until the end		*/
 	uint8_t *	iobuf;			/* VBK$K_DATAHDR + VBACKUP$K_IOBUF		*/
 	uint8_t *	zbuf;			/* /DATA_FORMAT=COMPRESSED: a DATAZ record body	*/
+	uint8_t *	zcheck;			/* ... the record decompressed again, the check	*/
 	uint64_t	nzin, nzout;		/* ... octets in, octets out			*/
 	uint64_t	physdata;		/* Octets of data written: /PHYSICAL, but zeros	*/
 	struct vbk_zp_t *zp;			/* Compression on several cores, NULL - none	*/
@@ -429,7 +434,8 @@ static	int	s_vbk$put	(
 			)
 {
 uint8_t		l_hdr [VBK$K_DATAHDR];
-uint32_t	l_zlen = 0;
+uint32_t	l_zlen = 0, l_codec = 0;
+int		l_rc = STS$K_WARN;
 
 	a_sav->nzin += a_n;
 
@@ -437,10 +443,14 @@ uint32_t	l_zlen = 0;
 	if ( a_sav->zp )
 		return	vbk$zp_data(a_sav->zp, a_fileno, a_off, a_data, a_n);
 
-	if ( a_sav->zbuf && (1 & vbk$lz4_pack(a_data, a_n, a_sav->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(a_n), &l_zlen)) )
+	if ( a_sav->zbuf && (STS$K_ERROR == (l_rc = vbk$data_pack(a_sav->opts->zlevel, a_data, a_n, a_sav->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(a_n),
+			&l_zlen, &l_codec, a_sav->zcheck))) )
+		$VBKMSG(VBACKUP$_ZCHECK, a_off);
+
+	if ( a_sav->zbuf && (l_rc == STS$K_SUCCESS) )
 		{
 		vbk$put32(a_sav->zbuf, a_fileno);
-		vbk$put32(a_sav->zbuf + 4, VBK$K_CODEC_LZ4);
+		vbk$put32(a_sav->zbuf + 4, l_codec);
 		vbk$put64(a_sav->zbuf + 8, a_off);
 		vbk$put32(a_sav->zbuf + 16, a_n);
 
@@ -1046,7 +1056,7 @@ int		l_ok = 1;
 
 	/* Information only: a reader goes by the record types, not by this */
 	if ( l_o->compress )
-		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_COMPRESS, VBK$K_CODEC_LZ4);
+		l_ok &= vbk$tlv_u8(a_tlvb, VBK$K_TAG_COMPRESS, (uint8_t) vbk$data_codec(l_o->zlevel));
 
 	/* /IMAGE: what makes the volume that volume - a restore makes it again */
 	if ( l_o->image )
@@ -1291,7 +1301,7 @@ int		l_status = STS$K_SUCCESS;
 
 	if ( !(l_sav = calloc(1, sizeof(*l_sav))) || !(l_base = calloc(a_opts->ninput, VBACKUP$K_SZ_PATH))
 		|| !(l_sav->iobuf = malloc(VBK$K_DATAHDR + VBACKUP$K_IOBUF))
-		|| (a_opts->compress && !(l_sav->zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBACKUP$K_IOBUF)))) )
+		|| (a_opts->compress && (!(l_sav->zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBACKUP$K_IOBUF))) || !(l_sav->zcheck = malloc(VBACKUP$K_IOBUF)))) )
 		return	$VBKMSG(VBACKUP$_NOMEM, errno, strerror(errno)), STS$K_FATAL;
 
 	l_sav->opts	= a_opts;
@@ -1367,7 +1377,7 @@ int		l_status = STS$K_SUCCESS;
 
 	/* Compression on several cores: the ring between the reading of the files and the writer */
 	if ( a_opts->compress )
-		l_sav->zp = vbk$zp_start(&l_sav->wctx);
+		l_sav->zp = vbk$zp_start(&l_sav->wctx, a_opts->zlevel);
 
 	/* A device is not a tree: no walk, no read-ahead - one file, block by block */
 	if ( a_opts->physical )
@@ -1472,6 +1482,7 @@ int		l_status = STS$K_SUCCESS;
 
 	free(l_sav->iobuf);
 	free(l_sav->zbuf);
+	free(l_sav->zcheck);
 
 	/* /VERIFY: the saveset just written, read back and compared with the disk */
 	if ( a_opts->verify && strcmp(a_opts->output, "-") )

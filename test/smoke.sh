@@ -29,6 +29,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-19 : /LEVEL: every codec saved, listed, restored, compared,
+#						verified; a forged block of compressed data - its file said,
+#						never given wrong.
+#
 #		 6-OCT-2026	RRL	X-17 : The cold-file check tried three times: on a loaded host
 #						the eviction before the save is not always done at once.
 #
@@ -806,6 +810,67 @@ if [ -n "$VBKX" ]; then
 	rm -rf par3x; $VBKX x par3z.bck -C par3x > par3x.log 2>&1
 	check '[ $? = 0 ] && cmp -s src/tree/big.bin par3x/tree/big.bin && cmp -s src/tree/sub/rand.bin par3x/tree/sub/rand.bin' "vbkx, /PARITY=3, three bad in a group: $(head -2 par3x.log)"
 fi
+
+#
+#	17. /LEVEL (format.md 6.7): LZ4, Deflate, LZMA - each saved, listed,
+#	restored the same, compared, verified; then the day it is needed: a
+#	block of compressed data changed and its CRC made right again, so that
+#	no repair sees it - the file must be said damaged, never given wrong
+#
+for L in 1 2 5 6 9; do
+	$VB src/tree lv$L.bck /LEVEL=$L /VERIFY /BLOCK_SIZE=8192 > lv$L.log 2>&1
+	check '[ $? = 0 ] && grep -q "Differences: 0" lv$L.log' "/LEVEL=$L: the save or its /VERIFY: $(grep -E -- '-[EFW]-' lv$L.log | head -2)"
+	rm -rf lv$L.r; $VB lv$L.bck lv$L.r > lv$L.r.log 2>&1
+	check '[ $? = 0 ] && same_tree src/tree lv$L.r/tree' "/LEVEL=$L: not restored the same: $(grep -E -- '-[EFW]-' lv$L.r.log | head -2)"
+	$VB lv$L.bck src /COMPARE > lv$L.c.log 2>&1
+	check 'grep -q "Differences: 0" lv$L.c.log' "/LEVEL=$L: /COMPARE: $(grep -E -- '-[EFW]-' lv$L.c.log | head -2)"
+done
+check '$VB lv2.bck /LIST | grep -q "Data format:       compressed (Deflate)" && $VB lv9.bck /LIST | grep -q "Data format:       compressed (LZMA)" \
+	&& $VB lv1.bck /LIST | grep -q "Data format:       compressed (LZ4)"' "/LIST does not name the codec"
+mkdir -p lvtext && seq 1 400000 | sed 's/$/ a line of text that compresses/' > lvtext/t.txt
+for L in 1 5 9; do $VB lvtext lvt$L.bck /LEVEL=$L /BLOCK_SIZE=8192 > /dev/null 2>&1; done
+check '[ $(stat -c %s lvt9.bck) -lt $(stat -c %s lvt5.bck) ] && [ $(stat -c %s lvt5.bck) -lt $(stat -c %s lvt1.bck) ]' \
+	"text: /LEVEL=9 < 5 < 1 does not hold: $(stat -c %s lvt1.bck lvt5.bck lvt9.bck | tr '\n' ' ')"
+$VB src/tree lvx.bck /LEVEL=10 > lvx.log 2>&1
+check '[ $? = 2 ] && grep -q "IVQUAL, Value: 10, Qualifier: /LEVEL" lvx.log' "/LEVEL=10 not refused"
+$VB src/tree lvx.bck /LEVEL=6 /DATA_FORMAT=UNCOMPRESSED > lvx.log 2>&1
+check '[ $? = 2 ] && grep -q "CONFQUAL" lvx.log' "/LEVEL with /DATA_FORMAT=UNCOMPRESSED not refused"
+
+for L in 2 6; do
+	$VB src/tree lvf$L.bck /LEVEL=$L /BLOCK_SIZE=16384 /GROUP_SIZE=0 > /dev/null 2>&1
+	python3 - lvf$L.bck <<'PYEOF'
+import sys, zlib, struct
+p = sys.argv[1]; d = bytearray(open(p, 'rb').read()); B = struct.unpack_from('<I', d, 8)[0]
+# Every third block from the second on: an octet of its payload changed, the CRC made right again
+for blk in range(2, len(d) // B - 2, 3):
+	o = blk * B
+	d[o + 64 + 300] ^= 0x5A
+	struct.pack_into('<I', d, o + 60, 0)
+	struct.pack_into('<I', d, o + 60, zlib.crc32(bytes(d[o:o + B])))
+open(p, 'wb').write(d)
+PYEOF
+	for R in vbackup vbkx; do
+		rm -rf lvf$L.$R
+		if [ $R = vbackup ]; then $VB lvf$L.bck lvf$L.$R > lvf$L.$R.log 2>&1; else [ -n "$VBKX" ] || continue; $VBKX x lvf$L.bck -C lvf$L.$R > lvf$L.$R.log 2>&1; fi
+		RC=$?
+		check 'python3 - src/tree lvf$L.$R/tree lvf$L.$R.log <<PYEOF
+import os, sys
+src, out, log = sys.argv[1], sys.argv[2], open(sys.argv[3], errors="replace").read()
+said = 0; bad = []
+for root, ds, fs in os.walk(src):
+	for f in fs:
+		p = os.path.join(root, f); rel = os.path.relpath(p, src); o = os.path.join(out, rel)
+		if os.path.islink(p) or not os.path.isfile(p) or not os.path.exists(o):
+			continue
+		if rel in log:
+			said += 1
+			continue
+		if open(p, "rb").read() != open(o, "rb").read():
+			bad.append(rel)
+sys.exit(1 if bad or not said else 0)
+PYEOF' "/LEVEL=$L, forged blocks, $R: a file given wrong without a word, or nothing said (rc $RC): $(grep -E -- '-[EFW]-|File:' lvf$L.$R.log | head -3)"
+	done
+done
 
 
 tap_end

@@ -13,6 +13,8 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 6-OCT-2026	RRL	X-19 : /LEVEL: LZ4, Deflate, LZMA; ZCHECK.
+.\"
 .\"		 6-OCT-2026	RRL	X-18 : WINDOWS: attributes, ACL, streams, sparse files, ssh.exe; XATTRSKIP.
 .\"
 .\"		 6-OCT-2026	RRL	X-17 : WINDOWS: vbackup.exe.
@@ -141,8 +143,17 @@ device: /REPLACE, never onto a mounted, busy or smaller one; YES asked
 at a terminal.  See vbackup /HELP /PHYSICAL.
 .TP
 .B /DATA_FORMAT=COMPRESSED
-Compress the data (LZ4); data that does not shrink is stored plain.
+Compress the data (LZ4, or the codec of
+.BR /LEVEL );
+data that does not shrink is stored plain.
 Readers before X01-04 report compressed files as damaged.
+.TP
+.BI /LEVEL= n
+How hard, 1 .. 9, compressing by itself: 1 LZ4 (fast, about half), 2 .. 5
+Deflate, 6 .. 9 LZMA (the smallest, the slowest save; a restore stays fast).
+Every record is decompressed and compared before it is written (ZCHECK
+when one does not come back the same: stored plain).
+Readers before X01-19 report levels 2 .. 9 as damaged, never wrong.
 .TP
 .B /TRANSFER
 A saveset to a saveset, block for block: the volumes into a pipe, a

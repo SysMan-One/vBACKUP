@@ -34,6 +34,10 @@ skips them by the rules of sections 5 and 6:
   X01-14.  A reader of an earlier version refuses it at its first block
   (version 2) - it never misreads its groups.  Without `/PARITY`, or with
   `/PARITY=1`, a saveset is version 1, byte for byte as before;
+- codecs 2 (raw Deflate) and 3 (raw LZMA1) of the DATAZ record (6.7.2,
+  6.7.3), since X01-19; the SUMMARY tag COMPRESS gives the codec.  A
+  reader of an earlier version refuses a record of an unknown codec and
+  reports its file damaged - it never gives wrong octets;
 - the files of Windows (6.1, 6.11): the per-file tags WINATTR (also in
   the CATALOG) and NTSD, since X01-18; the alternate data streams of NTFS
   as XATTR items named `user.<stream>`.  A reader of an earlier version
@@ -239,7 +243,7 @@ Record header, 8 bytes:
 | 4 | FEND | TLV items, section 6.3 |
 | 5 | CATALOG | a sequence of entries: u32 entry length, then TLV items, section 6.4 |
 | 6 | END | TLV items, section 6.5 |
-| 7 | DATAZ | u32 fileno, u32 codec (1 = LZ4 block), u64 offset in the file, u32 rawlen (at most 1048576), then the compressed bytes - section 6.7 |
+| 7 | DATAZ | u32 fileno, u32 codec (1 = LZ4 block, 2 = raw Deflate, 3 = raw LZMA1), u64 offset in the file, u32 rawlen (at most 1048576), then the compressed bytes - section 6.7 |
 
 Order in the stream:
 
@@ -348,7 +352,7 @@ SUMMARY tags:
 | 74 | SYSTEM | STR | uname -s -r -m |
 | 75 | KIND | u8 | 0 FULL: every covered file is saved; 1 INCREMENTAL: a time filter chose what is saved, the catalog lists the rest as PRESENT |
 | 76 | FILTER | STR | the time filter of an INCREMENTAL saveset as it was given, e.g. `/SINCE=BACKUP` |
-| 77 | COMPRESS | u8 | the codec of the DATAZ records, 1 = LZ4 block; information only - a reader goes by the record types |
+| 77 | COMPRESS | u8 | the codec of the DATAZ records, 1 = LZ4 block, 2 = raw Deflate, 3 = raw LZMA1; information only - a reader goes by the record types and the codec of each DATAZ |
 | 78 | PHYSICAL | u8 | 1: the saveset holds one device, block by block (6.8); also in its FILE record and catalog entry |
 | 79 | DEVSIZE | u64 | the size of that device in bytes |
 | 80 | SECTORSIZE | u32 | its logical sector size in bytes |
@@ -402,7 +406,7 @@ tree as it was at the save, and a restore /INCREMENTAL can remove from a
 directory what was not in it any more.  A plain FULL save writes no
 PRESENT entries.
 
-### 6.7 DATAZ and the LZ4 block format
+### 6.7 DATAZ: the compressed data
 
 A DATAZ record stands where a DATA record would and means the same: the
 `rawlen` bytes of the file at `offset`.  The writer chooses per record;
@@ -411,6 +415,18 @@ bytes, as for DATA; the block CRC covers the compressed bytes as they
 lie in the stream.  A reader that does not know type 7 skips it: the
 file comes out short or with holes, and its CRC and size disagree with
 the FEND - it is reported damaged, never silently wrong.
+
+Every DATAZ record is compressed on its own - no state is carried from
+one record to the next - so a bad record costs that record alone, and a
+reader may begin anywhere.  A codec the reader does not know is a bad
+record: its file is reported damaged.
+
+A writer decompresses every record it has compressed and compares it
+with the data before it writes it; one that does not come back the same
+is written as DATA (VBACKUP says ZCHECK).  A saveset never depends on
+the writer being right.
+
+#### 6.7.1 Codec 1: the LZ4 block format
 
 Codec 1 is the LZ4 block format (no frame, no checksum of its own).
 The compressed bytes are a series of sequences:
@@ -437,6 +453,81 @@ compresses to the same bytes.
 
 A record is written as DATAZ only when it is smaller than the DATA
 record would be; incompressible data stays DATA.
+
+#### 6.7.2 Codec 2: raw Deflate
+
+The compressed bytes are a Deflate stream as RFC 1951 defines it - no
+zlib header (RFC 1950), no gzip header, no checksum - of any of the
+three block types (stored, fixed Huffman codes, dynamic Huffman codes),
+the last one with BFINAL set.  The stream must give exactly `rawlen`
+bytes and end in the last byte of the record: the bits after the final
+end-of-block code, up to the byte boundary, are padding; no byte may
+follow.  A reader checks every code set (none over-subscribed; one that
+is incomplete only when it has a single code - zlib writes such a
+distance code for a block of literals), every length and distance
+(1 .. 32768, never beyond what has been output), the stored-block LEN
+against its one's complement NLEN.  zlib's `inflate` with window bits
+-15, Go's `compress/flate`, Python's `zlib.decompress(data, -15)` read
+it.
+
+VBACKUP's writer: hash chains of three bytes over the 32 KB window;
+greedy matching at /LEVEL=2, lazy (a match put off one byte when the
+next one is longer) at 3..5, with deeper chains; a block every 16384
+symbols, written the smallest way of dynamic, fixed, stored.
+
+#### 6.7.3 Codec 3: raw LZMA1
+
+The compressed bytes are an LZMA1 stream with no header, with the
+properties fixed: lc = 3, lp = 0, pb = 2; the dictionary is the record
+(`rawlen` <= 1 MB).  It is the stream of the LZMA specification (the
+file `lzma-specification.txt` of the LZMA SDK): the range coder begins
+with a byte 0 and four bytes of code; the stream gives exactly `rawlen`
+bytes and then the end marker - a match of length 2 and distance
+0xFFFFFFFF (the "distance" of the specification, the real distance less
+one) - after which the code of the range decoder is 0 and the input is
+used up.  A reader checks every distance against what has been output
+and every length against what is still wanted.  liblzma's raw decoder
+(Python: `lzma.decompress(data, format=lzma.FORMAT_RAW, filters=[{"id":
+lzma.FILTER_LZMA1, "lc": 3, "lp": 0, "pb": 2, "dict_size": 1048576}])`)
+reads it.
+
+In short, as a decoder needs it (all probabilities 11 bits, 1024 at the
+start, moved by 5; bit trees indexed from 1):
+
+```
+state 0..11; rep0..rep3 = 0
+loop:
+  posState = outpos & 3
+  if bit(isMatch[state][posState]) == 0:            literal
+      probs = literal[0x300 * (prevbyte >> 5)]
+      state < 7: 8-bit tree; else "matched": the bits of the byte at
+      rep0 guide the probabilities (probs[0x100 + matchbit*0x100 + sym])
+      while they agree, then the plain tree
+      state = state<4 ? 0 : state<10 ? state-3 : state-6
+  elif bit(isRep[state]) == 0:                      match
+      rep3,rep2,rep1 = rep2,rep1,rep0
+      len = lenDecoder(posState); state = state<7 ? 7 : 10
+      rep0 = distance(len)    ; 0xFFFFFFFF - the end marker
+  else:                                             rep
+      if bit(isRepG0[state]) == 0:
+          if bit(isRep0Long[state][posState]) == 0: one byte at rep0,
+              state = state<7 ? 9 : 11; continue  (short rep)
+      else: rep1, rep2 or rep3 by isRepG1, isRepG2, moved to rep0
+      len = repLenDecoder(posState); state = state<7 ? 8 : 11
+  copy len bytes from outpos - rep0 - 1
+lenDecoder: choice ? (choice2 ? 16 + high[8 bits] : 8 + mid[posState][3])
+            : low[posState][3]; plus 2
+distance(len): slot = posSlot[min(len-2, 3)][6 bits]; slot < 4: slot;
+  else footer = slot/2 - 1, base = (2 | slot&1) << footer;
+  slot < 14: base + reverse tree (posSpecial + base - slot, footer bits);
+  else base + (direct bits (footer - 4) << 4) + reverse align (4 bits)
+```
+
+VBACKUP's writer: hash chains of three bytes and the last position of
+every two; the "fast" choice of the reference encoder - a repeated
+distance when it is as good, the longest match unless it is short and
+far, a short rep, a literal; a match put off when the next byte has a
+better one; deeper chains from /LEVEL=6 to 9.
 
 ### 6.8 A device, block by block (/PHYSICAL)
 

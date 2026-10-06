@@ -28,7 +28,8 @@ What a saveset gives you:
   what changed since, and a chain restored `/INCREMENTAL` comes back with
   deleted files gone;
 - a copy disk to disk with everything a restore would give back;
-- compression (`/DATA_FORMAT=COMPRESSED`, LZ4 on all cores), a whole
+- compression on all cores - `/DATA_FORMAT=COMPRESSED` LZ4, `/LEVEL=2..5`
+  Deflate, `/LEVEL=6..9` LZMA, every record checked before it is written - a whole
   device block by block (`/PHYSICAL`) or a whole file system (`/IMAGE`);
 - encryption (`/ENCRYPT`, `/KEY_FILE`): ChaCha20 and HMAC-SHA256 per
   block, keys by PBKDF2 - the names of the files hidden too, damage
@@ -189,7 +190,7 @@ It needs no StarLet and no CMake; with MinGW-w64, from the top of the
 source tree:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkdfl.c lib/vbklzm.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 

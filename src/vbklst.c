@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLST"
-#define	__IDENT__	"X01-18"
-#define	__REV__		"1.18.0"
+#define	__IDENT__	"X01-19"
+#define	__REV__		"1.19.0"
 
 /*
 **++
@@ -23,6 +23,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-19		 6-OCT-2026	RRL
+**		The codec of the SUMMARY: LZ4, Deflate or LZMA.
 **
 **	X01-18		 6-OCT-2026	RRL
 **		/FULL: the attributes of a file saved on Windows.
@@ -281,7 +284,10 @@ VBK$TIME	l_t;
 			case	VBK$K_TAG_PHYSICAL:	$VBKFAOP(a_lst->out, "Physical:          a device, block by block (/PHYSICAL)\n");	break;
 			case	VBK$K_TAG_DEVSIZE:	$VBKFAOP(a_lst->out, "Device size:       !UQ bytes\n", vbk$tlv_getu(l_vlen, l_val)); break;
 			case	VBK$K_TAG_SECTORSIZE:	$VBKFAOP(a_lst->out, "Sector size:       !UQ bytes\n", vbk$tlv_getu(l_vlen, l_val)); break;
-			case	VBK$K_TAG_COMPRESS:	$VBKFAOP(a_lst->out, "Data format:       compressed (LZ4)\n");				break;
+			case	VBK$K_TAG_COMPRESS:
+				$VBKFAOP(a_lst->out, "Data format:       compressed (!AZ)\n", (vbk$tlv_getu(l_vlen, l_val) == VBK$K_CODEC_DEFLATE) ? "Deflate"
+					: (vbk$tlv_getu(l_vlen, l_val) == VBK$K_CODEC_LZMA) ? "LZMA" : "LZ4");
+				break;
 			case	VBK$K_TAG_KDFITER:	$VBKFAOP(a_lst->out, "Encryption:        ChaCha20, HMAC-SHA256; PBKDF2-HMAC-SHA256, !UQ iterations\n",
 							vbk$tlv_getu(l_vlen, l_val));					break;
 			case	VBK$K_TAG_IMAGE:	$VBKFAOP(a_lst->out, "Image:             a whole file system (/IMAGE)\n");			break;

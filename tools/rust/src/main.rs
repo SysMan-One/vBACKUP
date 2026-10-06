@@ -22,7 +22,9 @@
 **		vbkx-rs t saveset [-k file]    read it all, check the checksums
 **		vbkx-rs selftest               check the primitives of the
 **						encryption against the test
-**						vectors of their standards
+**						vectors of their standards, and
+**						the codecs against streams of
+**						zlib and liblzma
 **
 **		saveset is volume 1 (x.bck); volumes 2, 3, ... are looked
 **		for beside it as x.bck.002, x.bck.003, ...
@@ -52,8 +54,9 @@
 **		a leading "/" or an empty component are refused, and so is a
 **		way through a symbolic link.
 **
-**  DATA:	DATA records and DATAZ records (vbackup /DATA_FORMAT=COMPRESSED,
-**		the LZ4 block format, format.md 6.7) alike; a DATAZ block is
+**  DATA:	DATA records and DATAZ records (vbackup /DATA_FORMAT=COMPRESSED
+**		and /LEVEL, format.md 6.7: codec 1 the LZ4 block format, 2 raw
+**		Deflate, 3 raw LZMA1) alike; a DATAZ block is
 **		decompressed under the same checks as everything else - a
 **		length or an offset out of bounds makes it a bad record, and
 **		its file is named incomplete.
@@ -116,6 +119,11 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-19		 6-OCT-2026	RRL
+**		DATAZ codecs 2 (raw Deflate, RFC 1951: stored, fixed, dynamic
+**		blocks) and 3 (raw LZMA1, lc=3 lp=0 pb=2, the end marker), each
+**		under the checks of the LZ4 one; the selftest has their streams.
 **
 **	X01-16		 6-OCT-2026	RRL
 **		The products of the repair by the vector instructions: AVX2 or
@@ -206,6 +214,8 @@ const RT_DATAZ: u16 = 7; // DATA, compressed: format.md 6.7
 
 const MAXDATA: u32 = 1 << 20; // the most octets a DATA or DATAZ record holds
 const CODEC_LZ4: u32 = 1;
+const CODEC_DEFLATE: u32 = 2; // raw Deflate, RFC 1951: format.md 6.7.2
+const CODEC_LZMA: u32 = 3; // raw LZMA1, lc=3 lp=0 pb=2, end marker: format.md 6.7.3
 
 const FT_REG: u8 = 1;
 const FT_DIR: u8 = 2;
@@ -363,6 +373,465 @@ fn lz4_decompress(src: &[u8], rawlen: u32) -> Option<Vec<u8>> {
 }
 
 /*
+** inflate - codec 2, raw Deflate (RFC 1951, format.md 6.7.2): stored,
+** fixed and dynamic blocks; every code set checked (none over-subscribed,
+** an incomplete one only with a single code), every length and distance
+** against what has been output and what is still wanted; exactly rawlen
+** octets, the final block ending in the last octet of src (only its
+** padding bits after the end-of-block code).  None - a bad stream.
+ */
+const DFL_LBASE: [u16; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+const DFL_LEXT: [u8; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+const DFL_DBASE: [u16; 30] =
+    [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+const DFL_DEXT: [u8; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+const DFL_CLORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+
+/* The bits of the stream, LSB first */
+struct BitIn<'a> {
+    src: &'a [u8],
+    ip: usize,
+    bits: u64,
+    n: u32,
+}
+
+impl<'a> BitIn<'a> {
+    fn fill(&mut self) {
+        while self.n <= 56 && self.ip < self.src.len() {
+            self.bits |= (self.src[self.ip] as u64) << self.n;
+            self.ip += 1;
+            self.n += 8;
+        }
+    }
+    fn get(&mut self, k: u32) -> Option<u32> {
+        if self.n < k {
+            self.fill();
+            if self.n < k {
+                return None;
+            }
+        }
+        let v = (self.bits & ((1u64 << k) - 1)) as u32;
+        self.bits >>= k;
+        self.n -= k;
+        Some(v)
+    }
+}
+
+/* A Huffman code: the counts of each length and the symbols in canonical order (as puff of zlib keeps them) */
+struct Huff {
+    count: [u16; 16],
+    symbol: Vec<u16>,
+}
+
+impl Huff {
+    fn build(lens: &[u8]) -> Option<Huff> {
+        let mut h = Huff { count: [0; 16], symbol: vec![0; lens.len()] };
+        for &l in lens {
+            if l > 15 {
+                return None;
+            }
+            h.count[l as usize] += 1;
+        }
+        let (mut left, mut codes) = (1i32, 0i32);
+        for b in 1..16 {
+            left = (left << 1) - h.count[b] as i32;
+            codes += h.count[b] as i32;
+            if left < 0 {
+                return None; // over-subscribed
+            }
+        }
+        if left != 0 && codes > 1 {
+            return None; // incomplete: only a single code may be
+        }
+        let mut offs = [0u16; 16];
+        for b in 1..15 {
+            offs[b + 1] = offs[b] + h.count[b];
+        }
+        for (i, &l) in lens.iter().enumerate() {
+            if l != 0 {
+                h.symbol[offs[l as usize] as usize] = i as u16;
+                offs[l as usize] += 1;
+            }
+        }
+        Some(h)
+    }
+    /* One symbol, a bit at a time */
+    fn decode(&self, inp: &mut BitIn) -> Option<usize> {
+        let (mut code, mut first, mut index) = (0i32, 0i32, 0i32);
+        for b in 1..16 {
+            code |= inp.get(1)? as i32;
+            let c = self.count[b] as i32;
+            if code - c < first {
+                return self.symbol.get((index + (code - first)) as usize).map(|&s| s as usize);
+            }
+            index += c;
+            first += c;
+            first <<= 1;
+            code <<= 1;
+        }
+        None
+    }
+}
+
+fn inflate_codes(inp: &mut BitIn, lit: &Huff, dist: &Huff, dst: &mut Vec<u8>, raw: usize) -> Option<()> {
+    loop {
+        let sym = lit.decode(inp)?;
+        if sym < 256 {
+            if dst.len() >= raw {
+                return None;
+            }
+            dst.push(sym as u8);
+            continue;
+        }
+        if sym == 256 {
+            return Some(());
+        }
+        let s = sym - 257;
+        if s >= 29 {
+            return None;
+        }
+        let len = DFL_LBASE[s] as usize + inp.get(DFL_LEXT[s] as u32)? as usize;
+        let ds = dist.decode(inp)?;
+        if ds >= 30 {
+            return None;
+        }
+        let d = DFL_DBASE[ds] as usize + inp.get(DFL_DEXT[ds] as u32)? as usize;
+        if d > dst.len() || len > raw - dst.len() {
+            return None;
+        }
+        for _ in 0..len {
+            /* octet by octet: a match may overlap what it makes */
+            let b = dst[dst.len() - d];
+            dst.push(b);
+        }
+    }
+}
+
+fn inflate(src: &[u8], rawlen: u32) -> Option<Vec<u8>> {
+    let raw = rawlen as usize;
+    let mut dst: Vec<u8> = Vec::with_capacity(raw);
+    let mut inp = BitIn { src, ip: 0, bits: 0, n: 0 };
+    loop {
+        let last = inp.get(1)?;
+        match inp.get(2)? {
+            0 => {
+                /* Stored: to the octet, LEN and its complement, the octets */
+                let pad = inp.n & 7;
+                inp.bits >>= pad;
+                inp.n -= pad;
+                let n = inp.get(16)? as usize;
+                let nn = inp.get(16)? as usize;
+                if n != (!nn & 0xFFFF) || n > raw - dst.len() {
+                    return None;
+                }
+                let mut k = n;
+                while k > 0 && inp.n >= 8 {
+                    dst.push(inp.get(8)? as u8);
+                    k -= 1;
+                }
+                let s = inp.src.get(inp.ip..inp.ip.checked_add(k)?)?;
+                dst.extend_from_slice(s);
+                inp.ip += k;
+            }
+            1 => {
+                let mut fl = [0u8; 288];
+                for (i, l) in fl.iter_mut().enumerate() {
+                    *l = if i < 144 { 8 } else if i < 256 { 9 } else if i < 280 { 7 } else { 8 };
+                }
+                let lit = Huff::build(&fl)?;
+                let dist = Huff::build(&[5u8; 32])?;
+                inflate_codes(&mut inp, &lit, &dist, &mut dst, raw)?;
+            }
+            2 => {
+                let hlit = inp.get(5)? as usize + 257;
+                let hdist = inp.get(5)? as usize + 1;
+                let hclen = inp.get(4)? as usize + 4;
+                if hlit > 286 || hdist > 30 {
+                    return None;
+                }
+                let mut cll = [0u8; 19];
+                for &o in DFL_CLORDER.iter().take(hclen) {
+                    cll[o] = inp.get(3)? as u8;
+                }
+                let cl = Huff::build(&cll)?;
+                let mut lens = vec![0u8; hlit + hdist];
+                let mut i = 0;
+                while i < hlit + hdist {
+                    let sym = cl.decode(&mut inp)?;
+                    if sym < 16 {
+                        lens[i] = sym as u8;
+                        i += 1;
+                        continue;
+                    }
+                    let (val, rep) = match sym {
+                        16 => {
+                            if i == 0 {
+                                return None;
+                            }
+                            (lens[i - 1], 3 + inp.get(2)? as usize)
+                        }
+                        17 => (0, 3 + inp.get(3)? as usize),
+                        _ => (0, 11 + inp.get(7)? as usize),
+                    };
+                    if i + rep > hlit + hdist {
+                        return None;
+                    }
+                    for _ in 0..rep {
+                        lens[i] = val;
+                        i += 1;
+                    }
+                }
+                if lens[256] == 0 {
+                    return None; // no end-of-block code: no block can end
+                }
+                let lit = Huff::build(&lens[..hlit])?;
+                let dist = Huff::build(&lens[hlit..])?;
+                inflate_codes(&mut inp, &lit, &dist, &mut dst, raw)?;
+            }
+            _ => return None,
+        }
+        if last == 1 {
+            break;
+        }
+    }
+    /* All of it: the octets wanted, the input to its last octet - only the padding bits of that one left */
+    if dst.len() != raw || inp.ip != src.len() || inp.n >= 8 {
+        return None;
+    }
+    Some(dst)
+}
+
+/*
+** lzma_decompress - codec 3, raw LZMA1 (format.md 6.7.3): lc=3 lp=0 pb=2,
+** the range decoder of the LZMA specification; every distance against
+** what has been output, every length against what is still wanted;
+** exactly rawlen octets, then the end marker with the code at 0 and the
+** input used up.  None - a bad stream.
+ */
+const LZM_END: u32 = 0xFFFF_FFFF;
+
+struct RcIn<'a> {
+    src: &'a [u8],
+    ip: usize,
+    range: u32,
+    code: u32,
+    bad: bool,
+}
+
+impl<'a> RcIn<'a> {
+    fn norm(&mut self) {
+        if self.range < (1 << 24) {
+            self.range <<= 8;
+            match self.src.get(self.ip) {
+                Some(&b) => {
+                    self.code = (self.code << 8) | b as u32;
+                    self.ip += 1;
+                }
+                None => {
+                    self.bad = true;
+                    self.code <<= 8;
+                }
+            }
+        }
+    }
+    fn bit(&mut self, p: &mut u16) -> u32 {
+        let bound = (self.range >> 11).wrapping_mul(*p as u32);
+        let b = if self.code < bound {
+            self.range = bound;
+            *p += (2048 - *p) >> 5;
+            0
+        } else {
+            self.range -= bound;
+            self.code -= bound;
+            *p -= *p >> 5;
+            1
+        };
+        self.norm();
+        b
+    }
+    fn direct(&mut self, n: u32) -> u32 {
+        let mut res = 0u32;
+        for _ in 0..n {
+            self.range >>= 1;
+            self.code = self.code.wrapping_sub(self.range);
+            let t = 0u32.wrapping_sub(self.code >> 31);
+            self.code = self.code.wrapping_add(self.range & t);
+            if self.code == self.range {
+                self.bad = true;
+            }
+            self.norm();
+            res = (res << 1).wrapping_add(t.wrapping_add(1));
+        }
+        res
+    }
+    fn tree(&mut self, p: &mut [u16], bits: u32) -> u32 {
+        let mut m = 1usize;
+        for _ in 0..bits {
+            m = (m << 1) | self.bit(&mut p[m]) as usize;
+        }
+        (m - (1 << bits)) as u32
+    }
+    fn revtree(&mut self, p: &mut [u16], bits: u32) -> u32 {
+        let (mut m, mut sym) = (1usize, 0u32);
+        for i in 0..bits {
+            let b = self.bit(&mut p[m]);
+            m = (m << 1) | b as usize;
+            sym |= b << i;
+        }
+        sym
+    }
+}
+
+struct LzmLen {
+    choice: u16,
+    choice2: u16,
+    low: [[u16; 8]; 4],
+    mid: [[u16; 8]; 4],
+    high: [u16; 256],
+}
+
+impl LzmLen {
+    fn new() -> LzmLen {
+        LzmLen { choice: 1024, choice2: 1024, low: [[1024; 8]; 4], mid: [[1024; 8]; 4], high: [1024; 256] }
+    }
+    fn decode(&mut self, rc: &mut RcIn, ps: usize) -> u32 {
+        if rc.bit(&mut self.choice) == 0 {
+            return 2 + rc.tree(&mut self.low[ps], 3);
+        }
+        if rc.bit(&mut self.choice2) == 0 {
+            return 2 + 8 + rc.tree(&mut self.mid[ps], 3);
+        }
+        2 + 16 + rc.tree(&mut self.high, 8)
+    }
+}
+
+fn lzma_decompress(src: &[u8], rawlen: u32) -> Option<Vec<u8>> {
+    let raw = rawlen as usize;
+    /* The range coder: a zero, then the code in four octets */
+    if src.len() < 5 || src[0] != 0 {
+        return None;
+    }
+    let mut rc = RcIn { src, ip: 5, range: 0xFFFF_FFFF, code: u32::from_be_bytes([src[1], src[2], src[3], src[4]]), bad: false };
+    if rc.code == rc.range {
+        return None;
+    }
+    let mut literal = vec![1024u16; 0x300 << 3];
+    let mut ismatch = [[1024u16; 4]; 12];
+    let mut isrep0long = [[1024u16; 4]; 12];
+    let (mut isrep, mut isrepg0, mut isrepg1, mut isrepg2) = ([1024u16; 12], [1024u16; 12], [1024u16; 12], [1024u16; 12]);
+    let mut posslot = [[1024u16; 64]; 4];
+    let mut posspec = [1024u16; 115];
+    let mut align = [1024u16; 16];
+    let (mut lenc, mut replenc) = (LzmLen::new(), LzmLen::new());
+    let mut reps = [0u32; 4];
+    let mut state = 0usize;
+    let mut dst: Vec<u8> = Vec::with_capacity(raw);
+
+    while !rc.bad {
+        let ps = dst.len() & 3;
+        if rc.bit(&mut ismatch[state][ps]) == 0 {
+            /* A literal: after a match, the octet at rep0 guides its bits while they agree */
+            if dst.len() >= raw {
+                return None;
+            }
+            let base = 0x300 * (dst.last().map_or(0, |&b| b as usize) >> 5);
+            let lit = &mut literal[base..base + 0x300];
+            let mut sym = 1usize;
+            if state >= 7 {
+                let mut mb = *dst.get(dst.len().checked_sub(reps[0] as usize + 1)?)? as usize;
+                while sym < 0x100 {
+                    let mbit = (mb >> 7) & 1;
+                    mb <<= 1;
+                    let b = rc.bit(&mut lit[0x100 + (mbit << 8) + sym]) as usize;
+                    sym = (sym << 1) | b;
+                    if mbit != b {
+                        break;
+                    }
+                }
+            }
+            while sym < 0x100 {
+                sym = (sym << 1) | rc.bit(&mut lit[sym]) as usize;
+            }
+            dst.push(sym as u8);
+            state = if state < 4 { 0 } else if state < 10 { state - 3 } else { state - 6 };
+            continue;
+        }
+        let len;
+        if rc.bit(&mut isrep[state]) == 1 {
+            if dst.is_empty() {
+                return None;
+            }
+            if rc.bit(&mut isrepg0[state]) == 0 {
+                if rc.bit(&mut isrep0long[state][ps]) == 0 {
+                    /* A short rep: one octet at rep0 */
+                    if dst.len() >= raw {
+                        return None;
+                    }
+                    state = if state < 7 { 9 } else { 11 };
+                    let b = *dst.get(dst.len().checked_sub(reps[0] as usize + 1)?)?;
+                    dst.push(b);
+                    continue;
+                }
+            } else {
+                let d;
+                if rc.bit(&mut isrepg1[state]) == 0 {
+                    d = reps[1];
+                } else {
+                    if rc.bit(&mut isrepg2[state]) == 0 {
+                        d = reps[2];
+                    } else {
+                        d = reps[3];
+                        reps[3] = reps[2];
+                    }
+                    reps[2] = reps[1];
+                }
+                reps[1] = reps[0];
+                reps[0] = d;
+            }
+            len = replenc.decode(&mut rc, ps);
+            state = if state < 7 { 8 } else { 11 };
+        } else {
+            reps[3] = reps[2];
+            reps[2] = reps[1];
+            reps[1] = reps[0];
+            len = lenc.decode(&mut rc, ps);
+            state = if state < 7 { 7 } else { 10 };
+            /* The distance (less one) */
+            let ls = ((len - 2) as usize).min(3);
+            let slot = rc.tree(&mut posslot[ls], 6);
+            reps[0] = if slot < 4 {
+                slot
+            } else {
+                let foot = (slot >> 1) - 1;
+                let base = (2 | (slot & 1)) << foot;
+                if slot < 14 {
+                    base + rc.revtree(&mut posspec[(base - slot) as usize..], foot)
+                } else {
+                    let d = base.wrapping_add(rc.direct(foot - 4) << 4);
+                    d.wrapping_add(rc.revtree(&mut align, 4))
+                }
+            };
+            if reps[0] == LZM_END {
+                /* The end: all the octets out, the code at 0, the input used up */
+                if !rc.bad && dst.len() == raw && rc.code == 0 && rc.ip == src.len() {
+                    return Some(dst);
+                }
+                return None;
+            }
+        }
+        let d = reps[0] as usize;
+        if d >= dst.len() || len as usize > raw - dst.len() {
+            return None;
+        }
+        for _ in 0..len {
+            let b = dst[dst.len() - d - 1];
+            dst.push(b);
+        }
+    }
+    None
+}
+
+/*
 ** data_view - the file, the offset and the octets of a DATA or DATAZ
 ** record; None - a bad record
  */
@@ -373,10 +842,16 @@ fn data_view(typ: u16, body: &[u8]) -> Option<(u32, u64, std::borrow::Cow<'_, [u
     }
     let z = body.get(20..)?;
     let rawlen = u32_at(body, 16);
-    if u32_at(body, 4) != CODEC_LZ4 || rawlen > MAXDATA {
+    if rawlen > MAXDATA {
         return None;
     }
-    let d = lz4_decompress(z, rawlen)?;
+    /* An unknown codec: a bad record, its file named incomplete - never wrong octets */
+    let d = match u32_at(body, 4) {
+        CODEC_LZ4 => lz4_decompress(z, rawlen)?,
+        CODEC_DEFLATE => inflate(z, rawlen)?,
+        CODEC_LZMA => lzma_decompress(z, rawlen)?,
+        _ => return None,
+    };
     Some((u32_at(body, 0), u64_at(body, 8), std::borrow::Cow::Owned(d)))
 }
 
@@ -1050,6 +1525,75 @@ fn selftest() -> i32 {
             slow = crc.table[((slow ^ b as u32) & 0xFF) as usize] ^ (slow >> 8);
         }
         said("CRC-32/IEEE eight octets a step = one at a time", crc.update(0, &data) == !slow && crc.update(0, b"123456789") == 0xCBF4_3926);
+    }
+    {
+        /*
+        ** The codecs 2 and 3 of DATAZ: streams of zlib (raw Deflate, level 1,
+        ** level 9, the fixed codes) and of liblzma (raw LZMA1, lc=3 lp=0 pb=2,
+        ** made by Python), a stored block made here; each must give the
+        ** octets exactly, and none of them cut short, one octet more, a
+        ** length one off or a bit turned may give anything but None
+        ** silently wrong - or panic
+        */
+        let mut data: Vec<u8> = Vec::new();
+        for k in 0..120 {
+            data.extend_from_slice(format!("line {} of the vbkx-rs selftest\n", k).as_bytes());
+        }
+        data.extend((0..1000u32).map(|k| (k * k) as u8));
+        fn unhex(h: &str) -> Vec<u8> {
+            (0..h.len() / 2).map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap_or(0)).collect()
+        }
+        fn unpack(codec: u32, z: &[u8], raw: u32) -> Option<Vec<u8>> {
+            if codec == CODEC_DEFLATE {
+                inflate(z, raw)
+            } else {
+                lzma_decompress(z, raw)
+            }
+        }
+        let mut streams: Vec<(String, u32, Vec<u8>)> = [
+        ("Deflate level 1", 2, "edd7af4b43511887f12bac68ba46db15560cc279cfefd3aeb062341a956d381c8a6e884661c57617178515a3d128ac188dc6c18ad1b826fe03e749b6e5271cf8f09ef01d0eae7a95aaaefbd5f8a257dd9d5fde1fde8eaa516fd81ff746e39de15f967cd6f96cf2d9e6b3cb679fcf219f633ea77c1662033701380139013a013b013c013d013e013f0d7e1afc34f869f0d3e0a7c14f839f063f0d7e1afc0cf819f033e067c0cf809f013f037e06fc0cf819f0b3e067c1cf829f053f0b7e16fc2cf859f0b3e067c1cf819f033f077e0efc1cf839f073e0e7c0cf819f033f0f7e1efc3cf879f0f3e0e7c1cf839f073f0f7e1efc02f805f00be017c02f805f00bf007e01fc02f805f08be017c12f825f04bf087e11fc22f845f08be017c12f815f02bf047e09fc12f825f04be097c02f815f023f5100280a044501a12830140588a2405114308a02475100298a24798a90248e115c233847708fe020c145829324b3498aadd676b9d796faa4fbd0bc2c96c57e67d0bcad76eb9bf957793c792f8e261fe5e9fca79eae52f3dd792ece1607cdbafb59bfb667e553ebb1786c3d95b3f66bfdd95d37078bb3e2b9f3dda4d5b4fe999f961f93a3e27d725c7ecd6feaddd55b33e8ec17cbc54bf3d03da9a5bd576eb7b636ef6ffc37f7f7ffffef17"),
+        ("Deflate level 9", 2, "edd7ad4f42611cc5f1cb46d1748db6eb4621b83def2fedb2518c44a30e984ca6539893e846b15d22d18d623412dd2846a3918d4224d29cffc0f34d36f209bfedb3fb72ce7070d72b4471df2fc637bde2e9faf6f9fc71548c7ac3feb8371a1f0fff62998e553ad6e9d8a4639b8e5d3af6e938a4e3082cc4066e12e024c849a0936027014f829e043e097e0afc143d77e0a7c04f819f023f057e0afc14f829f0d3e0a7c14fd38b0b7e1afc34f869f0d3e0a7c14f839f013f037e06fc0c7df9c0cf809f013f037e06fc0cf859f0b3e067c1cf829fa55f07f859f0b3e067c1cf829f033f077e0efc1cf839f073f4ef053f077e0efc1cf879f0f3e0e7c1cf839f073f0f7e9eca0bf879f0f3e017c02f805f00bf007e01fc02f805f00bd4fec02f805f04bf087e11fc22f845f08be017c12f825fa4fa8cfd990ab4a0062da8420bead0824ab4a0162da8460bead1828ab420499e2224896304d708ce11dc2338487091e024496c92ac563fca4f1bb2ec7427d5fb6a9d9db507d57273523e2c7ef28be967d69a7ee5978b5d39dbc46adb7ecbae56cd6adffd2e3f1af3fcb5fe92bdd45ff379e3a3fceeeeabe6ea2a7b6b6fabb89995bbc565fe356d659fd38bfc67f1509e6c96d5a07d96ad57efd5a4db2965e3343faad70ef70ff70ff7fffffe2f"),
+        ("Deflate fixed", 2, "cbc9cc4b553050c84f5328c94855284bcaaed02d2a56284ecd492b492d2ee1ca01491be29736c22f6d8c5fda04bfb4297e6933fcd2e6f8a52df04b5b12081642c14620dc0c09049c218190332410748604c2ce9040e01912083d4302c1674820fc8c08849f11a1744720fc8c08849f1181f03322107e4604c2cf8840f81911083f2302e1674c20fc8c09849f31a18c4b20fc8c09849f3181f03326107ec604c2cf9840f81913083f1302e1674220fc4c08849f09a1928f40f89910083f1302e1674220fc4c08849f0981f03325107ea604c2cf9440f89912083f5342550781f03325107ea604c2cf9440f89912083f3302e1674620fccc08849f1981f03323107e6684ea5e02e1674620fccc08849f1981f03327107ee604c2cf9c40f89913083f7302e1674e20fccc09355e08849f3981f03327107e1604c2cf8240f85910083f0b02e1674120fc2c08849f0581f0b320d4fa23107e1604c2cf9240f85912083f4b02e1674920fc2c09849f2581f0b324107e9604c2cf9250f39960fb995003da80500bda805013da80501bda805023da80502bda805033da80503bda805043da80504812ee8a100a49829d1182bd1182dd1182fd11821d12823d12825d123c7d120646164e0149154387c094ca092b8f3c645074c99cb0f389a043e1929b029e2d07191c5b4e0a442ef9e830f189e584972e0b19128f684ef89972d161a3ca4c814e96468646964e81992a1b1d2ea6fc9ca079249161a1cbcb09964f263a7c5c122970b2c591e1608ba7c0cd25850e824f764ec8745164787864e584ca944007431549014e16c651fb47ed1fb59ff6f60300"),
+        ("LZMA", 3, "00361a4a1f08a026034d069df8b2a5acb4809fd1e9afa97f6e1892f157c7ae473bc72bb7bca5c85519748c54bc5ef6835beae3f19f2e87d92577b4328350d2139ffae4915ed0de58f644282f5484dff3f7ca1732dd0d96bc16bb6f87df0f2587cc95e62f09992e5f9e6157fddf4b70004f9ce4e9e4fab9f0831f8094359065b8214aa96322d8649b9b9a30647757726a1d44a12099fb0441199726c8c6a9f3a2f262fdeaa794549cf31e30ad9890d8a2e62d73477c73d181d47d310bbdeaca0e592763283495a99e3b8a966200d54180d1463f71bf4296431004345fcc201d8c9c7c56141b4157f748af7d67abebabed4c2614ac4d39ff1ef4919dde081f776ddd76d65e540d12f0895c889b5b8394d7c1d738acca6b2aed20011a3249ee5fd9d341f20577f233cdcb4af059cb387ca7844542377b6ca0eb7a04c37bf7e1be33c1904f88805850823fffffd7822840"),
+        ("LZMA extreme", 3, "00361a4a1f08a026034d069df8b2a5acb4809fd1e9afa97f6e1892f157c7ae473bc72bb7bca5c85519748c54bc5ef6835beae3f19f2e87d92577b4328350d2139ffae4915ed0de58f644282f5484dff3f7ca1732dd0d96bc16bb6f87df0f2587cc95e62f09992e5f9e6157fddf4b70004f9ce4e9e4fab9f0831f8094359065b8214aa96322d8649b9b9a30647757726a1d44a12099fb0441199726c8c6a9f3a2f262fdeb235eaa1de0a9f78e30d1c6e9c1569f3fab6f88e3ceed11d7c793c653a053969197bbad4039fd36be273c4e0846e73f2ad418880d3e9de740553f3a32baceced290f9b462ae5fdcdaa639079e35a464dec0c2993f9b6e83659d0cf5ecff40bd1f8ea7c7a7da4fb646070ce5dc32f27dd769d0d3ad40372f05f8f088581d1641df9730fbd3a67b981604b935143acad45eade0e208282c7e132bdd2fd6f81d3d81539431f6f3ffffbea669a0"),
+        ]
+        .iter()
+        .map(|&(n, c, h)| (n.to_string(), c, unhex(h)))
+        .collect();
+        {
+            /* Stored: BFINAL, BTYPE 0, to the octet, LEN, NLEN, the octets */
+            let n = data.len() as u16;
+            let mut z = vec![1u8];
+            z.extend_from_slice(&n.to_le_bytes());
+            z.extend_from_slice(&(!n).to_le_bytes());
+            z.extend_from_slice(&data);
+            streams.push(("Deflate stored".to_string(), CODEC_DEFLATE, z));
+        }
+        let raw = data.len() as u32;
+        for (name, codec, z) in &streams {
+            said(&format!("{}: the octets", name), unpack(*codec, z, raw).as_deref() == Some(&data[..]));
+            let mut longer = z.clone();
+            longer.push(0);
+            let refused = unpack(*codec, &z[..z.len() - 1], raw).is_none()
+                && unpack(*codec, &longer, raw).is_none()
+                && unpack(*codec, z, raw + 1).is_none()
+                && unpack(*codec, z, raw - 1).is_none();
+            said(&format!("{}: cut, longer, a length off refused", name), refused);
+            let (mut seed, mut silent) = (12345u32, 0);
+            for _ in 0..300 {
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let mut t = z.clone();
+                let pos = (seed >> 8) as usize % t.len();
+                t[pos] ^= 1 << ((seed >> 4) & 7);
+                if let Some(d) = unpack(*codec, &t, raw) {
+                    if d != data && *codec == CODEC_LZMA {
+                        silent += 1;
+                    }
+                }
+            }
+            /* Deflate has no check of its own (the CRC of the block and of FEND are): no panic is the test; LZMA ends checked */
+            said(&format!("{}: bits turned, no panic{}", name, if *codec == CODEC_LZMA { ", none silently wrong" } else { "" }), silent == 0);
+        }
     }
     if failed == 0 {
         println!("selftest: all primitives right");
@@ -2236,7 +2780,7 @@ impl Extractor {
 
     /*
     ** A DATA record (u32 fileno, u32 0, u64 offset, the bytes) or a DATAZ one
-    ** (u32 fileno, u32 codec, u64 offset, u32 rawlen, LZ4 block); a DATAZ
+    ** (u32 fileno, u32 codec, u64 offset, u32 rawlen, LZ4, Deflate or LZMA); a DATAZ
     ** that does not decompress leaves the file incomplete
      */
     fn data(&mut self, r: &Reader, typ: u16, body: &[u8]) {
@@ -2547,11 +3091,11 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
 
 fn usage() -> i32 {
     eprintln!(
-        "vbkx-rs X01-08 - the extractor of last resort for VBACKUP savesets\n\n  \
+        "vbkx-rs X01-19 - the extractor of last resort for VBACKUP savesets\n\n  \
          vbkx-rs l saveset [-k file]           list the files (times in UTC)\n  \
          vbkx-rs x saveset [-C dir] [-k file]  extract them all\n  \
          vbkx-rs t saveset [-k file]           read it all, check the checksums\n  \
-         vbkx-rs selftest                      check SHA-256, HMAC, PBKDF2, ChaCha20 against their standards\n\n  \
+         vbkx-rs selftest                      check SHA-256, HMAC, PBKDF2, ChaCha20, the codecs against their standards\n\n  \
          -k file  the passphrase of an encrypted saveset: the first line of file\n           \
          (else VBACKUP_KEY_FILE, else it is asked for on the terminal)\n\n\
          Completion: 0 - done; 1 - something damaged or not done; 2 - not usable."

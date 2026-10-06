@@ -40,6 +40,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-19 : /LEVEL: the compressed rounds alternate LZ4, Deflate
+#						(/LEVEL=4) and LZMA (/LEVEL=7).
+#
 #		 5-OCT-2026	RRL	X-14 : /PARITY (format.md 4.1): every fifth round damages
 #					the tree saved /PARITY=3, every tenth of them the
 #					one saved /PARITY=2 /ENCRYPT with the spoilt blocks
@@ -266,6 +269,11 @@ $VB src/tree base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ > 
 #	The same tree compressed: every other round damages this one - garbage inside a DATAZ body is the new case
 $VB src/tree basez/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED > savez.log 2>&1
 [ $? = 0 ] && [ -e basez/x.bck.002 ] || bail "the compressed saveset could not be made: $(cat savez.log)"
+mkdir -p basezd basezl
+$VB src/tree basezd/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /LEVEL=4 > savezd.log 2>&1
+[ $? = 0 ] && [ -e basezd/x.bck.002 ] || bail "the Deflate saveset could not be made: $(cat savezd.log)"
+$VB src/tree basezl/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /LEVEL=7 > savezl.log 2>&1
+[ $? = 0 ] && [ -e basezl/x.bck.002 ] || bail "the LZMA saveset could not be made: $(cat savezl.log)"
 
 #	The same tree encrypted and compressed (format.md 6.10): every fourth round damages this one and
 #	seals every spoilt block again - a right CRC over a wrong block, only the TAG tells
@@ -304,7 +312,9 @@ while [ $r -le "$ROUNDS" ]; do
 
 	rm -rf d out
 	BASE=base
-	[ $((r % 2)) = 0 ] && BASE=basez
+	[ $((r % 6)) = 2 ] && BASE=basez
+	[ $((r % 6)) = 4 ] && BASE=basezd
+	[ $((r % 6)) = 0 ] && BASE=basezl
 	[ $((r % 4)) = 3 ] && BASE=basee
 	[ $((r % 5)) = 0 ] && BASE=basep
 	[ $((r % 10)) = 5 ] && BASE=basepe

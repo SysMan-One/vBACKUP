@@ -67,10 +67,16 @@
 #		way through a symbolic link.
 #
 #  DATA:	DATA records and DATAZ records (vbackup /DATA_FORMAT=COMPRESSED,
-#		the LZ4 block format, format.md 6.7) alike; a DATAZ block is
-#		decompressed under the same checks as everything else - a
-#		length or an offset out of bounds makes it a bad record, and
-#		its file is named incomplete.
+#		/LEVEL, format.md 6.7) alike, of the three codecs: 1 the LZ4
+#		block format, 2 raw Deflate (RFC 1951; by Compress::Raw::Zlib
+#		when the perl has it - the core since 5.10, not perl-base - and
+#		VBKXPL_PURE is not 1, else by the inflate here), 3 raw LZMA1
+#		(lc=3 lp=0 pb=2, the end marker; the decoder here, some
+#		0.7 MB a second; the inflate here some 0.9).  A DATAZ block is decompressed under
+#		the same checks as everything else - a length, an offset or a
+#		distance out of bounds, a code set that is not one, octets
+#		short or left over, an unknown codec, make it a bad record,
+#		and its file is named incomplete.
 #
 #  ENCRYPTED:	a saveset of vbackup /ENCRYPT (format.md 6.10) is read with
 #		its passphrase: the first line of the file of -k (without its
@@ -131,6 +137,11 @@
 #
 #  MODIFICATION HISTORY:
 #
+#	X01-19		 6-OCT-2026	RRL
+#		DATAZ codecs 2 (raw Deflate: Compress::Raw::Zlib, else the
+#		inflate here) and 3 (raw LZMA1, the decoder here), format.md
+#		6.7.2 and 6.7.3; selftest of both, the inflate here too.
+#
 #	X01-16		 6-OCT-2026	RRL
 #		The CRC by Compress::Raw::Zlib when the perl has it (the core
 #		since 5.10), as Digest::SHA for SHA-256: a plain saveset is read
@@ -189,7 +200,7 @@ use constant {
 	RT_SUMMARY => 1, RT_FILE => 2, RT_DATA => 3, RT_FEND => 4, RT_CATALOG => 5, RT_END => 6,
 	RT_DATAZ => 7,			# DATA, compressed: format.md 6.7
 	MAXDATA => 1048576,		# the most octets a DATA or DATAZ record holds
-	CODEC_LZ4 => 1,
+	CODEC_LZ4 => 1, CODEC_DEFLATE => 2, CODEC_LZMA => 3,
 	FT_REG => 1, FT_DIR => 2, FT_SYMLINK => 3, FT_HARDLINK => 4, FT_FIFO => 7,
 	FS_CHANGED => 1, FS_READERR => 2, FS_PRESENT => 3,
 	TWO32	=> 4294967296,
@@ -1524,6 +1535,416 @@ sub lz4_decompress
 	return (length($dst) == $rawlen) ? $dst : undef;
 }
 
+#
+#  Codec 2: raw Deflate (RFC 1951, format.md 6.7.2).  By Compress::Raw::Zlib
+#  when it is there and VBKXPL_PURE is not 1 - window bits -15, the output
+#  limited, so a stream that would give more than $rawlen octets is cut
+#  off, not followed; else by the inflate below.  Either way: exactly
+#  $rawlen octets, the final block ending in the last octet, or undef.
+#
+my $ZINF;
+
+sub inflate
+{
+	my ($src, $rawlen) = @_;
+	unless (defined $ZINF)
+	{
+		$ZINF = (($ENV{VBKXPL_PURE} || '') ne '1') && eval { require Compress::Raw::Zlib; 1 } ? 1 : 0;
+	}
+	return inflate_pure($src, $rawlen) unless $ZINF;
+	my ($z, $st) = eval { Compress::Raw::Zlib::Inflate->new(-WindowBits => -15, -LimitOutput => 1, -Bufsize => 65536,
+		-AppendOutput => 1, -ConsumeInput => 1) };
+	return inflate_pure($src, $rawlen) unless $z && $st == Compress::Raw::Zlib::Z_OK();
+	my ($in, $out) = ($src, '');
+	while (1)
+	{
+		my ($li, $lo) = (length($in), length($out));
+		$st = $z->inflate($in, $out);
+		return undef if length($out) > $rawlen;
+		last if $st == Compress::Raw::Zlib::Z_STREAM_END();
+		return undef unless $st == Compress::Raw::Zlib::Z_OK() || $st == Compress::Raw::Zlib::Z_BUF_ERROR();
+		# No progress: the input ended before the stream did
+		return undef if length($in) == $li && length($out) == $lo;
+	}
+	return (length($out) == $rawlen && length($in) == 0) ? $out : undef;
+}
+
+my @DFL_LBASE = (3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258);
+my @DFL_LEXT  = (0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0);
+my @DFL_DBASE = (1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073,
+		 4097, 6145, 8193, 12289, 16385, 24577);
+my @DFL_DEXT  = (0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13);
+my @DFL_CLORD = (16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+
+# A Huffman code from its lengths, as puff of zlib keeps it: the count of
+# each length, the symbols in canonical order; undef - over-subscribed, or
+# incomplete with more than one code
+sub dfl_build
+{
+	my ($lens) = @_;
+	my @count = (0) x 16;
+	$count[$_]++ for @$lens;
+	$count[0] = 0;
+	my ($left, $codes) = (1, 0);
+	for my $b (1 .. 15)
+	{
+		$left = ($left << 1) - $count[$b];
+		$codes += $count[$b];
+		return undef if $left < 0;
+	}
+	return undef if $left && $codes > 1;
+	my @offs = (0, 0);
+	$offs[$_ + 1] = $offs[$_] + $count[$_] for 1 .. 14;
+	my @sym;
+	for my $i (0 .. $#$lens)
+	{
+		$sym[$offs[$lens->[$i]]++] = $i if $lens->[$i];
+	}
+	return [\@count, \@sym];
+}
+
+# inflate_pure: the inflate here, a bit at a time - slow, plain, checked
+sub inflate_pure
+{
+	my ($src, $rawlen) = @_;
+	my @in = unpack('C*', $src);
+	my ($n, $ip, $buf, $cnt) = (scalar(@in), 0, 0, 0);
+	my @out;
+	my $bits = sub
+	{
+		my ($need) = @_;
+		while ($cnt < $need)
+		{
+			return undef if $ip >= $n;
+			$buf |= $in[$ip++] << $cnt;
+			$cnt += 8;
+		}
+		my $v = $buf & ((1 << $need) - 1);
+		$buf >>= $need;
+		$cnt -= $need;
+		return $v;
+	};
+	my $decode = sub
+	{
+		my ($h) = @_;
+		my ($count, $sym) = @$h;
+		my ($code, $first, $index) = (0, 0, 0);
+		for my $len (1 .. 15)
+		{
+			my $b = $bits->(1);
+			return undef unless defined($b);
+			$code |= $b;
+			my $c = $count->[$len];
+			return $sym->[$index + $code - $first] if $code - $c < $first;
+			$index += $c;
+			$first = ($first + $c) << 1;
+			$code <<= 1;
+		}
+		return undef;
+	};
+	my $codes = sub
+	{
+		my ($lit, $dist) = @_;
+		while (1)
+		{
+			my $s = $decode->($lit);
+			return 0 unless defined($s);
+			if ($s < 256)
+			{
+				return 0 if @out >= $rawlen;
+				push(@out, $s);
+				next;
+			}
+			return 1 if $s == 256;
+			$s -= 257;
+			return 0 if $s >= 29;
+			my $e = $bits->($DFL_LEXT[$s]);
+			return 0 unless defined($e);
+			my $len = $DFL_LBASE[$s] + $e;
+			my $d = $decode->($dist);
+			return 0 unless defined($d) && $d < 30;
+			$e = $bits->($DFL_DEXT[$d]);
+			return 0 unless defined($e);
+			my $dist_ = $DFL_DBASE[$d] + $e;
+			return 0 if $dist_ > @out || $len > $rawlen - @out;
+			my $from = @out - $dist_;
+			push(@out, $out[$from++]) for 1 .. $len;
+		}
+	};
+	my $last = 0;
+	while (!$last)
+	{
+		$last = $bits->(1);
+		my $type = $bits->(2);
+		return undef unless defined($last) && defined($type);
+		if ($type == 0)
+		{
+			# Stored: to the octet, LEN, NLEN, the octets
+			$buf >>= ($cnt & 7);
+			$cnt -= ($cnt & 7);
+			my $len = $bits->(16);
+			my $nlen = $bits->(16);
+			return undef unless defined($nlen) && $len == (~$nlen & 0xFFFF);
+			return undef if $len > $rawlen - @out;
+			while ($len && $cnt >= 8)
+			{
+				push(@out, $bits->(8));
+				$len--;
+			}
+			return undef if $len > $n - $ip;
+			push(@out, @in[$ip .. $ip + $len - 1]) if $len;
+			$ip += $len;
+		}
+		elsif ($type == 1)
+		{
+			my @l = ((8) x 144, (9) x 112, (7) x 24, (8) x 8);
+			return undef unless $codes->(dfl_build(\@l), dfl_build([(5) x 32]));
+		}
+		elsif ($type == 2)
+		{
+			my $hlit = $bits->(5);
+			my $hdist = $bits->(5);
+			my $hclen = $bits->(4);
+			return undef unless defined($hclen);
+			($hlit, $hdist, $hclen) = ($hlit + 257, $hdist + 1, $hclen + 4);
+			return undef if $hlit > 286 || $hdist > 30;
+			my @cl = (0) x 19;
+			for my $i (0 .. $hclen - 1)
+			{
+				my $v = $bits->(3);
+				return undef unless defined($v);
+				$cl[$DFL_CLORD[$i]] = $v;
+			}
+			my $clh = dfl_build(\@cl);
+			return undef unless $clh;
+			my @lens;
+			while (@lens < $hlit + $hdist)
+			{
+				my $s = $decode->($clh);
+				return undef unless defined($s);
+				if ($s < 16)
+				{
+					push(@lens, $s);
+					next;
+				}
+				my ($val, $rep) = (0, undef);
+				if ($s == 16)
+				{
+					return undef unless @lens;
+					$val = $lens[-1];
+					$rep = $bits->(2);
+					$rep += 3 if defined($rep);
+				}
+				elsif ($s == 17)
+				{
+					$rep = $bits->(3);
+					$rep += 3 if defined($rep);
+				}
+				else
+				{
+					$rep = $bits->(7);
+					$rep += 11 if defined($rep);
+				}
+				return undef unless defined($rep) && @lens + $rep <= $hlit + $hdist;
+				push(@lens, ($val) x $rep);
+			}
+			# No end-of-block code: no block of it can end
+			return undef unless $lens[256];
+			my $lh = dfl_build([@lens[0 .. $hlit - 1]]);
+			my $dh = dfl_build([@lens[$hlit .. $hlit + $hdist - 1]]);
+			return undef unless $lh && $dh && $codes->($lh, $dh);
+		}
+		else
+		{
+			return undef;
+		}
+	}
+	return undef unless @out == $rawlen && $ip == $n && $cnt < 8;
+	return pack('C*', @out);
+}
+
+#
+#  Codec 3: raw LZMA1, lc=3 lp=0 pb=2, ended by the end marker (format.md
+#  6.7.3) - the decoder of the LZMA specification, in Perl.  The range
+#  coder works in 32 bits, every shift masked.  Exactly $rawlen octets,
+#  then the end marker with the code at 0 and the input used up; every
+#  distance against what has been output, every length against what is
+#  still wanted; or undef.
+#
+use constant {
+	LZ_LIT => 0, LZ_ISMATCH => 6144, LZ_REP0L => 6192, LZ_ISREP => 6240, LZ_REPG0 => 6252, LZ_REPG1 => 6264,
+	LZ_REPG2 => 6276, LZ_SLOT => 6288, LZ_SPEC => 6544, LZ_ALIGN => 6659, LZ_LEN => 6675, LZ_RLEN => 6997,
+	LZ_NPROB => 7319,
+};
+
+sub lzma_decompress
+{
+	my ($src, $rawlen) = @_;
+	my $n = length($src);
+	return undef if $n < 5 || ord($src) != 0;
+	my @in = unpack('C*', $src);
+	my $ip = 5;
+	my $code = ($in[1] << 24) | ($in[2] << 16) | ($in[3] << 8) | $in[4];
+	my $range = 0xFFFFFFFF;
+	return undef if $code == $range;
+	my $bad = 0;
+	my @p = (1024) x LZ_NPROB;
+	my @out;
+	my $bit = sub
+	{
+		my $i = $_[0];
+		my $bound = ($range >> 11) * $p[$i];
+		my $b;
+		if ($code < $bound)
+		{
+			$range = $bound;
+			$p[$i] += (2048 - $p[$i]) >> 5;
+			$b = 0;
+		}
+		else
+		{
+			$range -= $bound;
+			$code -= $bound;
+			$p[$i] -= $p[$i] >> 5;
+			$b = 1;
+		}
+		if ($range < 16777216)
+		{
+			$range = ($range << 8) & 0xFFFFFFFF;
+			if ($ip < $n) { $code = (($code << 8) | $in[$ip++]) & 0xFFFFFFFF; }
+			else	      { $code = ($code << 8) & 0xFFFFFFFF; $bad = 1; }
+		}
+		return $b;
+	};
+	my $tree = sub
+	{
+		my ($base, $nb) = @_;
+		my $m = 1;
+		$m = ($m << 1) | $bit->($base + $m) for 1 .. $nb;
+		return $m - (1 << $nb);
+	};
+	my $revtree = sub
+	{
+		my ($base, $nb) = @_;
+		my ($m, $sym) = (1, 0);
+		for my $i (0 .. $nb - 1)
+		{
+			my $b = $bit->($base + $m);
+			$m = ($m << 1) | $b;
+			$sym |= $b << $i;
+		}
+		return $sym;
+	};
+	my $len = sub
+	{
+		my ($base, $ps) = @_;
+		return 2 + $tree->($base + 2 + $ps * 8, 3) unless $bit->($base);
+		return 10 + $tree->($base + 34 + $ps * 8, 3) unless $bit->($base + 1);
+		return 18 + $tree->($base + 66, 8);
+	};
+	my $dist = sub
+	{
+		my ($l) = @_;
+		my $slot = $tree->(LZ_SLOT + 64 * ($l - 2 < 3 ? $l - 2 : 3), 6);
+		return $slot if $slot < 4;
+		my $foot = ($slot >> 1) - 1;
+		my $d = (2 | ($slot & 1)) << $foot;
+		return $d + $revtree->(LZ_SPEC + $d - $slot, $foot) if $slot < 14;
+		my $r = 0;
+		for (1 .. $foot - 4)
+		{
+			# A direct bit: half the range
+			$range >>= 1;
+			if ($code >= $range) { $code -= $range; $r = ($r << 1) | 1; }
+			else		     { $r <<= 1; }
+			$bad = 1 if $code == $range;
+			if ($range < 16777216)
+			{
+				$range = ($range << 8) & 0xFFFFFFFF;
+				if ($ip < $n) { $code = (($code << 8) | $in[$ip++]) & 0xFFFFFFFF; }
+				else	      { $code = ($code << 8) & 0xFFFFFFFF; $bad = 1; }
+			}
+		}
+		return ($d + ($r << 4) + $revtree->(LZ_ALIGN, 4)) & 0xFFFFFFFF;
+	};
+	my ($state, @rep) = (0, 0, 0, 0, 0);
+	while (!$bad)
+	{
+		my $op = scalar(@out);
+		my $ps = $op & 3;
+		if (!$bit->(LZ_ISMATCH + $state * 4 + $ps))
+		{
+			return undef if $op >= $rawlen;
+			my $lit = LZ_LIT + 0x300 * (($op ? $out[$op - 1] : 0) >> 5);
+			my $sym = 1;
+			if ($state >= 7)
+			{
+				my $mb = $out[$op - $rep[0] - 1];
+				while ($sym < 0x100)
+				{
+					my $mbit = ($mb >> 7) & 1;
+					$mb <<= 1;
+					my $b = $bit->($lit + 0x100 + ($mbit << 8) + $sym);
+					$sym = ($sym << 1) | $b;
+					last if $mbit != $b;
+				}
+			}
+			$sym = ($sym << 1) | $bit->($lit + $sym) while $sym < 0x100;
+			push(@out, $sym & 0xFF);
+			$state = $state < 4 ? 0 : $state < 10 ? $state - 3 : $state - 6;
+			next;
+		}
+		my $l;
+		if ($bit->(LZ_ISREP + $state))
+		{
+			return undef unless $op;
+			if (!$bit->(LZ_REPG0 + $state))
+			{
+				if (!$bit->(LZ_REP0L + $state * 4 + $ps))
+				{
+					# A short rep: one octet at rep0
+					return undef if $op >= $rawlen;
+					$state = $state < 7 ? 9 : 11;
+					push(@out, $out[$op - $rep[0] - 1]);
+					next;
+				}
+			}
+			else
+			{
+				my $d;
+				if (!$bit->(LZ_REPG1 + $state)) { $d = $rep[1]; }
+				else
+				{
+					if (!$bit->(LZ_REPG2 + $state)) { $d = $rep[2]; }
+					else				 { $d = $rep[3]; $rep[3] = $rep[2]; }
+					$rep[2] = $rep[1];
+				}
+				$rep[1] = $rep[0];
+				$rep[0] = $d;
+			}
+			$l = $len->(LZ_RLEN, $ps);
+			$state = $state < 7 ? 8 : 11;
+		}
+		else
+		{
+			@rep[1 .. 3] = @rep[0 .. 2];
+			$l = $len->(LZ_LEN, $ps);
+			$state = $state < 7 ? 7 : 10;
+			$rep[0] = $dist->($l);
+			if ($rep[0] == 0xFFFFFFFF)
+			{
+				# The end marker: all the octets, the code at 0, the input used up
+				return undef if $bad || $op != $rawlen || $code != 0 || $ip != $n;
+				return pack('C*', @out);
+			}
+		}
+		return undef if $rep[0] >= $op || $l > $rawlen - $op;
+		my $from = $op - $rep[0] - 1;
+		push(@out, $out[$from++]) for 1 .. $l;
+	}
+	return undef;
+}
+
 # data_view: the file, the offset and the octets of a DATA or DATAZ record; () - a bad record
 sub data_view
 {
@@ -1533,14 +1954,18 @@ sub data_view
 		return () if length($body) < 16;
 		return (u32(\$body, 0), u64(\$body, 8), substr($body, 16));
 	}
-	return () if length($body) < 20 || u32(\$body, 4) != CODEC_LZ4 || u32(\$body, 16) > MAXDATA;
-	my $d = lz4_decompress(substr($body, 20), u32(\$body, 16));
+	return () if length($body) < 20 || u32(\$body, 16) > MAXDATA;
+	my ($codec, $raw) = (u32(\$body, 4), u32(\$body, 16));
+	# An unknown codec: a bad record, its file named incomplete - never wrong octets
+	my $d = ($codec == CODEC_LZ4) ? lz4_decompress(substr($body, 20), $raw)
+	      : ($codec == CODEC_DEFLATE) ? inflate(substr($body, 20), $raw)
+	      : ($codec == CODEC_LZMA) ? lzma_decompress(substr($body, 20), $raw) : undef;
 	return () unless defined($d);
 	return (u32(\$body, 0), u64(\$body, 8), $d);
 }
 
 # A DATA record (u32 fileno, u32 0, u64 offset, the bytes) or a DATAZ one
-# (u32 fileno, u32 codec, u64 offset, u32 rawlen, LZ4 block); a DATAZ that
+# (u32 fileno, u32 codec, u64 offset, u32 rawlen, the compressed octets); a DATAZ that
 # does not decompress leaves the file incomplete
 sub x_data
 {
@@ -1851,6 +2276,80 @@ sub selftest
 		}
 		$try->('Reed-Solomon, every erasure of 6 + 3', $nbad ? 'FAILED' : 'ok', unpack('H*', 'ok'));
 	}
+	# The codecs of DATAZ (6.7.2, 6.7.3): streams of zlib and of liblzma, read back; bad ones refused
+	{
+		my $text = join('', map { "line $_: " . (substr('abcxyz', 0, $_ % 7) x ($_ % 5)) . '|' } 0 .. 299);
+		my $mixed = ("vbkx-pl: the extractor of last resort; " x 12) . join('', map { chr } 0 .. 255) . ("\0" x 300);
+		my $dyn = pack('H*',
+		  '85d75b6edc300c05d0ad6409ba572f32bb498b7e1408fadd165d7c93d8239292ec0192811e638b363887d2fbcf5f3f5e'
+		. 'd2ebcbbff7cf065e5fde8e163f5adfdebe1d9dfcd9f97efc1d23e56be4b7ff3f26eae356edf8c69fbf47b73fc6e563fc'
+		. 'ed5c448f456c21582438ae3f7b3ceff6f5718ee5c70afef39c2be33e23207c4574b6fbe389cebec4e73947d5af3aafcf'
+		. '112b315a9f713ede607e3cddd92fee2d8e9539e2e3e38d9ddd1e1fef1c95f175fd7a91e7627904938f17777668cf758e'
+		. 'e4e599ce89b27b9d7eed3c42cd6de449ee215164c994ac57a95246cc0531590ac74c76e952ca9c2f6584549acf97d2d7'
+		. '7c29729d2f451ff7a923a80acb97ca982f35eff2a596bb7ca923d6da46ab5bbe5489f95275972f6dc4d710f2a571972f'
+		. '2d8faf179f2fcd7ea7cde54beb73be34b9c897a6cff2a58f50bbb9d2032c7d95a55fd2d247cc7dc665e8d23d2f7df145'
+		. '4648127c918d2f72e38b0c5f640425ce17997c91ad2f72eb8b8e5875f8a2ce179d7cd1ad2f3ae2d3e88b6e7dd1e18b06'
+		. '5f904ce6e485415a8841ba3206e929324806763266908233482b344897d2c0d795c91a8036e7b501166ee0aa090238c0'
+		. '461ce0861c6098032b25a053079cd801b7ee80b7f0c06a0cd8ace9ec01277cc0ad3eb03a831cfd41de02849ced8a4010'
+		. 'ac9e207b8490178590af18427eea10acd0a0984428812294d522944b8c60a50765e208a5db9c070965ddf158c1418d7b'
+		. '9ebadbf4d4bb5d4f75db1e0baffa8d4f9d773e75bff5a9b736c1ca101aace978429b7c42db0285e676689128b4ad5168'
+		. '625744a5ace4a007a5faaa54bf54aa3f57ca6a11ba53aa47a5fa46a97ead945527c8ac9498521294925529ab4990a894'
+		. 'ec94923ba5c494b28204f54ae9ac94ee95d27ba5ac52414d29f54ae9ac946e95a2152ba6a814d35629a66c5704a568f5'
+		. '88c92bc5b428c574a514d353a508779e70e73004a5885529e252295ac12226a5886e735e2962518aeeb0c3a014b9518a'
+		. 'bc518a2c762f0b8f4e2972528adc2a45de9fd0ac5a31db192d8743da7c4acbfb639a152be6e9a096f727b56c47b51c94'
+		. 'a2d52316af14cba214cb95522c4f95a2d52816538a2528c5b22ac572a914ad60b14e4ab1d2e6bc52ac8b52b40ac51a94'
+		. '62dd28c57aa314abda29dac26b4e29b64929b6ad526cb74ab1b9f37ab3a6538a6d528a6daf94152bf649a9be57aa9b52'
+		. '3d2a65f5883d28d557a5faa552fdb95256a3284e29894ac94629b956ca0a1665564a4c29094ac9aa9455286a544a774a'
+		. 'e99d526a4a5965a27aa574564af74ae99552ff01');
+		my $fix = pack('H*',
+		  '2b4bcaaed02dc8b15228c9485548ad28294a4c2ec92f52c84f53c8492c2e51284a2dce2f2ab156281b55367494313032'
+		. '31b3b0b2b173707271f3f0f2f10b080a098b888a894b484a49cbc8cac92b282a29aba8aaa96b686a69ebe8eae91b181a'
+		. '199b989a995b585a59dbd8dad93b383a39bbb8bab97b787a79fbf8faf9070406058784868547444645c7c4c6c5272426'
+		. '25a7a4a6a567646665e7e4e6e5171416159794969557545655d7d4d6d537343635b7b4b6b577747675f7f4f6f54f9838'
+		. '69f294a9d3a6cf98396bf69cb9f3e62f58b868f192a5cb96af58b96af59ab5ebd66fd8b869f396addbb6efd8b96bf79e'
+		. 'bdfbf61f3878e8f091a3c78e9f3879eaf499b3e7ce5fb878e9f295abd7aedfb879ebf69dbbf7ee3f78f8e8f193a7cf9e'
+		. 'bf78f9eaf59bb7efde7ff8f8e9f397afdfbefff8f9ebf79fbffffe338c02a20100');
+		my $sto = pack('H*', '010d00f2ff73746f72656420626c6f636b21');
+		my $lzm = pack('H*',
+		  '00361a4a1f08a026564e15942ead67c84ffb53d9155706a325813602854e1ed5d4d83a11c8f1cb513dccb69908fbaefc'
+		. '509445ec785e0daf8748b1e9c6d49958831e37073fb7626c4d7dba71dd17343d3733e7bfa4152d8e42145f09aeac020a'
+		. 'c766c67c6fcca0721b5ec7f93cca537f9e335994f181cc399da11edd6d64d05337f84af4c309798b9a703f45f4fe2aa1'
+		. '7d994c4d19aad1e037c4b7fc74d09a4a23781d4ee991349a02a59e259eb8e529ccf54eb5efbbceff607111342d776b72'
+		. 'a597bcace3300d0479a4eca14ae1ea7aee747f7b1df37603194e950f25e7f8b7cb7914e09d22ccfe8c4f387dd737b068'
+		. 'ee66872e2bb4cce15f99791f85179b3540d1b2004c1b44d46a546b5396601254c64daa2a826ea969a765ea66d17657fc'
+		. '170484d7ce756dbb775603e362c187f5eb8751023372545b9741f03efb3ad0ba1497bbb763577868b1ccee14a1603a0f'
+		. '4148cf7bfdf4bdedabffdff69568cbc322eadc0c04bae9785cc25f8dd5073a129a81c0322fcd93f5eefb073ddb95e786'
+		. '90a570135ac8895918ec9f498d8bdf586f5c84abbd9af43de3bc43923181c47c34e409b27f1d8cb3e9e7cd3b73a03c41'
+		. '33850d08500f683ed41c3f639568e8aa7fa4c9dc356d4c460b2b7238d562d402070f7c7b07ef25b4a0cc903a5e748796'
+		. '669e7cfa5492cd4fceb0d4cf026f829a794c1b4bb37ba62a2f70a7fc38d68afbad9a82e202af3a7bc193e9e10fc7d7a9'
+		. '63eec36695460c6ea67c7c686d2d3eae2e2d8d28788ba04143f4d20fe91fe2bfcb6df917b82e911f90ac4a288526711d'
+		. '29bb6fdfb1644b9293d74f9b1f620d68574a828a9e3fd6b6b26f90bd85fa85d7591f3977124d1fe6a63d0694ea33441e'
+		. 'e9653c78b78ef51bc1ba36b5507c599e503bc419304922ebe985638a7e17946e908aea61e5e81d7e2a4270925ea7078c'
+		. 'c7cf1f3469652cb0460ad161759434c95d29e0b635e0baad86998c84c1fb99cf78dfcec91de33be9b67a2b42b2e687af'
+		. '9f3309a74ef321adc4e133d0d5aa52cdefdd6726df835abbcde6891e8842f62d7752cf2b8e1a240934341f2867251fff'
+		. '5c59f900');
+		my $zinf = $ZINF;
+		my @inf = ([\&inflate_pure, ' (Perl)']);
+		push(@inf, [\&inflate, ' (Compress::Raw::Zlib)']) if !$PURE && eval { require Compress::Raw::Zlib; 1 };
+		$ZINF = 1 if @inf > 1;
+		for my $w (@inf)
+		{
+			my ($f, $sfx) = @$w;
+			my $ok = sub { my ($got, $want) = @_; return (defined($got) && $got eq $want) ? 'ok' : 'bad'; };
+			$try->("Deflate, dynamic codes$sfx", $ok->($f->($dyn, length($text)), $text), unpack('H*', 'ok'));
+			$try->("Deflate, fixed codes$sfx", $ok->($f->($fix, length($mixed)), $mixed), unpack('H*', 'ok'));
+			$try->("Deflate, stored$sfx", $ok->($f->($sto, 13), 'stored block!'), unpack('H*', 'ok'));
+			my $refused = (!defined($f->(substr($dyn, 0, -5), length($text))) && !defined($f->($dyn . "\0", length($text)))
+				&& !defined($f->($dyn, length($text) + 1)) && !defined($f->($dyn, length($text) - 1))) ? 'ok' : 'bad';
+			$try->("Deflate, short, long, cut streams refused$sfx", $refused, unpack('H*', 'ok'));
+		}
+		$ZINF = $zinf;
+		$try->('LZMA1', (lzma_decompress($lzm, length($text)) // '') eq $text ? 'ok' : 'bad', unpack('H*', 'ok'));
+		$try->('LZMA1, nothing', (lzma_decompress(pack('H*', '0083fffbffffc0000000'), 0) // 'x') eq '' ? 'ok' : 'bad', unpack('H*', 'ok'));
+		my $refused = (!defined(lzma_decompress(substr($lzm, 0, -3), length($text))) && !defined(lzma_decompress($lzm . "\0", length($text)))
+			&& !defined(lzma_decompress($lzm, length($text) + 1)) && !defined(lzma_decompress($lzm, length($text) - 1))) ? 'ok' : 'bad';
+		$try->('LZMA1, short, long, cut streams refused', $refused, unpack('H*', 'ok'));
+	}
 	if ($failed)
 	{
 		print "selftest: $failed failed\n";
@@ -1862,11 +2361,11 @@ sub selftest
 
 sub usage
 {
-	print STDERR "vbkx-pl X01-08 - the extractor of last resort for VBACKUP savesets\n\n",
+	print STDERR "vbkx-pl X01-19 - the extractor of last resort for VBACKUP savesets\n\n",
 		"  perl vbkx.pl l saveset [-k file]           list the files (times in UTC)\n",
 		"  perl vbkx.pl x saveset [-C dir] [-k file]  extract them all\n",
 		"  perl vbkx.pl t saveset [-k file]           read it all, check the checksums\n",
-		"  perl vbkx.pl selftest                      check the primitives of encryption\n\n",
+		"  perl vbkx.pl selftest                      check the primitives: encryption, parity, codecs\n\n",
 		"  -k file  the passphrase of an encrypted saveset: the first line of file\n",
 		"           (else VBACKUP_KEY_FILE, else it is asked for on the terminal)\n\n",
 		"Completion: 0 - done; 1 - something damaged or not done; 2 - not usable.\n";

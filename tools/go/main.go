@@ -114,6 +114,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-19		 6-OCT-2026	RRL
+**		DATAZ codecs 2 (raw Deflate, by compress/flate) and 3 (raw LZMA1,
+**		lc=3 lp=0 pb=2, its decoder written here from format.md 6.7.3):
+**		exactly rawlen octets, the stream used up, or a bad record;
+**		selftest of both.
+**
 **	X01-16		 6-OCT-2026	RRL
 **		The products of the repair faster without vector instructions
 **		(none to be had in one source file of Go): the XOR eight octets
@@ -151,6 +157,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/flate"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -158,6 +166,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,10 +208,12 @@ const (
 	rtEnd     = 6
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
 
-	ident = "X01-16"
+	ident = "X01-19"
 
-	maxData  = 1 << 20 // the most octets a DATA or DATAZ record holds
-	codecLZ4 = 1
+	maxData      = 1 << 20 // the most octets a DATA or DATAZ record holds
+	codecLZ4     = 1
+	codecDeflate = 2 // raw Deflate, RFC 1951: format.md 6.7.2
+	codecLZMA    = 3 // raw LZMA1, lc=3 lp=0 pb=2, end marker: format.md 6.7.3
 
 	ftReg      = 1
 	ftDir      = 2
@@ -1516,6 +1527,34 @@ func selftest() int {
 		}
 	}
 
+	/* Codecs 2 and 3: streams of python's zlib (-15) and lzma (FORMAT_RAW), and the same streams cut short */
+	{
+		plain := append([]byte(strings.Repeat("VBACKUP selftest: the quick brown fox jumps over the lazy dog. ", 6)), make([]byte, 64)...)
+		for i := 0; i < 64; i++ {
+			plain[len(plain)-64+i] = byte(i)
+		}
+		dfl, _ := hex.DecodeString("0b737274f60e0d50284ecd492b492d2eb15228c94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d024be72456552aa4e4a7eb29848d6a27573b032313330b2b1b3b072717370f2f1fbf80a090b088a898b884a494b48cac9cbc82a292b28aaa9aba86a696b68eae9ebe81a191b189a999b985a595b58dad9d3d00")
+		lzm, _ := hex.DecodeString("002b108428423b254a717ce93293b718e6b62ea0a6b4d0ce3c0d080e0bf990a4a06be537cd8dff501bbb9e1261bca3e97526fc3df4778b856898390bc920f8091f15e6037f19dbf3ceaf7718f5b5db7780703632480d45f33cedc880110657a527eb165d94827c3102dce1728d38f52d6a6014e9557687dd5c1618bf912e9bffff78c40000")
+		want := hex.EncodeToString(plain)
+		try("Deflate (codec 2), a stream of zlib", deflateDecompress(dfl, uint32(len(plain))), want)
+		try("LZMA1 (codec 3), a stream of liblzma", lzmaDecompress(lzm, uint32(len(plain))), want)
+		bad := 0
+		for _, d := range [][]byte{
+			deflateDecompress(dfl[:len(dfl)-3], uint32(len(plain))), deflateDecompress(append(append([]byte{}, dfl...), 0), uint32(len(plain))),
+			deflateDecompress(dfl, uint32(len(plain))+1), lzmaDecompress(lzm[:len(lzm)-3], uint32(len(plain))),
+			lzmaDecompress(append(append([]byte{}, lzm...), 0), uint32(len(plain))), lzmaDecompress(lzm, uint32(len(plain))-1)} {
+			if d != nil {
+				bad++
+			}
+		}
+		if bad == 0 {
+			fmt.Printf("selftest: Deflate and LZMA1, streams cut, lengthened, of another length refused: ok\n")
+		} else {
+			fmt.Printf("selftest: Deflate and LZMA1, bad streams: FAILED (%d accepted)\n", bad)
+			failed++
+		}
+	}
+
 	if failed > 0 {
 		fmt.Printf("selftest: %d failed\n", failed)
 		return 1
@@ -1739,6 +1778,296 @@ func lz4Decompress(src []byte, rawlen uint32) []byte {
 }
 
 /*
+** deflateDecompress - codec 2, raw Deflate (format.md 6.7.2), by
+** compress/flate: exactly rawlen octets, the final block ended, the
+** input used up to its last octet; or nil.  A bytes.Reader is a
+** ByteReader, so flate takes no octet beyond the stream.
+ */
+func deflateDecompress(src []byte, rawlen uint32) []byte {
+	in := bytes.NewReader(src)
+	r := flate.NewReader(in)
+	defer r.Close()
+	dst := make([]byte, rawlen)
+	if _, err := io.ReadFull(r, dst); err != nil {
+		return nil
+	}
+	var one [1]byte
+	if n, err := r.Read(one[:]); n != 0 || err != io.EOF {
+		return nil
+	}
+	if in.Len() != 0 {
+		return nil
+	}
+	return dst
+}
+
+/*
+** The LZMA1 decoder of codec 3 (format.md 6.7.3): the range decoder of
+** the specification, the probabilities of 11 bits; lc=3 lp=0 pb=2.
+ */
+type lzmaRC struct {
+	src       []byte
+	ip        int
+	rng, code uint32
+	bad       bool // the input ended, or a corrupted code
+}
+
+func (rc *lzmaRC) norm() {
+	if rc.rng < 1<<24 {
+		rc.rng <<= 8
+		if rc.ip < len(rc.src) {
+			rc.code = rc.code<<8 | uint32(rc.src[rc.ip])
+			rc.ip++
+		} else {
+			rc.bad = true
+			rc.code <<= 8
+		}
+	}
+}
+
+func (rc *lzmaRC) bit(p *uint16) uint32 {
+	bound := (rc.rng >> 11) * uint32(*p)
+	var b uint32
+	if rc.code < bound {
+		rc.rng = bound
+		*p += (2048 - *p) >> 5
+	} else {
+		rc.rng -= bound
+		rc.code -= bound
+		*p -= *p >> 5
+		b = 1
+	}
+	rc.norm()
+	return b
+}
+
+func (rc *lzmaRC) direct(n int) uint32 {
+	var res uint32
+	for ; n > 0; n-- {
+		rc.rng >>= 1
+		rc.code -= rc.rng
+		t := 0 - (rc.code >> 31)
+		rc.code += rc.rng & t
+		if rc.code == rc.rng {
+			rc.bad = true
+		}
+		rc.norm()
+		res = res<<1 + (t + 1)
+	}
+	return res
+}
+
+func (rc *lzmaRC) tree(p []uint16, bits int) uint32 {
+	m := uint32(1)
+	for i := 0; i < bits; i++ {
+		m = m<<1 | rc.bit(&p[m])
+	}
+	return m - 1<<uint(bits)
+}
+
+func (rc *lzmaRC) revtree(p []uint16, bits int) uint32 {
+	m, sym := uint32(1), uint32(0)
+	for i := 0; i < bits; i++ {
+		b := rc.bit(&p[m])
+		m = m<<1 | b
+		sym |= b << uint(i)
+	}
+	return sym
+}
+
+type lzmaLen struct {
+	choice, choice2 uint16
+	low, mid        [4][8]uint16
+	high            [256]uint16
+}
+
+func (rc *lzmaRC) length(l *lzmaLen, ps uint32) uint32 {
+	if rc.bit(&l.choice) == 0 {
+		return 2 + rc.tree(l.low[ps][:], 3)
+	}
+	if rc.bit(&l.choice2) == 0 {
+		return 2 + 8 + rc.tree(l.mid[ps][:], 3)
+	}
+	return 2 + 16 + rc.tree(l.high[:], 8)
+}
+
+func lzmaInit(p []uint16) {
+	for i := range p {
+		p[i] = 1024
+	}
+}
+
+/*
+** lzmaDecompress - codec 3: exactly rawlen octets, then the end marker,
+** the code of the range coder 0 and the input used up; or nil.  Every
+** distance against what has been output, every length against what is
+** still wanted.
+ */
+func lzmaDecompress(src []byte, rawlen uint32) []byte {
+	if len(src) < 5 || src[0] != 0 {
+		return nil
+	}
+	rc := &lzmaRC{src: src, ip: 5, rng: 0xFFFFFFFF, code: binary.BigEndian.Uint32(src[1:5])}
+	if rc.code == rc.rng {
+		return nil
+	}
+	var (
+		literal                          = make([]uint16, 0x300<<3)
+		isMatch, isRep0Long              [12][4]uint16
+		isRep, isRepG0, isRepG1, isRepG2 [12]uint16
+		posSlot                          [4][64]uint16
+		posSpec                          [115]uint16
+		align                            [16]uint16
+		lenD, repLenD                    lzmaLen
+	)
+	lzmaInit(literal)
+	for i := 0; i < 12; i++ {
+		lzmaInit(isMatch[i][:])
+		lzmaInit(isRep0Long[i][:])
+	}
+	lzmaInit(isRep[:])
+	lzmaInit(isRepG0[:])
+	lzmaInit(isRepG1[:])
+	lzmaInit(isRepG2[:])
+	for i := 0; i < 4; i++ {
+		lzmaInit(posSlot[i][:])
+	}
+	lzmaInit(posSpec[:])
+	lzmaInit(align[:])
+	for _, l := range []*lzmaLen{&lenD, &repLenD} {
+		l.choice, l.choice2 = 1024, 1024
+		for i := 0; i < 4; i++ {
+			lzmaInit(l.low[i][:])
+			lzmaInit(l.mid[i][:])
+		}
+		lzmaInit(l.high[:])
+	}
+	dst := make([]byte, 0, rawlen)
+	var reps [4]uint32
+	state := uint32(0)
+	for !rc.bad {
+		op := uint32(len(dst))
+		ps := op & 3
+		if rc.bit(&isMatch[state][ps]) == 0 { // a literal
+			if op >= rawlen {
+				return nil
+			}
+			prev := uint32(0)
+			if op > 0 {
+				prev = uint32(dst[op-1])
+			}
+			lit := literal[0x300*(prev>>5) : 0x300*(prev>>5)+0x300]
+			sym := uint32(1)
+			if state >= 7 { // after a match: the octet at rep0 guides the bits while they agree
+				mb := uint32(dst[op-reps[0]-1])
+				for sym < 0x100 {
+					mbit := (mb >> 7) & 1
+					mb <<= 1
+					b := rc.bit(&lit[0x100+mbit<<8+sym])
+					sym = sym<<1 | b
+					if mbit != b {
+						break
+					}
+				}
+			}
+			for sym < 0x100 {
+				sym = sym<<1 | rc.bit(&lit[sym])
+			}
+			dst = append(dst, byte(sym))
+			switch {
+			case state < 4:
+				state = 0
+			case state < 10:
+				state -= 3
+			default:
+				state -= 6
+			}
+			continue
+		}
+		var n uint32
+		if rc.bit(&isRep[state]) != 0 { // a repeated distance
+			if op == 0 {
+				return nil
+			}
+			if rc.bit(&isRepG0[state]) == 0 {
+				if rc.bit(&isRep0Long[state][ps]) == 0 { // a short rep: one octet
+					if op >= rawlen {
+						return nil
+					}
+					if state < 7 {
+						state = 9
+					} else {
+						state = 11
+					}
+					dst = append(dst, dst[op-reps[0]-1])
+					continue
+				}
+			} else {
+				var d uint32
+				if rc.bit(&isRepG1[state]) == 0 {
+					d = reps[1]
+				} else {
+					if rc.bit(&isRepG2[state]) == 0 {
+						d = reps[2]
+					} else {
+						d = reps[3]
+						reps[3] = reps[2]
+					}
+					reps[2] = reps[1]
+				}
+				reps[1] = reps[0]
+				reps[0] = d
+			}
+			n = rc.length(&repLenD, ps)
+			if state < 7 {
+				state = 8
+			} else {
+				state = 11
+			}
+		} else { // a match
+			reps[3], reps[2], reps[1] = reps[2], reps[1], reps[0]
+			n = rc.length(&lenD, ps)
+			if state < 7 {
+				state = 7
+			} else {
+				state = 10
+			}
+			ls := n - 2
+			if ls > 3 {
+				ls = 3
+			}
+			slot := rc.tree(posSlot[ls][:], 6)
+			if slot < 4 {
+				reps[0] = slot
+			} else {
+				foot := int(slot>>1) - 1
+				dist := (2 | slot&1) << uint(foot)
+				if slot < 14 {
+					dist += rc.revtree(posSpec[dist-slot:], foot)
+				} else {
+					dist += rc.direct(foot-4) << 4
+					dist += rc.revtree(align[:], 4)
+				}
+				reps[0] = dist
+			}
+			if reps[0] == 0xFFFFFFFF { // the end marker
+				if !rc.bad && op == rawlen && rc.code == 0 && rc.ip == len(src) {
+					return dst
+				}
+				return nil
+			}
+		}
+		if reps[0] >= op || n > rawlen-op {
+			return nil
+		}
+		for ; n > 0; n-- {
+			dst = append(dst, dst[uint32(len(dst))-reps[0]-1])
+		}
+	}
+	return nil
+}
+
+/*
 ** dataView - the file, the offset and the octets of a DATA or DATAZ
 ** record; ok false - a bad record
  */
@@ -1749,10 +2078,18 @@ func dataView(typ uint16, body []byte) (fileno uint32, off uint64, d []byte, ok 
 		}
 		return u32(body, 0), u64(body, 8), body[16:], true
 	}
-	if len(body) < 20 || u32(body, 4) != codecLZ4 || u32(body, 16) > maxData {
+	if len(body) < 20 || u32(body, 16) > maxData {
 		return 0, 0, nil, false
 	}
-	if d = lz4Decompress(body[20:], u32(body, 16)); d == nil {
+	switch u32(body, 4) { // a codec not known here: the file is damaged, never filled with wrong octets
+	case codecLZ4:
+		d = lz4Decompress(body[20:], u32(body, 16))
+	case codecDeflate:
+		d = deflateDecompress(body[20:], u32(body, 16))
+	case codecLZMA:
+		d = lzmaDecompress(body[20:], u32(body, 16))
+	}
+	if d == nil {
 		return 0, 0, nil, false
 	}
 	return u32(body, 0), u64(body, 8), d, true
