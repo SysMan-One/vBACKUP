@@ -81,6 +81,7 @@ typedef struct vbk_zslot_t
 	uint8_t *	buf;			/* The octets, or the record body		*/
 	uint32_t	len, bufsz;
 	uint8_t *	zbuf;			/* DATAZ body: header and packed octets		*/
+	uint8_t *	check;			/* The record decompressed again, the check	*/
 	uint32_t	zlen;			/* 0 - stored as DATA				*/
 	int		zcheck;			/* It did not come back the same: ZCHECK	*/
 	uint16_t	type;			/* RECORD					*/
@@ -111,7 +112,6 @@ static	void *	s_vbk$zworker	(
 VBK$ZP *	l_zp = (VBK$ZP *) a_arg;
 VBK$ZSLOT *	l_s;
 uint32_t	l_zlen, l_codec;
-uint8_t *	l_check = malloc(VBK$K_MAXDATA);	/* The record back, for the check: none - nothing compressed */
 int		l_rc;
 
 	pthread_mutex_lock(&l_zp->mtx);
@@ -139,8 +139,8 @@ int		l_rc;
 
 		l_s->zlen	= 0;
 		l_s->zcheck	= 0;
-		l_rc		= l_check ? vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(VBK$K_MAXDATA),
-						&l_zlen, &l_codec, l_check) : STS$K_WARN;
+		l_rc		= vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(VBK$K_MAXDATA),
+						&l_zlen, &l_codec, l_s->check);
 
 		l_s->zcheck	= (l_rc == STS$K_ERROR);
 
@@ -159,7 +159,6 @@ int		l_rc;
 		}
 
 	pthread_mutex_unlock(&l_zp->mtx);
-	free(l_check);
 
 	return	NULL;
 }
@@ -370,12 +369,14 @@ long		l_n = sysconf(_SC_NPROCESSORS_ONLN);
 		}
 
 	for ( uint32_t i = 0; i < l_zp->nslot; i++ )
-		if ( !(l_zp->slot [i].buf = malloc(VBK$K_MAXDATA)) || !(l_zp->slot [i].zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBK$K_MAXDATA))) )
+		if ( !(l_zp->slot [i].buf = malloc(VBK$K_MAXDATA)) || !(l_zp->slot [i].zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBK$K_MAXDATA)))
+			|| !(l_zp->slot [i].check = malloc(VBK$K_MAXDATA)) )
 			{
 			for ( uint32_t j = 0; j <= i; j++ )
 				{
 				free(l_zp->slot [j].buf);
 				free(l_zp->slot [j].zbuf);
+				free(l_zp->slot [j].check);
 				}
 
 			free(l_zp->slot);
@@ -530,6 +531,7 @@ void	vbk$zp_stop	(
 		{
 		free(a_zp->slot [i].buf);
 		free(a_zp->slot [i].zbuf);
+		free(a_zp->slot [i].check);
 		}
 
 	if ( a_nin )
