@@ -17,6 +17,7 @@
 #			the objects of vbackup.exe and NM the nm of MinGW-w64
 #			(the imports are looked at: no ANSI call of the C
 #			library), UNITSEXE test/units.c built for Windows,
+#			FAKESSHEXE the stand-in for ssh.exe (test/fakessh.c),
 #			SCRATCH a directory the script may fill and remove.
 #			KEEP=1 keeps it.
 #
@@ -29,6 +30,9 @@
 #	CREATION DATE:	 6-OCT-2026
 #
 #	MODIFICATION HISTORY:
+#
+#		 6-OCT-2026	RRL	X-02 : Stage 14: the attributes of NTFS, the security
+#						descriptors, node::file by ssh.exe (FAKESSHEXE).
 #
 #		 6-OCT-2026	RRL	X-01 : Initial version.
 #
@@ -230,14 +234,39 @@ cat plain.bck | vw - pout > pin.log 2>&1
 check 'same_tree ref/tree pout/tree' "a restore from the standard input differs: $(grep -E -- '-[EF]-' pin.log | grep -v 'Windows' | head -3)"
 
 #
+#	Stage 14: the attributes of NTFS - hidden - saved, listed on Linux,
+#	put back; the security descriptor and the names of the owners; a
+#	saveset on another node through ssh.exe
+#
+mkdir -p wa/t && echo h > wa/t/hid && echo p > wa/t/plain
+$WINE cmd /c "attrib +h wa\\t\\hid" > /dev/null 2>&1
+vw wa/t wa.bck > wa.log 2>&1
+$VB wa.bck /LIST /FULL > wa.lis 2>&1
+check 'sed -n "/^t\/hid$/,+3p" wa.lis | grep -q "Windows: HIDDEN"' "the hidden attribute not in the saveset: $(sed -n '/^t\/hid$/,+3p' wa.lis)"
+check 'grep -q "Owner: .*\\\\" wa.lis' "no owner names (DOMAIN\\user) from the security descriptor: $(grep -m1 Owner: wa.lis)"
+vw wa.bck wa.out /OWNER=ORIGINAL > wa2.log 2>&1
+check '[ $? = 0 ]' "a restore /OWNER=ORIGINAL with the security descriptors: $(grep -E -- '-[EFW]-' wa2.log | head -3)"
+check '$WINE cmd /c "attrib wa.out\\t\\hid" 2>/dev/null | grep -q " H "' "the hidden attribute not put back: $($WINE cmd /c "attrib wa.out\\t\\hid" 2>/dev/null)"
+check '! $WINE cmd /c "attrib wa.out\\t\\plain" 2>/dev/null | grep -q " H "' "a plain file restored hidden"
+
+if [ -n "$FAKESSHEXE" ] && [ -e "$FAKESSHEXE" ]; then
+	export VBACKUP_RSH="Z:$(echo "$FAKESSHEXE" | tr / '\\')" FAKESSH_VBACKUP="Z:$(echo "$VW" | tr / '\\')"
+	vw ref/tree "node::$S/rsh.bck" > rsh1.log 2>&1
+	check '[ $? = 0 ] && $VB rsh.bck /LIST > /dev/null 2>&1' "a save to node::file through ssh.exe: $(grep -E -- '-[EFW]-' rsh1.log | head -3)"
+	vw "node::$S/rsh.bck" rsh.out > rsh2.log 2>&1
+	check '[ $? = 0 ] && same_tree ref/tree rsh.out/tree' "a restore from node::file through ssh.exe: $(grep -E -- '-[EFW]-' rsh2.log | head -3)"
+	unset VBACKUP_RSH FAKESSH_VBACKUP
+fi
+
+#
 #	5. The command line: what vbackup.exe refuses
 #
 vw ref/tree x.bck /PHYSICAL > q1.log 2>&1
 check '[ $? = 2 ] && grep -q "Qualifier: /PHYSICAL - not on Windows" q1.log' "/PHYSICAL not refused: $(cat q1.log)"
 vw ref/tree x.bck /IMAGE > q2.log 2>&1
 check '[ $? = 2 ] && grep -q "Qualifier: /IMAGE - not on Windows" q2.log' "/IMAGE not refused: $(cat q2.log)"
-vw ref/tree node::x.bck > q3.log 2>&1
-check '[ $? = 2 ] && grep -q "REMOTE, Node: node" q3.log' "a saveset on another node not refused: $(cat q3.log)"
+VBACKUP_RSH=nosuchssh vw ref/tree node::x.bck > q3.log 2>&1
+check '[ $? = 2 ] && grep -q "REMOTE, Node: node" q3.log' "no ssh, and a saveset on another node not refused: $(cat q3.log)"
 
 #
 #	6. Two names that differ in case only - one file on Windows: the second

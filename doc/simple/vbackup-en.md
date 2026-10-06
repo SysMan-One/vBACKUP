@@ -1377,6 +1377,12 @@ C:\> vbackup D:\docs.bck /LIST
 C:\> vbackup D:\docs.bck C:\restore
 ```
 
+**Save everything, with the owners.** Run `vbackup.exe` as an
+administrator (right click on "Command Prompt", "Run as administrator").
+Then it can read every file, and when you take the files out, they get
+back their owners and their permissions. Without it, the files you take
+out become yours.
+
 **Some names cannot live on Windows.** On Linux a file may be called
 `a:b`, `what?` or `con.txt`. Windows does not allow such names. VBACKUP
 does not make these files, and it tells you:
@@ -1391,8 +1397,7 @@ All the other files come out. To get such a file, open the box on Linux.
 On Windows they are one. VBACKUP takes out the first one and tells you
 about the second one. It never writes one over the other.
 
-**What Windows cannot do:** `/PHYSICAL`, `/IMAGE` and a box on another
-computer (`node::file`). Use Linux for them.
+**What Windows cannot do:** `/PHYSICAL` and `/IMAGE`. Use Linux for them.
 
 ---
 

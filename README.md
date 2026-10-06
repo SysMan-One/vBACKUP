@@ -213,11 +213,14 @@ Windows.  It is built on Linux with MinGW-w64 and the StarLet sources
 
 The Linux build makes it by itself when MinGW-w64 and the StarLet kit
 (`../starlet-x.y.z`) are there, and `test/winutil.sh` runs it under
-wine, both ways.  Names are Unicode, paths of any length; data, the
-four times, read-only, directories, hard links, symbolic links and
-junctions are saved.  Not in this version: the owner and the ACL, the
-other NTFS attributes, the streams; `/PHYSICAL`, `/IMAGE`,
-`node::file`.  A name Windows cannot hold is not restored, and said;
+wine, both ways.  Names are Unicode, paths of any length; data and
+sparse files, the four times, the NTFS attributes, the security
+descriptor (owner, group, DACL, SACL), the alternate data streams (as
+`user.` attributes), directories, hard links, symbolic links and
+junctions are saved.  Run as an administrator it is a backup operator:
+it reads every file and puts the owners and the ACL back.  `node::file`
+goes through `ssh.exe`; `/PHYSICAL` and `/IMAGE` are Linux only.  A
+name Windows cannot hold is not restored, and said;
 two names that differ in case only - one file there - are never
 written over each other.  `vbackup /HELP WINDOWS` tells the rest.
 

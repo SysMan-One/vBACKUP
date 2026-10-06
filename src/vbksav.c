@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-18"
+#define	__REV__		"1.18.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		A catalog entry carries WINATTR: /LIST /FULL shows the attributes of
+**		Windows; an extended attribute not saved is said (XATTRSKIP).
 **
 **	X01-14		 5-OCT-2026	RRL
 **		The SUMMARY tag PARITY, in the clear VHDR too; /PARITY to the
@@ -344,6 +348,10 @@ int		l_ok = 1;
 		l_ok &= vbk$tlv_put(l_c, VBK$K_TAG_LINK, a_attr->linklen, a_attr->link);
 
 	l_ok &= vbk$tlv_u32(l_c, VBK$K_TAG_NLINK, a_attr->nlink);
+
+	if ( a_attr->haswinattr )
+		l_ok &= vbk$tlv_u32(l_c, VBK$K_TAG_WINATTR, a_attr->winattr);
+
 	l_ok &= vbk$tlv_u64x2(l_c, VBK$K_TAG_DEVINO, a_attr->dev, a_attr->ino);
 	l_ok &= vbk$tlv_u16(l_c, VBK$K_TAG_BASEIDX, a_attr->baseidx);
 	l_ok &= vbk$tlv_u8(l_c, VBK$K_TAG_STATUS, a_status);
@@ -695,6 +703,10 @@ int		l_fd = -1, l_flags = 0, l_status;
 
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
 		}
+
+	/* Saved all the same, without the attribute it could not have */
+	if ( l_status == STS$K_WARN )
+		$VBKMSG(VBACKUP$_XATTRSKIP, a_ent->path);
 
 	*a_fd	= l_fd;
 

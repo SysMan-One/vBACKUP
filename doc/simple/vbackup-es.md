@@ -1378,6 +1378,12 @@ C:\> vbackup D:\docs.bck /LIST
 C:\> vbackup D:\docs.bck C:\restore
 ```
 
+**Guardarlo todo, con los dueños.** Ejecuta `vbackup.exe` como
+administrador (clic derecho en "Símbolo del sistema", "Ejecutar como
+administrador"). Así puede leer todos los archivos y, cuando los saques,
+vuelven a tener sus dueños y sus permisos. Si no, los archivos que sacas
+pasan a ser tuyos.
+
 **Algunos nombres no pueden vivir en Windows.** En Linux un archivo puede
 llamarse `a:b`, `qué?` o `con.txt`. Windows no permite esos nombres.
 VBACKUP no crea esos archivos y te lo dice:
@@ -1392,8 +1398,7 @@ Todos los demás archivos salen. Para sacar uno de esos, abre la caja en Linux.
 En Windows son uno. VBACKUP saca el primero y te avisa del segundo.
 Nunca escribe uno encima del otro.
 
-**Lo que Windows no puede hacer:** `/PHYSICAL`, `/IMAGE` y una caja en
-otro ordenador (`node::file`). Usa Linux para eso.
+**Lo que Windows no puede hacer:** `/PHYSICAL` y `/IMAGE`. Usa Linux para eso.
 
 ---
 

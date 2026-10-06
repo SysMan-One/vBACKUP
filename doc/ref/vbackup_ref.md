@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-16.
+VBACKUP X01-17.
 
-**Software Version:** VBACKUP X01-17
+**Software Version:** VBACKUP X01-18
 
 **Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
 vbackup.exe, vbkx.exe and the WCX plugin
@@ -22,7 +22,7 @@ vbackup.exe, vbkx.exe and the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-17 as built from
+The information in this document reflects VBACKUP X01-18 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -787,14 +787,47 @@ of any length (the `\\?\` form is used where needed). `\` and `/` both
 separate the components of a specification - a `\` anywhere on the command
 line is taken for a separator, in `/SELECT` and `/COMMENT` too; the stored
 names use `/`.
-Saved and put back: the data, the modification, access and change times
-and the creation time (BTIME), the read-only attribute (as the mode:
-`0444` or `0644` for a file, `0755` for a directory), directories, hard
-links (by the file ID and the volume serial number of NTFS, as by the
-inode and device on Linux), symbolic links and junctions (as symbolic
-links). Not saved in this version: the owner and the ACL, the other
-attributes of NTFS (hidden, system, archive), the alternate data streams.
-The owner of every file is shown as `0,0`.
+
+Saved and put back:
+
+- the data; a sparse file by its allocated ranges, restored with its
+  holes (the file is made sparse when a hole is written);
+- the modification, access and change times and the creation time (BTIME);
+- the attributes of NTFS - read-only, hidden, system, archive, temporary,
+  not indexed (tag WINATTR); `/LIST /FULL` shows them as `Windows: HIDDEN
+  ARCHIVE`. The mode is made up from read-only: `0444` or `0644` for a file,
+  `0755` for a directory;
+- the security descriptor - owner, group, DACL, and the SACL when the
+  image holds the security privilege (tag NTSD); the owner and the group
+  are shown by their accounts, `DOMAIN\user` (UID and GID are 0);
+- the alternate data streams, as the extended attributes `user.<stream>`
+  (the form ntfs-3g gives them on Linux), up to 64 KB each; a longer one
+  is reported (XATTRSKIP);
+- directories, hard links (by the file ID and the volume serial number of
+  NTFS, as by the inode and device on Linux), symbolic links and junctions
+  (as symbolic links).
+
+On Linux a saveset made on Windows restores as any other: the streams
+become `user.` attributes, the attributes of NTFS and the descriptor are
+left aside; every extractor reads it.
+
+#### Privileges and the Owner
+
+Run as an administrator (elevated), `vbackup.exe` enables the privileges
+of a backup operator - SeBackupPrivilege, SeRestorePrivilege,
+SeSecurityPrivilege, SeCreateSymbolicLinkPrivilege - when its account
+holds them. It then reads every file whatever its ACL, makes symbolic
+links, and takes `/OWNER=ORIGINAL` by default, as root on Linux: the
+security descriptor of each file is put back, its owner, group, DACL
+(protected or inheriting, as it was) and, with the security privilege,
+its SACL. Without the restore privilege the default is `/OWNER=DEFAULT`:
+the descriptor is not put back, and a restored file takes the ACL its
+directory gives it - a DACL from another machine could leave the user
+who restores without access to the files. `/OWNER=ORIGINAL` asks for the
+descriptor all the same; an owner that cannot be set is reported
+(ATTRERR ... security). `/OWNER=`*user* is not available on Windows. A
+descriptor read from a saveset is checked before use
+(IsValidSecurityDescriptor, its length).
 
 #### Names Windows Cannot Hold
 
@@ -808,24 +841,22 @@ Windows`, and the restore goes on with the others. Two names that differ
 in case only (`README`, `readme`) are one file on Windows: the second is not
 restored - FILEEXISTS, and with `/REPLACE` OPENOUT (`a name that differs in
 case only is there`), so that it never replaces the first. A FIFO, a
-socket or a device is not made (UNSUPP).
+socket or a device is not made (UNSUPP). Of the extended attributes of a
+Linux saveset only the `user.` ones become streams; the others
+(`security.`, `trusted.`, `system.`) are skipped.
 
 #### Differences from Linux
 
-- `/PHYSICAL`, `/IMAGE` and a saveset on another node (`node::file`) are
-  refused at once (QUALUSE, REMOTE).
-- The read-ahead of files is not there (`VBACKUP_PREFETCH` has no effect);
-  the writer thread, the pool of the encryption and of the compression are.
-- `/XATTRS` is off by default: Windows has no extended attributes of
-  Linux, and those of a Linux saveset would each be refused.
+- A saveset on another node (`node::file`) goes through `ssh.exe`, the
+  OpenSSH client of Windows 10 and 11; `VBACKUP_RSH` names another one.
+- `/PHYSICAL` and `/IMAGE` are refused at once (QUALUSE).
+- There is no read-ahead of files (`VBACKUP_PREFETCH` has no effect) and no
+  shadow copy (VSS): a file another program holds open without sharing is
+  reported (OPENIN) and left out; one it writes to is saved as it is read
+  (FEND CHANGED when it changed meanwhile).
 - The mode of a key file is not checked: its ACL says who reads it. Keep
   it in your profile, where only you and the administrators can.
-- A symbolic link is made only with the right to make links: an
-  administrator, or the developer mode of Windows 10 and 11. Without it
-  OPENOUT says errno 1.
 - The journal is `%USERPROFILE%\.vbackup\vbackup.jnl` (HOME, when it is set).
-- A sparse file is saved with its zeros, and restored without holes;
-  `/DATA_FORMAT=COMPRESSED` makes the zeros cost nothing in the saveset.
 - The passphrase is read from the console without echo, in UTF-8: a
   saveset encrypted on Linux opens on Windows with the same passphrase.
 
@@ -4052,6 +4083,22 @@ ignored; MISSVOL usually follows for that volume.
 
 **User Action:** Put the right volume in its place. Do not mix volumes of
 savesets saved under the same name.
+
+---
+
+**XATTRSKIP**, File: *file* - an extended attribute not saved: it cannot be read, or is longer than 64 KB (on Windows: a stream)
+
+**Facility:** VBACKUP. **Severity:** Warning.
+
+**Explanation:** The file was saved, but one of its extended attributes
+was not: it could not be read, or its value is longer than 64 KB, the
+largest value an extended attribute of Linux may have. On Windows the
+alternate data streams of a file are its extended attributes
+(`user.<stream>`), and a stream longer than 64 KB is not saved.
+
+**User Action:** Copy the stream into a file of its own when it matters
+(on Windows: `more < file:stream > file.stream`), or give `/NOXATTRS` to
+save without the extended attributes and without this message.
 
 ---
 

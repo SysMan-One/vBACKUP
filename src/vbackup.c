@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-17"
-#define	__REV__		"1.17.0"
+#define	__IDENT__	"X01-18"
+#define	__REV__		"1.18.0"
 
 /*
 **++
@@ -40,6 +40,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-18		 6-OCT-2026	RRL
+**		Stage 14: Windows - /OWNER=ORIGINAL by default for a backup operator
+**		(the restore privilege held), the security descriptors put back then;
+**		/XATTRS by default again: the streams of NTFS are the user. attributes.
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Stage 13: vbackup.exe, the utility on Windows (src/vbkosw.c,
@@ -936,12 +941,12 @@ size_t		l_cmdlen = 0;
 	l_opts.bsize	= VBK$K_DEFBSZ;
 	l_opts.grpsz	= VBK$K_DEFGRP;
 	l_opts.parity	= 1;
-#ifdef	_WIN32
-	l_opts.xattrs	= 0;			/* Linux ones in a saveset have nowhere to go		*/
-#else
 	l_opts.xattrs	= 1;
-#endif
+#ifdef	_WIN32
+	l_opts.ownmode	= vbk$w_privileged() ? VBACKUP$K_OWN_ORIGINAL : VBACKUP$K_OWN_DEFAULT;
+#else
 	l_opts.ownmode	= geteuid() ? VBACKUP$K_OWN_DEFAULT : VBACKUP$K_OWN_ORIGINAL;
+#endif
 
 	/* The command as it was given, for the SUMMARY; cut at VBK$K_MAXCMD */
 	for ( int i = 0; (i < a_argc) && (l_cmdlen < (sizeof(l_opts.cmdline) - 1)); i++ )

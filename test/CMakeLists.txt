@@ -8,6 +8,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-18 : winutil.sh gets fakessh.exe.
+#
 #		 6-OCT-2026	RRL	X-17 : winutil.sh - vbackup.exe under wine.
 #
 #		 5-OCT-2026	RRL	X-14 : damage.sh and smoke.sh with /PARITY.
@@ -94,7 +96,7 @@ if ( VBACKUP_WINEXE AND VBACKUP_WINE )
 
 	add_test(NAME winutil COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBACKUPEXE=${VBACKUP_WINEXE}
 		WINE=${VBACKUP_WINE} OBJDIR=${CMAKE_BINARY_DIR}/winexe/CMakeFiles/vbackup.dir NM=${VBACKUP_MINGWNM}
-		UNITSEXE=${CMAKE_BINARY_DIR}/winexe/units.exe
+		UNITSEXE=${CMAKE_BINARY_DIR}/winexe/units.exe FAKESSHEXE=${CMAKE_BINARY_DIR}/winexe/fakessh.exe
 		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/winutil.d sh ${CMAKE_CURRENT_SOURCE_DIR}/winutil.sh)
 endif()
 

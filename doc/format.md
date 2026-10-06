@@ -34,6 +34,10 @@ skips them by the rules of sections 5 and 6:
   X01-14.  A reader of an earlier version refuses it at its first block
   (version 2) - it never misreads its groups.  Without `/PARITY`, or with
   `/PARITY=1`, a saveset is version 1, byte for byte as before;
+- the files of Windows (6.1, 6.11): the per-file tags WINATTR (also in
+  the CATALOG) and NTSD, since X01-18; the alternate data streams of NTFS
+  as XATTR items named `user.<stream>`.  A reader of an earlier version
+  skips the two tags and restores the files without them;
 - the XATTR value (6.1) carries a counted name (u8 length, name) since
   X01-03; before it the name was ended by a NUL.  No saveset of the
   earlier form was ever given out: the change is made within version 1,
@@ -280,6 +284,8 @@ Value types: u8 .. u64, TIME, STR (raw bytes), UUID.
 | 18 | DEVINO | u64 + u64 | st_dev, st_ino at save time |
 | 19 | BASEIDX | u16 | which BASE of the SUMMARY the PATH is relative to, from 0 |
 | 20 | NLINK | u32 | st_nlink |
+| 21 | WINATTR | u32 | a file saved on Windows: its FILE_ATTRIBUTE_* bits READONLY 0x1, HIDDEN 0x2, SYSTEM 0x4, ARCHIVE 0x20, TEMPORARY 0x100, NOT_CONTENT_INDEXED 0x2000; the others are not kept (6.11) |
+| 22 | NTSD | STR | a file saved on Windows: its security descriptor - owner, group, DACL, SACL when it could be read - in the self-relative form of Windows (6.11) |
 
 FILE always has FILENO, PATH, FTYPE, MODE, UID, GID, SIZE, MTIME.
 
@@ -304,7 +310,8 @@ and writes each DATA record at its offset; the gaps stay holes.
 ### 6.4 CATALOG entry
 
 Per-file tags FILENO, PATH, FTYPE, MODE, UID, GID, UNAME, GNAME, SIZE,
-MTIME, CTIME, LINK, NLINK, DEVINO, BASEIDX as in the FILE record, plus:
+MTIME, CTIME, LINK, NLINK, WINATTR (when the FILE record has it), DEVINO,
+BASEIDX as in the FILE record, plus:
 
 | Tag | Name | Type | Meaning |
 |---|---|---|---|
@@ -569,6 +576,31 @@ by KDFITER (default 600000) HMAC computations, it does not make a weak
 passphrase strong.  A passphrase of five or more random words is
 advised.  The format does not encrypt the journal (section 9), which is
 a file of the saving system.
+
+### 6.11 Files saved on Windows
+
+`vbackup.exe` writes the same records as on Linux; what is particular to
+the files of Windows:
+
+- MODE is made up: 0755 a directory, 0644 a file, 0444 a read-only one;
+  UID and GID are 0; UNAME and GNAME are the accounts of the owner and the
+  group of the security descriptor, `DOMAIN\name`.
+- DEVINO is the volume serial number and the file ID of NTFS; hard links
+  are found by it as on Linux.  BTIME is the creation time.
+- A symbolic link and a junction are SYMLINK; LINK is the target, `\` made
+  `/`.
+- WINATTR carries the attributes listed in 6.1; a reader on Linux may
+  show them and must ignore them otherwise.
+- NTSD is the descriptor as GetKernelObjectSecurity gives it.  A reader
+  that puts it back must check it first (IsValidSecurityDescriptor, its
+  length not beyond the item): a saveset is a file anybody may have made.
+- The alternate data streams of a file are XATTR items named
+  `user.<stream>`, as ntfs-3g shows them on Linux; the unnamed stream is
+  the data.  On restore on Windows an XATTR item of another name space
+  (`security.`, `trusted.`, `system.`) has no place and is skipped.
+- BASE is a name of Windows with `/`: `C:/Users/ivan`.
+- A sparse file is saved by its allocated ranges, as by SEEK_DATA on
+  Linux; a file that is not sparse is all data.
 
 ## 7. Writer rules
 
