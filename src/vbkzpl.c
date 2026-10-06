@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKZPL"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-19"
+#define	__REV__		"1.19.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-19		 6-OCT-2026	RRL
+**		The codec of /LEVEL (VBK$DATA_PACK), every record checked by the worker
+**		before it is written; ZCHECK when one did not come back.
+**
 **	X01-04		 4-OCT-2026	RRL
 **		Initial version.
 **
@@ -77,7 +81,9 @@ typedef struct vbk_zslot_t
 	uint8_t *	buf;			/* The octets, or the record body		*/
 	uint32_t	len, bufsz;
 	uint8_t *	zbuf;			/* DATAZ body: header and packed octets		*/
+	uint8_t *	check;			/* The record decompressed again, the check	*/
 	uint32_t	zlen;			/* 0 - stored as DATA				*/
+	int		zcheck;			/* It did not come back the same: ZCHECK	*/
 	uint16_t	type;			/* RECORD					*/
 	VBK$LOC *	loc;			/* RECORD: where it lands, NULL - not wanted	*/
 	void		(*fn) (void *a_arg);	/* CALL						*/
@@ -95,6 +101,7 @@ typedef struct vbk_zp_t
 	unsigned	nthr;
 	pthread_t	thr [VBK$K_ZPMAXTHR];
 	uint64_t	nin, nout;
+	int		level;			/* /LEVEL					*/
 } VBK$ZP;
 
 
@@ -104,7 +111,8 @@ static	void *	s_vbk$zworker	(
 {
 VBK$ZP *	l_zp = (VBK$ZP *) a_arg;
 VBK$ZSLOT *	l_s;
-uint32_t	l_zlen;
+uint32_t	l_zlen, l_codec;
+int		l_rc;
 
 	pthread_mutex_lock(&l_zp->mtx);
 
@@ -130,11 +138,16 @@ uint32_t	l_zlen;
 		pthread_mutex_unlock(&l_zp->mtx);
 
 		l_s->zlen	= 0;
+		l_s->zcheck	= 0;
+		l_rc		= vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(VBK$K_MAXDATA),
+						&l_zlen, &l_codec, l_s->check);
 
-		if ( 1 & vbk$lz4_pack(l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(VBK$K_MAXDATA), &l_zlen) )
+		l_s->zcheck	= (l_rc == STS$K_ERROR);
+
+		if ( l_rc == STS$K_SUCCESS )
 			{
 			vbk$put32(l_s->zbuf, l_s->fileno);
-			vbk$put32(l_s->zbuf + 4, VBK$K_CODEC_LZ4);
+			vbk$put32(l_s->zbuf + 4, l_codec);
 			vbk$put64(l_s->zbuf + 8, l_s->off);
 			vbk$put32(l_s->zbuf + 16, l_s->len);
 			l_s->zlen = VBK$K_DATAZHDR + l_zlen;
@@ -170,6 +183,9 @@ int	l_status = STS$K_SUCCESS;
 		{
 		case	VBK$K_ZK_DATA:
 			a_zp->nin += a_s->len;
+
+			if ( a_s->zcheck )
+				$VBKMSG(VBACKUP$_ZCHECK, a_s->off);
 
 			if ( a_s->zlen )
 				{
@@ -321,7 +337,8 @@ static	void	s_vbk$zpush	(
 **--
 */
 struct vbk_zp_t *	vbk$zp_start	(
-		VBK$WCTX *	a_wctx
+		VBK$WCTX *	a_wctx,
+		int		a_level
 			)
 {
 VBK$ZP *	l_zp;
@@ -341,6 +358,7 @@ long		l_n = sysconf(_SC_NPROCESSORS_ONLN);
 		return	NULL;
 
 	l_zp->wctx	= a_wctx;
+	l_zp->level	= a_level;
 	l_zp->nslot	= 2 * (uint32_t) l_n + 2;
 
 	if ( !(l_zp->slot = calloc(l_zp->nslot, sizeof(VBK$ZSLOT))) )
@@ -351,12 +369,14 @@ long		l_n = sysconf(_SC_NPROCESSORS_ONLN);
 		}
 
 	for ( uint32_t i = 0; i < l_zp->nslot; i++ )
-		if ( !(l_zp->slot [i].buf = malloc(VBK$K_MAXDATA)) || !(l_zp->slot [i].zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBK$K_MAXDATA))) )
+		if ( !(l_zp->slot [i].buf = malloc(VBK$K_MAXDATA)) || !(l_zp->slot [i].zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBK$K_MAXDATA)))
+			|| !(l_zp->slot [i].check = malloc(VBK$K_MAXDATA)) )
 			{
 			for ( uint32_t j = 0; j <= i; j++ )
 				{
 				free(l_zp->slot [j].buf);
 				free(l_zp->slot [j].zbuf);
+				free(l_zp->slot [j].check);
 				}
 
 			free(l_zp->slot);
@@ -511,6 +531,7 @@ void	vbk$zp_stop	(
 		{
 		free(a_zp->slot [i].buf);
 		free(a_zp->slot [i].zbuf);
+		free(a_zp->slot [i].check);
 		}
 
 	if ( a_nin )

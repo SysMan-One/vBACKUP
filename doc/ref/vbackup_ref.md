@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-17.
+VBACKUP X01-18.
 
-**Software Version:** VBACKUP X01-18
+**Software Version:** VBACKUP X01-19
 
 **Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
 vbackup.exe, vbkx.exe and the WCX plugin
@@ -22,7 +22,7 @@ vbackup.exe, vbkx.exe and the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-18 as built from
+The information in this document reflects VBACKUP X01-19 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -406,23 +406,43 @@ files.
 
 ### 1.7 Compression
 
-`/DATA_FORMAT=COMPRESSED` stores the data of files in DATAZ records,
-compressed in the LZ4 block format. For each piece VBACKUP first tries
-the first 64 KB and stores the piece uncompressed when it does not
-shrink by at least 3%; already compressed data (photographs, video,
-`.gz`, `.zip`) costs almost no time. A DATAZ record is written only when
-it is smaller than the DATA record would be. Checksums and repair work as
-for uncompressed data: the file CRC is that of the raw bytes, the block
-CRC that of the bytes as they lie in the stream.
+`/DATA_FORMAT=COMPRESSED` stores the data of files in DATAZ records;
+`/LEVEL=n` says how hard, and compresses by itself:
 
-Compression runs on several threads (see Section 1.12); the saveset is
-the same, byte for byte, as with one thread. A restore, `/LIST`,
-`/COMPARE`, `/EXTRACT` and all extractors recognize compressed data by
-themselves.
+| /LEVEL | Codec | Text (1 MB record) | Binaries | Save, one core | Restore, one core |
+|---|---|---|---|---|---|
+| 1 (default) | LZ4 | 2.1x | 1.5x | 130 MB/s | 400 MB/s |
+| 2 .. 5 | Deflate | 3.2x .. 3.7x | 1.9x .. 2.1x | 33 .. 11 MB/s | 110 .. 230 MB/s |
+| 6 .. 9 | LZMA | 4.0x .. 4.5x | 2.3x | 12 .. 2 MB/s | 30 .. 60 MB/s |
 
-VBACKUP and vbkx before X01-04 cannot read compressed data; they report
-the compressed files as damaged (CRCERR, FILDAMAGED) and never write
-wrong data silently.
+The ratios were measured on this host on 1 MB records of the vBACKUP
+source tree and of program binaries; the speeds are those of one core,
+the check of every record included - the compression runs on several
+threads (Section 1.12), and the saveset does not depend on their number.
+A restore is fast at every level: faster than most disks for LZ4 and
+Deflate, tens of MB/s for LZMA.
+
+Every record is compressed on its own (format.md 6.7): a bad block costs
+that record alone, and the XOR and parity repair works as for
+uncompressed data - the file CRC is that of the raw bytes, the block CRC
+that of the bytes as they lie in the stream. For each record VBACKUP
+first tries the first 64 KB and stores the record uncompressed when it
+does not shrink by at least 3%; already compressed data (photographs,
+video, `.gz`, `.zip`) costs almost no time. A DATAZ record is written
+only when it is smaller than the DATA record would be.
+
+**Restorable on the day it is needed.** Every record VBACKUP compresses
+is decompressed again at once and compared with the data; a record that
+does not come back the same is written uncompressed, and ZCHECK says so.
+The saveset never depends on the compressor being right. Each codec is
+read by four independent decoders - the core of VBACKUP (vbackup, vbkx,
+vbkx.exe, the WCX plugin), vbkx-go, vbkx-rs, vbkx-pl - and the formats
+are the public ones (raw Deflate of RFC 1951, raw LZMA1), described in
+`format.md` well enough to write a fifth; zlib and liblzma read them.
+
+VBACKUP and vbkx before X01-04 cannot read compressed data, before X01-19
+not levels 2 to 9; they report the files as damaged (CRCERR, FILDAMAGED,
+BADREC) and never write wrong data silently.
 
 ### 1.8 Encryption
 
@@ -1122,6 +1142,7 @@ copy of a saveset.
 | `/INCREMENTAL` | Output file | R | -- |
 | `/JOURNAL[=file]` | Command | S, J | See text |
 | `/KEY_FILE=file` | Command | S, R, L, C, X, J | `VBACKUP_KEY_FILE`, else the terminal |
+| `/LEVEL=n` | Output save-set | S | 1 (with `/DATA_FORMAT=COMPRESSED`) |
 | `/LIST[=file]` | Command | L, S | -- |
 | `/[NO]LOG` | Command | all | `/NOLOG` |
 | `/MODIFIED` | Input file-selection | S, P | `/MODIFIED` |
@@ -1453,7 +1474,8 @@ Output save-set qualifier.
 
 `COMPRESSED` stores the data of the files compressed in the LZ4 block
 format (DATAZ records); data that does not shrink is stored as it is. The
-summary records it, and `/LIST` displays `Data format: compressed (LZ4)`.
+summary records the codec, and `/LIST` displays `Data format: compressed
+(LZ4)` - or Deflate, LZMA with `/LEVEL`.
 The compression runs on several threads (`VBACKUP_ZTHREADS`); the saveset
 does not depend on their number. Readers recognize compressed data by
 themselves. `/DATA_FORMAT` works also with `/PHYSICAL` and `/IMAGE`. See
@@ -1883,6 +1905,32 @@ that is not encrypted it has no effect.
 ```
 $ chmod 600 /root/backup.key
 # vbackup /home /backup/home.bck /ENCRYPT /KEY_FILE=/root/backup.key
+```
+
+---
+
+### /LEVEL
+
+Output save-set qualifier.
+
+**Format**
+
+`/LEVEL=n` (1 .. 9; default 1 with `/DATA_FORMAT=COMPRESSED`)
+
+**Description**
+
+How hard the data is compressed: 1 LZ4, 2 to 5 Deflate, 6 to 9 LZMA, at
+growing effort (Section 1.7). It compresses by itself - `/DATA_FORMAT=
+COMPRESSED` is implied; with `/DATA_FORMAT=UNCOMPRESSED` it is refused
+(CONFQUAL), a value out of 1 .. 9 too (IVQUAL). `/LIST` displays the codec,
+`Data format: compressed (LZ4)`, `(Deflate)` or `(LZMA)`. Every record is
+checked after it is compressed (ZCHECK). Works with `/PHYSICAL`,
+`/IMAGE`, `/ENCRYPT`, `/PARITY`.
+
+**Example**
+
+```
+$ vbackup /home /mnt/usb/home.bck /LEVEL=6
 ```
 
 ---
@@ -4118,6 +4166,22 @@ a restore through *node*`::`*file*.
 
 ---
 
+**ZCHECK**, Offset: *n* - a record compressed did not decompress to the same octets: it is stored uncompressed (a fault of VBACKUP: report it)
+
+**Facility:** VBACKUP. **Severity:** Warning.
+
+**Explanation:** Every record VBACKUP compresses is decompressed again at
+once and compared with the data it was made of (Section 1.7). This one did
+not come back the same; it was written uncompressed, as a DATA record. The
+saveset is right and restores; the offset is that of the record in its
+file.
+
+**User Action:** Report it, with the file, the `/LEVEL` and the version of
+VBACKUP; the data that made it helps most. Meanwhile `/LEVEL=1` or
+`/DATA_FORMAT=UNCOMPRESSED` avoid the codec in question.
+
+---
+
 ## Appendix B Saveset Format Summary
 
 This appendix summarizes the saveset format, version 1. The authoritative
@@ -4399,7 +4463,7 @@ source tree:
 
 ```
 $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
+      lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkdfl.c lib/vbklzm.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
 $ make -f tools/Makefile.win
 ```
 

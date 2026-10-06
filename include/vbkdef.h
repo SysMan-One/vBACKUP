@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-18"
+#define	__IDENT__	"X01-19"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.18.0"
+#define	__REV__		"1.19.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-19		 6-OCT-2026	RRL
+**		VBK$OPTS: ZLEVEL (/LEVEL); ZCHECK; VBK$ZP_START takes the level.
 **
 **	X01-18		 6-OCT-2026	RRL
 **		VBK$ATTR: WINATTR, NTSD - the attributes and the security
@@ -212,6 +215,7 @@ enum	{
 	VBACKUP$K_MSG_VMSRAW,			/* ... a file restored as it is, not converted	*/
 	VBACKUP$K_MSG_PARITYERR,		/* v2: the parity of a group disagrees		*/
 	VBACKUP$K_MSG_XATTRSKIP,		/* An extended attribute (a stream) not saved	*/
+	VBACKUP$K_MSG_ZCHECK,			/* A record compressed did not come back	*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -316,6 +320,7 @@ enum	{
 #define	VBACKUP$_VMSRAW		$VBKSTS(VBACKUP$K_MSG_VMSRAW,		STS$K_INFO)
 #define	VBACKUP$_PARITYERR	$VBKSTS(VBACKUP$K_MSG_PARITYERR,	STS$K_WARN)
 #define	VBACKUP$_XATTRSKIP	$VBKSTS(VBACKUP$K_MSG_XATTRSKIP,	STS$K_WARN)
+#define	VBACKUP$_ZCHECK		$VBKSTS(VBACKUP$K_MSG_ZCHECK,		STS$K_WARN)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the
@@ -449,6 +454,7 @@ typedef struct vbk_opts_t
 	int		incremental;		/* /INCREMENTAL (restore)			*/
 	int		nopipe;			/* VBACKUP_PIPELINE=0: no writer thread		*/
 	int		compress;		/* /DATA_FORMAT=COMPRESSED			*/
+	int		zlevel;			/* /LEVEL: 1 LZ4, 2 .. 5 Deflate, 6 .. 9 LZMA	*/
 	int		physical;		/* /PHYSICAL: a device, block by block		*/
 	uint64_t	physsize;		/* ... its size, its sector			*/
 	uint32_t	physsector;
@@ -673,7 +679,7 @@ int	vbk$img_restore	(VBK$OPTS *a_opts);
 /*
 **  VBKZPL.C - the compression of a save on several cores, the records in order
 */
-struct vbk_zp_t *	vbk$zp_start	(VBK$WCTX *a_wctx);
+struct vbk_zp_t *	vbk$zp_start	(VBK$WCTX *a_wctx, int a_level);
 int	vbk$zp_data	(struct vbk_zp_t *a_zp, uint32_t a_fileno, uint64_t a_off, const uint8_t *a_data, uint32_t a_n);
 int	vbk$zp_record	(struct vbk_zp_t *a_zp, uint16_t a_type, const void *a_body, uint32_t a_len, VBK$LOC *a_loc);
 int	vbk$zp_call	(struct vbk_zp_t *a_zp, void (*a_fn) (void *), void *a_arg);

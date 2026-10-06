@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-04"
+#define	__IDENT__	"X01-19"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.4.0"
+#define	__REV__		"1.19.0"
 #endif
 
 /*
@@ -31,6 +31,11 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-19		 6-OCT-2026	RRL
+**		Codecs 2 (raw Deflate, lib/vbkdfl.c) and 3 (raw LZMA1, lib/vbklzm.c);
+**		VBK$DATA_PACK: the codec by /LEVEL, every record decompressed and
+**		compared before it is written.
+**
 **	X01-04		 4-OCT-2026	RRL
 **		Initial version.  VBK$LZ4_PACK: a probe of the head first.
 **
@@ -48,8 +53,12 @@ extern "C" {
 #define	VBK$K_DATAZHDR	20			/* fileno, codec, offset, rawlen of a DATAZ	*/
 
 enum	{					/* CODEC of a DATAZ record			*/
-	VBK$K_CODEC_LZ4 = 1			/* LZ4 block format				*/
+	VBK$K_CODEC_LZ4 = 1,			/* LZ4 block format				*/
+	VBK$K_CODEC_DEFLATE,			/* Raw Deflate, RFC 1951			*/
+	VBK$K_CODEC_LZMA			/* Raw LZMA1, lc=3 lp=0 pb=2, end marker	*/
 	};
+
+#define	VBK$K_ZLEVELS	9			/* /LEVEL: 1 LZ4, 2 .. 5 Deflate, 6 .. 9 LZMA	*/
 
 /*
 **  The most octets VBK$LZ4_COMPRESS may write for <n> octets in: what
@@ -60,6 +69,9 @@ enum	{					/* CODEC of a DATAZ record			*/
 int	vbk$lz4_compress	(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen);
 int	vbk$lz4_decompress	(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_rawlen);
 int	vbk$lz4_pack		(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen);
+int	vbk$data_pack		(int a_level, const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen,
+				 uint32_t *a_codec, uint8_t *a_check);
+uint32_t vbk$data_codec		(int a_level);
 int	vbk$data_get		(uint16_t a_type, const uint8_t *a_body, uint32_t a_len, uint8_t *a_scratch,
 				uint32_t *a_fileno, uint64_t *a_off, const uint8_t **a_data, uint32_t *a_n);
 

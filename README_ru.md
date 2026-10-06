@@ -30,7 +30,8 @@ saveset, восстановить их, получить листинг и ср�
   сохраняет то, что изменилось с тех пор, а цепочка, восстановленная с
   `/INCREMENTAL`, возвращается без удалённых файлов;
 - копирование с диска на диск со всем, что вернуло бы восстановление;
-- сжатие (`/DATA_FORMAT=COMPRESSED`, LZ4 на всех ядрах), целое
+- сжатие на всех ядрах -- `/DATA_FORMAT=COMPRESSED` LZ4, `/LEVEL=2..5`
+  Deflate, `/LEVEL=6..9` LZMA, каждая запись проверяется перед записью -- целое
   устройство блок за блоком (`/PHYSICAL`) или целая файловая система
   (`/IMAGE`);
 - шифрование (`/ENCRYPT`, `/KEY_FILE`): ChaCha20 и HMAC-SHA256 на каждый
@@ -207,7 +208,7 @@ Saveset, сделанный с `/PHYSICAL`, любой распаковщик в
 исходных текстов:
 
     $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
-          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
+          lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkdfl.c lib/vbklzm.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c -static -lshell32
     $ make -f tools/Makefile.win                     # the same
     $ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 

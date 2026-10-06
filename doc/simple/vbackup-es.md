@@ -451,6 +451,22 @@ Sacar una caja pequeña es igual que siempre, no hay que añadir nada:
 vbackup /mnt/usb/ivan.bck /home/ivan/restored
 ```
 
+**Aún más pequeña.** Añade `/LEVEL=` y un número del 1 al 9. Cuanto más
+alto, más pequeña la caja y más tarda en hacerse. Sacar los archivos es
+rápido con cualquier número.
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6
+```
+
+`/LEVEL=1` es el rápido (igual que `/DATA_FORMAT=COMPRESSED`); `/LEVEL=5`
+es como zip; `/LEVEL=9` es como 7-Zip. Las cartas se reducen unas 2 veces
+con 1, casi 4 con 5 y 4,5 con 9.
+
+**¿Es seguro?** Sí. VBACKUP desempaqueta cada trozo justo después de
+empaquetarlo y lo compara con tu archivo. Solo se guarda empaquetado el
+trozo que vuelve igual.
+
 **Cuidado:** un VBACKUP antiguo (antes de X01-04) no entiende una caja
 pequeña. Dice que los archivos están dañados:
 

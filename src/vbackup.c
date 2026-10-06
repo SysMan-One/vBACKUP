@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-18"
-#define	__REV__		"1.18.0"
+#define	__IDENT__	"X01-19"
+#define	__REV__		"1.19.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-19		 6-OCT-2026	RRL
+**		Stage 15: /LEVEL=n - 1 LZ4, 2 .. 5 Deflate, 6 .. 9 LZMA; it compresses
+**		by itself.
 **
 **	X01-18		 6-OCT-2026	RRL
 **		Stage 14: Windows - /OWNER=ORIGINAL by default for a backup operator
@@ -186,6 +190,7 @@ enum	{
 	VBACKUP$K_QUAL_INCREMENTAL,
 	VBACKUP$K_QUAL_HELP,
 	VBACKUP$K_QUAL_DATA_FORMAT,
+	VBACKUP$K_QUAL_LEVEL,
 	VBACKUP$K_QUAL_PHYSICAL,
 	VBACKUP$K_QUAL_IMAGE,
 	VBACKUP$K_QUAL_ORIGINAL,
@@ -252,6 +257,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("INCREMENTAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("DATA_FORMAT")},	.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_dfmkwd },
+	{ .name = {$ASCINI("LEVEL")},		.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("PHYSICAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("IMAGE")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("ORIGINAL")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
@@ -288,7 +294,7 @@ static	const char	s_usage [] = {
 	"  Save:     /BLOCK_SIZE=n /GROUP_SIZE=n /PARITY=m /VOLUME_SIZE=size /COMMENT=\"...\"\n"
 	"            /SINCE=time /BEFORE=time /MODIFIED /CREATED /CHANGED\n"
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
-	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED\n"
+	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED /LEVEL=1..9\n"
 	"            /DELETE (with /VERIFY: the files saved and verified are deleted)\n"
 	"            /ENCRYPT (asks a passphrase twice, or /KEY_FILE=file)\n"
 	"  Saveset:  x.bck y.bck | x.bck - | - y.bck  block for block (/TRANSFER)\n"
@@ -793,6 +799,23 @@ ASC		l_val;
 		else if ( l_str [0] && !strncasecmp(l_str, "UNCOMPRESSED", strlen(l_str)) )
 			a_opts->compress = 0;
 		else	return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "DATA_FORMAT");
+		}
+
+	/* /LEVEL=n: how hard - 1 LZ4 (fast, the default), 2 .. 5 Deflate, 6 .. 9 LZMA (format.md 6.7); compressed by it alone */
+	a_opts->zlevel	= 1;
+
+	if ( 1 & s_vbk$getstr(a_clictx, VBACKUP$K_QUAL_LEVEL, l_str, sizeof(l_str)) )
+		{
+		l_v	= strtoull(l_str, NULL, 0);
+
+		if ( (l_v < 1) || (l_v > VBK$K_ZLEVELS) )
+			return	$VBKMSG(VBACKUP$_IVQUAL, l_str, "LEVEL");
+
+		if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_DATA_FORMAT, NULL) && !a_opts->compress )
+			return	$VBKMSG(VBACKUP$_CONFQUAL, "LEVEL", "DATA_FORMAT=UNCOMPRESSED");
+
+		a_opts->zlevel	 = (int) l_v;
+		a_opts->compress = 1;
 		}
 
 	/* /ENCRYPT: format.md 6.10; the passphrase is asked for when the saveset is made, never taken from the command */

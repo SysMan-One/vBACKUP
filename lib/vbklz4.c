@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLZ4"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-19"
+#define	__REV__		"1.19.0"
 
 /*
 **++
@@ -31,6 +31,11 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-19		 6-OCT-2026	RRL
+**		VBK$DATA_PACK, VBK$DATA_CODEC: the codec of /LEVEL, the probe, and the
+**		check - a record compressed is decompressed and compared before it is
+**		written; VBK$DATA_GET takes codecs 2 and 3.
+**
 **	X01-04		 4-OCT-2026	RRL
 **		Initial version.
 **
@@ -40,6 +45,8 @@
 #include	<string.h>
 
 #include	"vbklz4.h"
+#include	"vbkdfl.h"
+#include	"vbklzm.h"
 #include	"vbkos.h"
 
 #define	VBK$K_LZ4HLOG	12			/* log2 of the entries of the hash table	*/
@@ -249,6 +256,120 @@ uint32_t	l_plen;
 
 
 /*
+**  The octets of a compressed record by its codec
+*/
+static	int	s_vbk$unpack	(
+		uint32_t	a_codec,
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_rawlen
+			)
+{
+	switch ( a_codec )
+		{
+		case	VBK$K_CODEC_LZ4:	return	vbk$lz4_decompress(a_src, a_len, a_dst, a_rawlen);
+		case	VBK$K_CODEC_DEFLATE:	return	vbk$dfl_decompress(a_src, a_len, a_dst, a_rawlen);
+		case	VBK$K_CODEC_LZMA:	return	vbk$lzm_decompress(a_src, a_len, a_dst, a_rawlen);
+		}
+
+	return	STS$K_ERROR;
+}
+
+/*
+**  The codec of a /LEVEL
+*/
+uint32_t	vbk$data_codec	(
+		int		a_level
+			)
+{
+	return	(a_level <= 1) ? VBK$K_CODEC_LZ4 : (a_level <= 5) ? VBK$K_CODEC_DEFLATE : VBK$K_CODEC_LZMA;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Compress a record's worth of data by the codec of /LEVEL: 1 LZ4
+**	(VBK$LZ4_PACK, as since X01-04), 2 .. 5 Deflate, 6 .. 9 LZMA, at
+**	the efforts 1 .. 4 of each.  Data that will not shrink - the first
+**	64 KB tried by the fast effort of the codec gain less than 3% - is
+**	given up at once.  Then the record is decompressed into <a_check>
+**	and compared with what it was made of: a compressed record is
+**	written only when it is known to come back octet for octet - the
+**	saveset must restore on the day it is needed, whatever the writer.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_level		1 .. VBK$K_ZLEVELS
+**	a_src, a_len	The octets in, VBK$K_MAXDATA at most
+**	a_dst, a_cap	Where they go
+**	a_outlen	Receives the octets written
+**	a_codec		Receives the codec
+**	a_check		<a_len> octets of scratch for the check
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- compressed, checked, smaller by more than 4
+**			  octets (what a DATAZ costs over a DATA);
+**	STS$K_WARN	- to be stored as it is;
+**	STS$K_ERROR	- to be stored as it is: the record did not come
+**			  back the same - a fault of the writer, to be said.
+**--
+*/
+int	vbk$data_pack	(
+		int		a_level,
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_cap,
+		uint32_t *	a_outlen,
+		uint32_t *	a_codec,
+		uint8_t *	a_check
+			)
+{
+uint32_t	l_codec = vbk$data_codec(a_level), l_cap, l_plen;
+int		l_eff, l_status;
+
+	if ( a_len <= 4 )
+		return	STS$K_WARN;
+
+	*a_codec = l_codec;
+	l_cap	 = (a_cap < (a_len - 4)) ? a_cap : (a_len - 4);
+
+	if ( l_codec == VBK$K_CODEC_LZ4 )
+		l_status = vbk$lz4_pack(a_src, a_len, a_dst, a_cap, a_outlen);
+	else	{
+		l_eff	= (l_codec == VBK$K_CODEC_DEFLATE) ? (a_level - 1) : (a_level - 5);
+
+		/* The probe: the head by the fast effort, in the room of the record itself */
+		if ( (a_len >= (2 * VBK$K_LZ4PROBE)) && (l_cap >= VBK$K_LZ4PROBE) )
+			{
+			l_status = (l_codec == VBK$K_CODEC_DEFLATE) ? vbk$dfl_compress(a_src, VBK$K_LZ4PROBE, a_dst, VBK$K_LZ4PROBE, &l_plen, 1)
+								    : vbk$lzm_compress(a_src, VBK$K_LZ4PROBE, a_dst, VBK$K_LZ4PROBE, &l_plen, 1);
+
+			if ( !(1 & l_status) || ((l_plen * 100ULL) > (VBK$K_LZ4PROBE * 97ULL)) )
+				return	STS$K_WARN;
+			}
+
+		l_status = (l_codec == VBK$K_CODEC_DEFLATE) ? vbk$dfl_compress(a_src, a_len, a_dst, l_cap, a_outlen, l_eff)
+							    : vbk$lzm_compress(a_src, a_len, a_dst, l_cap, a_outlen, l_eff);
+
+		l_status = ((1 & l_status) && ((*a_outlen + 4) < a_len)) ? STS$K_SUCCESS : STS$K_WARN;
+		}
+
+	if ( l_status != STS$K_SUCCESS )
+		return	STS$K_WARN;
+
+	/* Back, and compared: only what comes back the same is written compressed */
+	if ( (STS$K_SUCCESS != s_vbk$unpack(l_codec, a_dst, *a_outlen, a_check, a_len)) || memcmp(a_check, a_src, a_len) )
+		return	STS$K_ERROR;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
 **  A length beyond the nibble, read: none of it may pass <a_max>
 */
 static	int	s_vbk$getlen	(
@@ -418,10 +539,11 @@ uint32_t	l_raw;
 	*a_off	  = vbk$get64(a_body + 8);
 	l_raw	  = vbk$get32(a_body + 16);
 
-	if ( (vbk$get32(a_body + 4) != VBK$K_CODEC_LZ4) || (l_raw > VBK$K_MAXDATA) )
+	if ( l_raw > VBK$K_MAXDATA )
 		return	STS$K_ERROR;
 
-	if ( !(1 & vbk$lz4_decompress(a_body + VBK$K_DATAZHDR, a_len - VBK$K_DATAZHDR, a_scratch, l_raw)) )
+	/* An unknown codec: the file is reported damaged, never filled with wrong octets */
+	if ( STS$K_SUCCESS != s_vbk$unpack(vbk$get32(a_body + 4), a_body + VBK$K_DATAZHDR, a_len - VBK$K_DATAZHDR, a_scratch, l_raw) )
 		return	STS$K_ERROR;
 
 	*a_data	= a_scratch;

@@ -451,6 +451,22 @@ Getting a small box back is the same as always, nothing to add:
 vbackup /mnt/usb/ivan.bck /home/ivan/restored
 ```
 
+**Even smaller.** Add `/LEVEL=` and a number from 1 to 9. The bigger the
+number, the smaller the box, and the longer it takes to make it. Getting
+the files back is fast at every number.
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6
+```
+
+`/LEVEL=1` is the fast one (the same as `/DATA_FORMAT=COMPRESSED`);
+`/LEVEL=5` is like zip; `/LEVEL=9` is like 7-Zip. Letters shrink about
+2 times at 1, almost 4 at 5, and 4.5 at 9.
+
+**Is it safe?** Yes. VBACKUP unpacks every piece right after it packs it
+and compares it with your file. Only a piece that comes back the same is
+kept packed.
+
 **Careful:** an old VBACKUP (before X01-04) does not understand a small box.
 It says the files are damaged:
 

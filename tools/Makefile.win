@@ -17,6 +17,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-02 : lib/vbkdfl.c, lib/vbklzm.c - codecs 2 and 3.
+#
 #		 4-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
@@ -26,7 +28,7 @@ ifeq ($(origin CC),default)
 CC	= x86_64-w64-mingw32-gcc
 endif
 
-SRC	= tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c
+SRC	= tools/vbkx.c lib/vbkfmt.c lib/vbkrd.c lib/vbklz4.c lib/vbkdfl.c lib/vbklzm.c lib/vbkcrp.c lib/vbkvms.c lib/vbkrs.c
 HDR	= lib/vbkos.h lib/vbkfmt.h lib/vbkrd.h lib/vbklz4.h lib/vbkcrp.h
 
 all: vbkx.exe

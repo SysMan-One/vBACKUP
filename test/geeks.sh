@@ -28,6 +28,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-19 : Codecs 2 and 3 (/LEVEL=3, /LEVEL=8): the same as VBKX,
+#						and rounds of damage with ZBODY on both.
+#
 #		 5-OCT-2026	RRL	X-14 : Version 2 (/PARITY): three bad blocks of a group
 #					rebuilt, four lost; encrypted, two rebuilt.
 #
@@ -331,6 +334,15 @@ $VX x zbase/x.bck -C zref > zref.log 2>&1
 LZREF=0
 python3 -c "import lz4.block" 2>/dev/null && python3 g.py lz4ref lzref.bck lzref.src && LZREF=1
 
+#	Codecs 2 and 3 (format.md 6.7.2, 6.7.3): /LEVEL=3 Deflate, /LEVEL=8 LZMA
+for ZL in 3 8; do
+	mkdir z${ZL}base
+	$VB src/tree z${ZL}base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=200000 /LEVEL=$ZL > z${ZL}save.log 2>&1
+	[ $? = 0 ] && [ -e z${ZL}base/x.bck.002 ] || bail "the /LEVEL=$ZL saveset could not be made: $(cat z${ZL}save.log)"
+	TZ=UTC $VX l z${ZL}base/x.bck > z${ZL}ref.lst 2>&1
+	$VX x z${ZL}base/x.bck -C z${ZL}ref > z${ZL}ref.log 2>&1
+done
+
 #	The same tree encrypted (/ENCRYPT, format.md 6.10): a key file only its owner may read,
 #	1000 rounds of PBKDF2 to be quick; and one compressed, of 16 KB blocks
 echo "geeks' passphrase" > key && chmod 600 key
@@ -401,6 +413,16 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	$G t zbase/x.bck > $N.zt 2>&1
 	check '[ $? = 0 ] && grep -q "all checksums match" $N.zt' "$N t of DATAZ: $(cat $N.zt)"
 
+	#	1d. Deflate and LZMA: the listing of VBKX, the tree of the uncompressed saveset, the checksums
+	for ZL in 3 8; do
+		$G l z${ZL}base/x.bck > $N.z${ZL}lst 2>&1
+		check '[ $? = 0 ] && cmp -s $N.z${ZL}lst z${ZL}ref.lst' "$N l of /LEVEL=$ZL: the listing differs from vbkx l, $(diff z${ZL}ref.lst $N.z${ZL}lst | head -4)"
+		$G x z${ZL}base/x.bck -C $N.z${ZL}out > $N.z${ZL}log 2>&1
+		check '[ $? = 0 ] && same z${ZL}ref $N.z${ZL}out && same ref $N.z${ZL}out' "$N x of /LEVEL=$ZL: the tree differs, $(head -3 $N.z${ZL}log)"
+		$G t z${ZL}base/x.bck > $N.z${ZL}t 2>&1
+		check '[ $? = 0 ] && grep -q "all checksums match" $N.z${ZL}t' "$N t of /LEVEL=$ZL: $(cat $N.z${ZL}t)"
+	done
+
 	#	1r. DATAZ records of the reference compressor, in its default, fast and high modes
 	if [ $LZREF = 1 ]; then
 		$G x lzref.bck -C $N.lz > $N.lzlog 2>&1
@@ -420,13 +442,16 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	#	   which the block CRC cannot catch: the decoder and the file CRC must
 	#	   On the encrypted saveset (-k key) too, at most 6 rounds: the TAGs and the repair
 	#	   of ciphertext under damage
-	for BASE in base zbase ebase; do
+	for BASE in base zbase z3base z8base ebase; do
 	KO=
 	RMAX=$ROUNDS
 	if [ $BASE = ebase ]; then
 		KO="-k key"
 		[ "$RMAX" -gt 6 ] && RMAX=6
 	fi
+
+	#	Deflate and LZMA: 8 rounds each, every second one inside their compressed bytes
+	case $BASE in z3base|z8base) [ "$RMAX" -gt 8 ] && RMAX=8 ;; esac
 	r=1
 	while [ $r -le "$RMAX" ]; do
 		case $((r % 3)) in
@@ -435,6 +460,7 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 			0) MODE=CHAOS ;;
 		esac
 		[ $BASE = zbase ] && [ $((r % 4)) = 0 ] && MODE=ZBODY
+		case $BASE in z3base|z8base) [ $((r % 2)) = 0 ] && MODE=ZBODY ;; esac
 		RS=$((SEED * 1000 + r))
 		rm -rf d o o2
 		cp -r $BASE d
