@@ -13,6 +13,7 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 7-OCT-2026	RRL	X-23 : VBACKUP_CTHREADS: the decompression of a restore too.
 .\"		 7-OCT-2026	RRL	X-22 : /SOLID groups of 256 KB, a cut SOLID salvaged;
 .\"					/COMPARE, /VERIFY count files of the catalog not
 .\"					in the stream; NOTINSTREAM.
@@ -302,7 +303,8 @@ default.
 .TP
 .B VBACKUP_CTHREADS
 The threads of the encryption (the stripes of a block, the blocks of a
-group when reading); the cores by default (at most 8), 1 \- none.
+group when reading) and, since X01-23, of the decompression of a restore,
+/COMPARE and /VERIFY; the cores by default (at most 8), 1 \- none.
 .TP
 .B VBACKUP_NOSIMD
 1 \- the parity of /PARITY by the portable code even where the CPU has

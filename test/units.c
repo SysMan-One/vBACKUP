@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-22"
-#define	__REV__		"1.22.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -26,6 +26,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		Batch mode: the records read ahead and decompressed on the pool are
+**		those of one record at a time, whole and with blocks lost.
 **
 **	X01-22		 7-OCT-2026	RRL
 **		A stream cut short: what VBK$DATA_SALVAGE gives is the beginning of the
@@ -516,6 +520,142 @@ int		l_n = 0;
 	vbk$rd_close(&l_rctx);
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  A saveset of version 3 for the batch: FILE, DATAZ, SOLID and FEND
+**  records of all levels, mixed, <a_grpsz> 0 - no repair at all
+*/
+static	int	s_bwrite	(
+	const	char *		a_name,
+		uint32_t	a_grpsz
+			)
+{
+static	uint8_t	l_raw [300000], l_z [VBK$K_SOLIDHDR + VBK$LZ4_BOUND(300000)], l_chk [300000];
+VBK$WCTX	l_wctx = {0};
+VBK$TLVB	l_sum = {0}, l_trl = {0};
+char		l_spec [1100];
+uint32_t	l_zlen, l_codec, l_nvols, l_n;
+uint64_t	l_nblocks;
+
+	snprintf(l_spec, sizeof(l_spec), "%s/%s", s_dir, a_name);
+	vbk$tlv_str(&l_sum, VBK$K_TAG_PRODUCT, "VBACKUP UNITS");
+	vbk$tlv_u32(&l_sum, VBK$K_TAG_BLOCKSIZE, UNITS$K_BSZ);
+	vbk$tlv_u32(&l_sum, VBK$K_TAG_GROUPSIZE, a_grpsz);
+	l_wctx.solid = 1;
+
+	if ( !(1 & vbk$wrt_open(&l_wctx, l_spec, UNITS$K_BSZ, a_grpsz, 0, VBK$M_WRT_REPLACE, l_sum.buf, l_sum.len)) )
+		return	STS$K_ERROR;
+
+	for ( uint32_t i = 0; i < 120; i++ )
+		{
+		uint32_t	l_len = 1000 + (i * 7919) % 60000;
+		int		l_lev = 1 + (int) (i % VBK$K_ZLEVELS);
+
+		for ( uint32_t k = 0; k < l_len; k++ )
+			l_raw [VBK$K_DATAZHDR + k] = (uint8_t) "the records of a batch, decompressed at once " [(k * (i % 5 + 1) + k / 41) % 45];
+
+		vbk$wrt_record(&l_wctx, VBK$K_RT_FILE, l_raw, 40, NULL);
+
+		if ( i % 3 )
+			{
+			/* A DATAZ */
+			vbk$data_pack(l_lev, l_raw + VBK$K_DATAZHDR, l_len, l_z + VBK$K_DATAZHDR, sizeof(l_z) - VBK$K_DATAZHDR, &l_zlen, &l_codec, l_chk);
+			vbk$put32(l_z, i);
+			vbk$put32(l_z + 4, l_codec);
+			vbk$put64(l_z + 8, (uint64_t) i * 4096);
+			vbk$put32(l_z + 16, l_len);
+			vbk$wrt_record(&l_wctx, VBK$K_RT_DATAZ, l_z, VBK$K_DATAZHDR + l_zlen, NULL);
+			}
+		else	{
+			/* A SOLID of three files */
+			l_n = 0;
+
+			for ( int f = 0; f < 3; f++ )
+				{
+				l_n = s_inner(l_chk, l_n, VBK$K_RT_FILE, 30, (uint8_t) ('a' + f));
+				vbk$put16(l_chk + l_n, VBK$K_RT_DATA);
+				vbk$put16(l_chk + l_n + 2, 0);
+				vbk$put32(l_chk + l_n + 4, VBK$K_DATAHDR + l_len / 4);
+				memset(l_chk + l_n + VBK$K_RECHDR, 0, VBK$K_DATAHDR);
+				memcpy(l_chk + l_n + VBK$K_RECHDR + VBK$K_DATAHDR, l_raw + VBK$K_DATAZHDR + f, l_len / 4);
+				l_n += VBK$K_RECHDR + VBK$K_DATAHDR + l_len / 4;
+				l_n = s_inner(l_chk, l_n, VBK$K_RT_FEND, 20, (uint8_t) ('e' + f));
+				}
+
+			vbk$data_pack(l_lev, l_chk, l_n, l_z + VBK$K_SOLIDHDR, sizeof(l_z) - VBK$K_SOLIDHDR, &l_zlen, &l_codec, l_raw + 200000);
+			vbk$put32(l_z, l_codec);
+			vbk$put32(l_z + 4, l_n);
+			vbk$put32(l_z + 8, 3);
+			vbk$wrt_record(&l_wctx, VBK$K_RT_SOLID, l_z, VBK$K_SOLIDHDR + l_zlen, NULL);
+			}
+
+		vbk$wrt_record(&l_wctx, VBK$K_RT_FEND, l_raw, 20, NULL);
+		}
+
+	vbk$wrt_record(&l_wctx, VBK$K_RT_END, l_raw, 8, NULL);
+	vbk$wrt_finish(&l_wctx, &l_nblocks, &l_nvols);
+	vbk$tlv_u64(&l_trl, VBK$K_TAG_NBLOCKS, l_nblocks);
+	vbk$tlv_u32(&l_trl, VBK$K_TAG_NVOLS, l_nvols);
+
+	if ( !(1 & vbk$wrt_close(&l_wctx, l_trl.buf, l_trl.len)) )
+		return	STS$K_ERROR;
+
+	vbk$tlv_free(&l_sum);
+	vbk$tlv_free(&l_trl);
+
+	return	STS$K_SUCCESS;
+}
+
+/*
+**  The records of a saveset, one way or the other, as a digest: each a
+**  CRC of its type, a DATAZ as the DATA it stands for, its resync and
+**  INSOLID; their number
+*/
+static	uint32_t	s_bread	(
+	const	char *		a_name,
+		int		a_batch,
+		uint32_t *	a_dig,
+		uint32_t	a_max
+			)
+{
+static	uint8_t	l_zb [VBK$K_MAXDATA];
+VBK$RCTX	l_r = {0};
+char		l_spec [1100];
+const uint8_t *	l_body, *l_data;
+uint32_t	l_len, l_n = 0, l_fno, l_dn;
+uint64_t	l_off;
+uint16_t	l_type;
+
+	snprintf(l_spec, sizeof(l_spec), "%s/%s", s_dir, a_name);
+
+	if ( !(1 & vbk$rd_open(&l_r, l_spec, NULL, NULL)) )
+		return	0;
+
+	if ( a_batch )
+		vbk$rd_batch(&l_r);
+
+	while ( (l_n < a_max) && (1 & vbk$rd_next(&l_r, &l_type, &l_body, &l_len, NULL)) )
+		{
+		uint32_t	l_c = l_type | (l_r.resync << 8) | (l_r.insolid << 9);
+
+		if ( ((l_type == VBK$K_RT_DATA) || (l_type == VBK$K_RT_DATAZ))
+			&& (STS$K_SUCCESS == vbk$data_get(l_type, l_body, l_len, l_zb, &l_fno, &l_off, &l_data, &l_dn)) )
+			{
+			l_c	= VBK$K_RT_DATA | (l_r.resync << 8) | (l_r.insolid << 9);
+			l_c	= $VBK_CRC(l_c, &l_fno, sizeof(l_fno));
+			l_c	= $VBK_CRC(l_c, &l_off, sizeof(l_off));
+			l_c	= $VBK_CRC(l_c, l_data, l_dn);
+			}
+		else	l_c = $VBK_CRC(l_c, l_body, l_len);
+
+		a_dig [l_n++] = l_c;
+		}
+
+	vbk$rd_close(&l_r);
+
+	return	l_n;
 }
 
 
@@ -1383,6 +1523,38 @@ char		l_spec [1100];
 	vbk$put32(l_z + 4, l_n);
 	vbk$put32(l_z + 8, 2);
 	$CHECK((1 & s_solid("sol12.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S4S2S3S4"), "whole: %s", l_got);
+	}
+
+	s_begin("Batch mode: the records read ahead and decompressed on the pool, those of one at a time");
+	{
+	static	uint32_t	l_d1 [4096], l_d2 [4096];
+	uint32_t	l_n1, l_n2, l_bad = 0;
+
+	vbk$par_init();
+
+	for ( int l_case = 0; l_case < 3; l_case++ )
+		{
+		const char *	l_name = l_case ? "bat1.bck" : "bat0.bck";
+
+		if ( l_case < 2 )
+			$CHECK(1 & s_bwrite(l_name, l_case ? 0 : 6), "the batch saveset %s not written", l_name);
+
+		/* Blocks lost: no repair - the gaps, the SOLIDs cut, the same both ways */
+		if ( l_case == 2 )
+			for ( uint64_t b = 7; b < 200; b += 23 )
+				s_zap(l_name, 1, b);
+
+		l_n1 = s_bread(l_name, 0, l_d1, 4096);
+		l_n2 = s_bread(l_name, 1, l_d2, 4096);
+
+		if ( (l_n1 != l_n2) || (l_n1 < 100) || memcmp(l_d1, l_d2, l_n1 * sizeof(l_d1 [0])) )
+			{
+			l_bad++;
+			$NOTE("case %d: %u records one at a time, %u in batches", l_case, l_n1, l_n2);
+			}
+		}
+
+	$CHECK(!l_bad, "%u of 3 savesets read otherwise in batches", l_bad);
 	}
 
 	if ( s_tap )

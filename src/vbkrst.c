@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-22"
-#define	__REV__		"1.22.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		Restore in batch mode (VBK$RD_BATCH): the compressed records
+**		decompressed on all the threads.
 **
 **	X01-22		 7-OCT-2026	RRL
 **		The catalog always set against the FILE records read, not only after a
@@ -1441,6 +1445,9 @@ unsigned	l_nbases = 0;
 		l_rst->nbases	= l_nbases;
 		l_bases		= NULL;
 		}
+
+	/* The records read ahead, decompressed on all the threads (X01-23) */
+	vbk$rd_batch(&l_rctx);
 
 	while ( 1 & vbk$rd_next(&l_rctx, &l_type, &l_body, &l_len, NULL) )
 		{

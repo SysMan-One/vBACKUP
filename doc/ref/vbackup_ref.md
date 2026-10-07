@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-21.
+VBACKUP X01-22.
 
-**Software Version:** VBACKUP X01-22
+**Software Version:** VBACKUP X01-23
 
 **Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
 vbackup.exe, vbkx.exe and the WCX plugin
@@ -22,7 +22,7 @@ vbackup.exe, vbkx.exe and the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-22 as built from
+The information in this document reflects VBACKUP X01-23 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -751,6 +751,7 @@ cache after a save; that is intended.
 | Writer | Writes the blocks of the saveset, while the main thread reads files and builds blocks. | 1; `VBACKUP_PIPELINE=0` writes without it. |
 | Read-ahead | Opens and reads the first megabyte of the next files of the walk, so that the save or copy finds them in the cache; at most 128 files and 64 MB ahead. | 8 by default; `VBACKUP_PREFETCH=n`, at most 64, 0 -- none. |
 | Compression | Compresses the data of a save `/DATA_FORMAT=COMPRESSED`; the main thread writes the records in order. | The number of processors, at most 8; `VBACKUP_ZTHREADS=n`, 1 -- none. |
+| Decompression | Restore, `/COMPARE` and `/VERIFY` (since X01-23): the records are read ahead, up to 4 a thread and 64 MB, the DATAZ and SOLID among them decompressed side by side, then handed out in their order. | The threads of the encryption: `VBACKUP_CTHREADS=n`, 1 -- one record at a time. |
 | Encryption | Writing: the encrypted data blocks waiting for the writer sealed (ChaCha20 and tag) side by side, each whole, while the writer thread computes the XOR blocks and the CRCs in order; without the writer thread, the key stream of a block in stripes. Reading: the tags of the blocks of a group checked and the blocks decrypted side by side. | The number of processors, at most 8; `VBACKUP_CTHREADS=n`, 1 -- none. |
 
 No thread changes the saveset: with any number of threads the same input
@@ -2645,7 +2646,7 @@ vbkx-rs and vbkx-pl.
 | `VBACKUP_KDFITER` | The PBKDF2 iteration count of a save `/ENCRYPT`, at least 1000; values below are ignored. For tests only -- do not lower it for real savesets. The count is stored in the saveset. |
 | `VBACKUP_NOSIMD` | `1` -- compute the parity of `/PARITY` by the portable code even where the processor has vector instructions for it (AVX2, SSSE3 on x86; NEON on aarch64); for trouble-shooting. |
 | `VBACKUP_NOHWCRYPTO` | `1` -- compute SHA-256 by the portable code even where the processor has instructions for it (aarch64); for trouble-shooting. |
-| `VBACKUP_CTHREADS` | The threads of the encryption, the caller included: the number of processors by default, at most 8; `1` -- none. |
+| `VBACKUP_CTHREADS` | The threads of the encryption and of the decompression of a restore, `/COMPARE`, `/VERIFY` (X01-23), the caller included: the number of processors by default, at most 8; `1` -- none. |
 | `VBACKUP_ZTHREADS` | The threads that compress a save `/DATA_FORMAT=COMPRESSED`: the number of processors by default, at most 8; `1` or less -- none. |
 | `VBACKUP_PIPELINE` | `0` -- the saveset is written without the writer thread, for trouble-shooting. The hints to the page cache stay; the saveset is the same. |
 | `VBACKUP_PREFETCH` | The threads that read the next files ahead in a save or a copy: 8 by default, at most 64; `0` -- none. More may help on NFS or a slow network disk, fewer on a single slow hard disk. |

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-22"
-#define	__REV__		"1.22.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -31,6 +31,13 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		VBK$RD_NEXT in two layers: S_VBK$RAW reads a record as it lies there,
+**		the SOLID opened above it.  Batch mode (VBK$RD_BATCH): records read
+**		ahead, up to 4 a thread, the DATAZ and SOLID among them decompressed at
+**		once through the pool of the utility (VBK$CRP_PAR), handed out in their
+**		order - a DATAZ as its DATA record.
 **
 **	X01-22		 7-OCT-2026	RRL
 **		A SOLID cut by lost blocks: what is there of it before the gap is
@@ -96,6 +103,8 @@
 
 #define	VBK$K_RECINI	(VBK$K_MAXDATA + VBK$K_DATAHDR)	/* First allocation of the record buffer */
 
+
+static	void	s_vbk$bfree	(VBK$RCTX *a_ctx);
 
 static	void	s_vbk$event	(
 		VBK$RCTX *	a_ctx,
@@ -836,7 +845,8 @@ void	vbk$rd_close	(
 	free(a_ctx->trlraw);
 	free(a_ctx->gbuf);
 	free(a_ctx->rec);
-	free(a_ctx->sol);
+	free(a_ctx->solbuf);
+	s_vbk$bfree(a_ctx);
 	a_ctx->solgap	= 0;
 
 	vbk$crp_wipe(a_ctx, sizeof(*a_ctx));
@@ -850,9 +860,11 @@ int	vbk$rd_rewind	(
 		VBK$RCTX *	a_ctx
 			)
 {
-	/* A SOLID being read is left behind */
+	/* A SOLID being read is left behind, and what was read ahead */
 	a_ctx->sollen = a_ctx->solpos = 0;
 	a_ctx->solgap = 0;
+	a_ctx->bn = a_ctx->bpos = 0;
+	a_ctx->bend = 0;
 
 	/*
 	**  A stream goes back only within the first group, while it is still
@@ -1557,12 +1569,14 @@ uint32_t	l_raw;
 		{
 		uint8_t *	l_p;
 
-		if ( !(l_p = realloc(a_ctx->sol, l_raw)) )
+		if ( !(l_p = realloc(a_ctx->solbuf, l_raw)) )
 			return	a_ctx->err = ENOMEM, STS$K_FATAL;
 
-		a_ctx->sol	= l_p;
+		a_ctx->solbuf	= l_p;
 		a_ctx->solsz	= l_raw;
 		}
+
+	a_ctx->sol	= a_ctx->solbuf;
 
 	if ( STS$K_SUCCESS != vbk$data_unpack(vbk$get32(a_ctx->rec), a_ctx->rec + VBK$K_SOLIDHDR, a_len - VBK$K_SOLIDHDR, a_ctx->sol, l_raw) )
 		return	STS$K_ERROR;
@@ -1598,12 +1612,14 @@ uint32_t	l_raw, l_good = 0;
 		{
 		uint8_t *	l_p;
 
-		if ( !(l_p = realloc(a_ctx->sol, l_raw)) )
+		if ( !(l_p = realloc(a_ctx->solbuf, l_raw)) )
 			return	STS$K_ERROR;
 
-		a_ctx->sol	= l_p;
+		a_ctx->solbuf	= l_p;
 		a_ctx->solsz	= l_raw;
 		}
+
+	a_ctx->sol	= a_ctx->solbuf;
 
 	vbk$data_salvage(vbk$get32(a_ctx->rec), a_ctx->rec + VBK$K_SOLIDHDR, a_got - VBK$K_SOLIDHDR, a_ctx->sol, l_raw, &l_good);
 
@@ -1654,6 +1670,320 @@ uint16_t	l_type;
 
 
 /*
+**  The next record of the stream as it lies there - a SOLID not opened.
+**  <a_rs> - a gap before it already; R.RESYNC - a gap before what is
+**  returned.  A SOLID of version 3 whose body a loss (R.CUT 1) or the end
+**  of the stream (R.CUT 2) cut is returned with the R.GOT octets there
+**  are; any other record so cut is dropped (a gap), or ends the stream.
+*/
+typedef struct vbk_rawrec_t
+{
+	uint16_t	type;
+	uint32_t	len, got;
+	VBK$LOC		loc;
+	int		resync, cut;
+} VBK$RAWREC;
+
+static	int	s_vbk$raw	(
+		VBK$RCTX *	a_ctx,
+		VBK$RAWREC *	a_r,
+		int		a_rs
+			)
+{
+uint32_t	l_len, l_got, l_n;
+uint16_t	l_type;
+int		l_status;
+
+	a_r->resync = a_rs;
+	a_r->cut    = 0;
+
+	for ( ;; )
+		{
+		/* A record header: never split, so it is wholly in one payload */
+		while ( !a_ctx->pay || (a_ctx->payoff >= a_ctx->paylen) )
+			{
+			/* STS$K_INFO is of the success class, but means a loss here - so it is compared, not masked */
+			if ( STS$K_SUCCESS != (l_status = s_vbk$nextpay(a_ctx)) )
+				{
+				if ( l_status == STS$K_INFO )
+					{
+					a_r->resync = 1;
+					continue;
+					}
+
+				return	l_status;
+				}
+			}
+
+		l_type	= 0;
+
+		if ( (a_ctx->paylen - a_ctx->payoff) < VBK$K_RECHDR )
+			l_len	= VBK$K_MAXREC + 1;
+		else	{
+			l_type	= vbk$get16(a_ctx->pay + a_ctx->payoff);
+			l_len	= vbk$get32(a_ctx->pay + a_ctx->payoff + 4);
+			}
+
+		if ( !l_type || (l_len > VBK$K_MAXREC) )
+			{
+			/* Garbage where a header should be: treated as a loss, the stream is picked up again */
+			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
+
+			a_ctx->gap	= 1;
+			a_ctx->pay	= NULL;
+			continue;
+			}
+
+		a_r->loc.vol	= a_ctx->payvol;
+		a_r->loc.blk	= a_ctx->payblk;
+		a_r->loc.off	= a_ctx->payoff;
+		a_ctx->payoff	+= VBK$K_RECHDR;
+
+		if ( l_len > a_ctx->recsz )
+			{
+			uint8_t *	l_p;
+
+			if ( !(l_p = realloc(a_ctx->rec, l_len)) )
+				{
+				a_ctx->err	= ENOMEM;
+
+				return	STS$K_FATAL;
+				}
+
+			a_ctx->rec	= l_p;
+			a_ctx->recsz	= l_len;
+			}
+
+		/* The body, through as many payloads as it takes */
+		for ( l_got = 0, l_status = STS$K_SUCCESS; l_got < l_len; )
+			{
+			if ( a_ctx->payoff >= a_ctx->paylen )
+				if ( STS$K_SUCCESS != (l_status = s_vbk$nextpay(a_ctx)) )
+					break;
+
+			l_n	= a_ctx->paylen - a_ctx->payoff;
+			l_n	= (l_n < (l_len - l_got)) ? l_n : (l_len - l_got);
+
+			memcpy(a_ctx->rec + l_got, a_ctx->pay + a_ctx->payoff, l_n);
+
+			l_got		+= l_n;
+			a_ctx->payoff	+= l_n;
+			}
+
+		a_r->type = l_type;
+		a_r->len  = l_len;
+		a_r->got  = l_got;
+
+		if ( (l_status == STS$K_INFO) || (l_status == STS$K_WARN) )
+			{
+			/* Of a SOLID cut short the records before the cut are good: returned so, to be read as far as they go */
+			if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3) && (l_got > VBK$K_SOLIDHDR) )
+				{
+				a_r->cut = (l_status == STS$K_INFO) ? 1 : 2;
+
+				return	STS$K_SUCCESS;
+				}
+
+			/* Lost in the middle of the body: what is there is dropped, a new header is at hand */
+			if ( l_status == STS$K_INFO )
+				{
+				a_r->resync = 1;
+				continue;
+				}
+
+			/* The stream ends inside the record - a cut-short saveset */
+			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
+			a_r->resync = 1;
+
+			return	STS$K_WARN;
+			}
+
+		return	STS$K_SUCCESS;
+		}
+}
+
+
+/*
+**  Batch mode (VBK$RD_BATCH): records read ahead, the DATAZ and SOLID
+**  among them decompressed at once on the threads of the pool, handed
+**  out in their order - a DATAZ as the DATA record it stands for.
+*/
+typedef struct vbk_bslot_t
+{
+	VBK$RAWREC	r;
+	uint8_t *	raw;			/* The body as read				*/
+	uint8_t *	dec;			/* ... decompressed: a DATA body, the records of a SOLID */
+	size_t		rawsz, decsz;
+	uint32_t	declen;
+	int		decst;			/* STS$K_SUCCESS - DEC holds it			*/
+} VBK$BSLOT;
+
+#define	VBK$K_BATCHMAX	64			/* Records read ahead at most			*/
+#define	VBK$K_BATCHOCT	(64 * 1048576)		/* ... octets of them at most			*/
+
+static	void	s_vbk$bfree	(
+		VBK$RCTX *	a_ctx
+			)
+{
+VBK$BSLOT *	l_b = (VBK$BSLOT *) a_ctx->bslot;
+
+	for ( uint32_t i = 0; l_b && (i < VBK$K_BATCHMAX); i++ )
+		{
+		free(l_b [i].raw);
+		free(l_b [i].dec);
+		}
+
+	free(l_b);
+	a_ctx->bslot = NULL;
+	a_ctx->bn = a_ctx->bpos = 0;
+	a_ctx->bend = 0;
+}
+
+/*
+**  One job of the pool: a slot decompressed - a SOLID whole, or as far as
+**  it goes when cut; a DATAZ into the DATA record it stands for
+*/
+static	void	s_vbk$bjob	(
+		void *		a_arg,
+		uint32_t	a_i
+			)
+{
+VBK$RCTX *	l_ctx = (VBK$RCTX *) a_arg;
+VBK$BSLOT *	l_s = &((VBK$BSLOT *) l_ctx->bslot) [l_ctx->bmap [a_i]];
+uint32_t	l_raw, l_good = 0, l_need;
+
+	l_s->decst = STS$K_ERROR;
+
+	if ( l_s->r.type == VBK$K_RT_SOLID )
+		{
+		uint32_t	l_in = l_s->r.cut ? l_s->r.got : l_s->r.len;
+
+		if ( (l_in < VBK$K_SOLIDHDR) || ((l_raw = vbk$get32(l_s->raw + 4)) > VBK$K_MAXSOLID) || (l_raw < VBK$K_RECHDR) )
+			return;
+
+		l_need	= l_raw;
+		}
+	else	{
+		if ( (l_s->r.len < VBK$K_DATAZHDR) || ((l_raw = vbk$get32(l_s->raw + 16)) > VBK$K_MAXDATA) )
+			return;
+
+		l_need	= VBK$K_DATAHDR + l_raw;
+		}
+
+	if ( l_need > l_s->decsz )
+		{
+		uint8_t *	l_p;
+
+		if ( !(l_p = realloc(l_s->dec, l_need)) )
+			return;
+
+		l_s->dec   = l_p;
+		l_s->decsz = l_need;
+		}
+
+	if ( l_s->r.type == VBK$K_RT_SOLID )
+		{
+		if ( l_s->r.cut )
+			{
+			vbk$data_salvage(vbk$get32(l_s->raw), l_s->raw + VBK$K_SOLIDHDR, l_s->r.got - VBK$K_SOLIDHDR, l_s->dec, l_raw, &l_good);
+
+			if ( l_good >= VBK$K_RECHDR )
+				l_s->declen = l_good, l_s->decst = STS$K_SUCCESS;
+			}
+		else if ( STS$K_SUCCESS == vbk$data_unpack(vbk$get32(l_s->raw), l_s->raw + VBK$K_SOLIDHDR, l_s->r.len - VBK$K_SOLIDHDR, l_s->dec, l_raw) )
+			l_s->declen = l_raw, l_s->decst = STS$K_SUCCESS;
+
+		return;
+		}
+
+	/* DATAZ: fileno, codec, offset, rawlen - into fileno, 0, offset and the octets */
+	if ( STS$K_SUCCESS == vbk$data_unpack(vbk$get32(l_s->raw + 4), l_s->raw + VBK$K_DATAZHDR, l_s->r.len - VBK$K_DATAZHDR, l_s->dec + VBK$K_DATAHDR, l_raw) )
+		{
+		memcpy(l_s->dec, l_s->raw, 4);
+		vbk$put32(l_s->dec + 4, 0);
+		memcpy(l_s->dec + 8, l_s->raw + 8, 8);
+		l_s->declen = VBK$K_DATAHDR + l_raw;
+		l_s->decst  = STS$K_SUCCESS;
+		}
+}
+
+/*
+**  The batch refilled: records read ahead up to its bounds or the end of
+**  the stream, their decompression shared out.  STS$K_SUCCESS - at least
+**  one slot, or BEND set; STS$K_FATAL - no memory.
+*/
+static	int	s_vbk$bfill	(
+		VBK$RCTX *	a_ctx,
+		int		a_rs
+			)
+{
+VBK$BSLOT *	l_b;
+VBK$RAWREC	l_r;
+uint64_t	l_oct = 0;
+uint32_t	l_ndec = 0;
+int		l_status;
+
+	if ( !a_ctx->bslot && !(a_ctx->bslot = calloc(VBK$K_BATCHMAX, sizeof(VBK$BSLOT))) )
+		return	a_ctx->err = ENOMEM, STS$K_FATAL;
+
+	l_b	= (VBK$BSLOT *) a_ctx->bslot;
+	a_ctx->bn = a_ctx->bpos = 0;
+
+	while ( (a_ctx->bn < a_ctx->batch) && (l_oct < VBK$K_BATCHOCT) )
+		{
+		VBK$BSLOT *	l_s = &l_b [a_ctx->bn];
+		uint32_t	l_have;
+
+		if ( STS$K_SUCCESS != (l_status = s_vbk$raw(a_ctx, &l_r, a_rs)) )
+			{
+			/* STS$K_WARN is 0: whether there is an end is a flag of its own */
+			a_ctx->bend   = 1;
+			a_ctx->bendst = l_status;
+			a_ctx->bendrs = l_r.resync;
+			break;
+			}
+
+		a_rs	= 0;
+		l_have	= l_r.cut ? l_r.got : l_r.len;
+
+		if ( l_have > l_s->rawsz )
+			{
+			uint8_t *	l_p;
+
+			if ( !(l_p = realloc(l_s->raw, l_have ? l_have : 1)) )
+				return	a_ctx->err = ENOMEM, STS$K_FATAL;
+
+			l_s->raw   = l_p;
+			l_s->rawsz = l_have;
+			}
+
+		memcpy(l_s->raw, a_ctx->rec, l_have);
+		l_s->r	   = l_r;
+		l_s->decst = STS$K_ERROR;
+		l_oct	  += l_have;
+		a_ctx->bn++;
+
+		/* The END: nothing after it is wanted now */
+		if ( l_r.type == VBK$K_RT_END )
+			break;
+		}
+
+	/* The slots to decompress, one job each; the others are handed out as they are */
+	for ( uint32_t i = 0; i < a_ctx->bn; i++ )
+		{
+		uint16_t	l_ty = l_b [i].r.type;
+
+		if ( (l_ty == VBK$K_RT_DATAZ) || ((l_ty == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3)) )
+			a_ctx->bmap [l_ndec++] = i;
+		}
+
+	vbk$crp_par(l_ndec, s_vbk$bjob, a_ctx);
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
@@ -1670,7 +2000,9 @@ uint16_t	l_type;
 **
 **  IMPLICIT INPUTS/OUTPUTS:
 **	RESYNC of the context tells whether blocks have been lost before
-**	this record.
+**	this record.  The records of a SOLID come one by one, INSOLID set
+**	(format.md 6.12).  In batch mode (VBK$RD_BATCH) a DATAZ comes as
+**	the DATA record it stands for when it decompresses.
 **
 **  RETURN VALUE:
 **	STS$K_SUCCESS	- a record has been returned;
@@ -1686,10 +2018,9 @@ int	vbk$rd_next	(
 		VBK$LOC *	a_loc
 			)
 {
-VBK$LOC		l_loc;
-uint32_t	l_len, l_got, l_n;
-uint16_t	l_type;
-int		l_status, l_resync = a_ctx->pendrs;
+VBK$RAWREC	l_r;
+const uint8_t *	l_body;
+int		l_status, l_resync = a_ctx->pendrs, l_dec = 0;
 
 	if ( a_ctx->crypt && !a_ctx->haskey )
 		{
@@ -1750,139 +2081,133 @@ int		l_status, l_resync = a_ctx->pendrs;
 			a_ctx->solgap	= 0;
 			}
 
-		/* A record header: never split, so it is wholly in one payload */
-		while ( !a_ctx->pay || (a_ctx->payoff >= a_ctx->paylen) )
+		/* The next record: of the batch, or of the stream itself */
+		if ( a_ctx->batch )
 			{
-			/* STS$K_INFO is of the success class, but means a loss here - so it is compared, not masked */
-			if ( STS$K_SUCCESS != (l_status = s_vbk$nextpay(a_ctx)) )
+			VBK$BSLOT *	l_s;
+
+			if ( a_ctx->bpos >= a_ctx->bn )
 				{
-				if ( l_status == STS$K_INFO )
+				if ( a_ctx->bend )
 					{
-					l_resync = 1;
-					continue;
+					a_ctx->resync	= l_resync | a_ctx->bendrs;
+
+					return	a_ctx->bendst;
 					}
 
-				a_ctx->resync	= l_resync;
+				if ( STS$K_SUCCESS != (l_status = s_vbk$bfill(a_ctx, l_resync)) )
+					return	l_status;
+
+				l_resync = 0;
+				continue;
+				}
+
+			l_s	= &((VBK$BSLOT *) a_ctx->bslot) [a_ctx->bpos++];
+			l_r	= l_s->r;
+			l_r.resync |= l_resync;
+			l_body	= l_s->raw;
+			l_dec	= (l_s->decst == STS$K_SUCCESS);
+
+			if ( l_dec && (l_r.type == VBK$K_RT_DATAZ) )
+				{
+				*a_type		= VBK$K_RT_DATA;
+				*a_body		= l_s->dec;
+				*a_len		= l_s->declen;
+				a_ctx->resync	= l_r.resync;
+				a_ctx->insolid	= 0;
+
+				if ( a_loc )
+					*a_loc	= l_r.loc;
+
+				return	STS$K_SUCCESS;
+				}
+
+			if ( l_r.type == VBK$K_RT_SOLID )
+				{
+				a_ctx->sol	= l_s->dec;
+				a_ctx->sollen	= l_dec ? l_s->declen : 0;
+				a_ctx->solpos	= 0;
+				a_ctx->solloc	= l_r.loc;
+				}
+			}
+		else	{
+			if ( STS$K_SUCCESS != (l_status = s_vbk$raw(a_ctx, &l_r, l_resync)) )
+				{
+				a_ctx->resync	= l_r.resync;
 
 				return	l_status;
 				}
-			}
 
-		l_type	= 0;
+			l_body	= a_ctx->rec;
 
-		if ( (a_ctx->paylen - a_ctx->payoff) < VBK$K_RECHDR )
-			l_len	= VBK$K_MAXREC + 1;
-		else	{
-			l_type	= vbk$get16(a_ctx->pay + a_ctx->payoff);
-			l_len	= vbk$get32(a_ctx->pay + a_ctx->payoff + 4);
-			}
-
-		if ( !l_type || (l_len > VBK$K_MAXREC) )
-			{
-			/* Garbage where a header should be: treated as a loss, the stream is picked up again */
-			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
-
-			a_ctx->gap	= 1;
-			a_ctx->pay	= NULL;
-			continue;
-			}
-
-		l_loc.vol	= a_ctx->payvol;
-		l_loc.blk	= a_ctx->payblk;
-		l_loc.off	= a_ctx->payoff;
-		a_ctx->payoff	+= VBK$K_RECHDR;
-
-		if ( l_len > a_ctx->recsz )
-			{
-			uint8_t *	l_p;
-
-			if ( !(l_p = realloc(a_ctx->rec, l_len)) )
+			/* Version 3: a SOLID is opened here, whole or as far as it is there */
+			if ( (l_r.type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3) )
 				{
-				a_ctx->err	= ENOMEM;
-
-				return	STS$K_FATAL;
+				if ( l_r.cut )
+					l_dec = (STS$K_SUCCESS == s_vbk$solcut(a_ctx, l_r.got, &l_r.loc));
+				else if ( STS$K_FATAL == (l_status = s_vbk$solopen(a_ctx, l_r.len, &l_r.loc)) )
+					return	STS$K_FATAL;
+				else	l_dec = (l_status == STS$K_SUCCESS);
 				}
-
-			a_ctx->rec	= l_p;
-			a_ctx->recsz	= l_len;
 			}
 
-		/* The body, through as many payloads as it takes */
-		for ( l_got = 0, l_status = STS$K_SUCCESS; l_got < l_len; )
+		l_resync = l_r.resync;
+
+		/* Version 3: the records of the SOLID from the top of the loop; one cut short - the gap after them */
+		if ( (l_r.type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3) )
 			{
-			if ( a_ctx->payoff >= a_ctx->paylen )
-				if ( STS$K_SUCCESS != (l_status = s_vbk$nextpay(a_ctx)) )
-					break;
-
-			l_n	= a_ctx->paylen - a_ctx->payoff;
-			l_n	= (l_n < (l_len - l_got)) ? l_n : (l_len - l_got);
-
-			memcpy(a_ctx->rec + l_got, a_ctx->pay + a_ctx->payoff, l_n);
-
-			l_got		+= l_n;
-			a_ctx->payoff	+= l_n;
-			}
-
-		if ( l_status == STS$K_INFO )
-			{
-			/* Lost in the middle of the body: what is there is dropped, a new header is at hand */
-			if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3)
-				&& (STS$K_SUCCESS == s_vbk$solcut(a_ctx, l_got, &l_loc)) )
+			if ( l_dec )
 				{
-				/* ... but of a SOLID the records before the gap are good: they come first, the gap after them */
-				a_ctx->solgap	= 1;
-				a_ctx->pendrs	= 0;
+				a_ctx->solgap	= l_r.cut;
 				continue;
 				}
 
-			l_resync = 1;
-			continue;
-			}
+			a_ctx->sollen = a_ctx->solpos = 0;
 
-		if ( l_status == STS$K_WARN )
-			{
-			/* ... the same for a SOLID the end of the stream cut: its records first, then the end */
-			if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3)
-				&& (STS$K_SUCCESS == s_vbk$solcut(a_ctx, l_got, &l_loc)) )
+			/* Nothing to be had of it: what it held is a gap, its files are named lost */
+			if ( l_r.cut != 2 )
 				{
-				a_ctx->solgap	= 2;
+				s_vbk$event(a_ctx, VBK$K_EV_BADREC, l_r.loc.vol, l_r.loc.blk);
+				l_resync = 1;
 				continue;
 				}
 
-			/* The stream ends inside the record - a cut-short saveset */
 			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
 			a_ctx->resync	= 1;
 
 			return	STS$K_WARN;
 			}
 
-		/* Version 3: a SOLID is opened, and its records returned from the top of the loop */
-		if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3) )
-			{
-			if ( STS$K_FATAL == (l_status = s_vbk$solopen(a_ctx, l_len, &l_loc)) )
-				return	STS$K_FATAL;
-
-			if ( l_status != STS$K_SUCCESS )
-				{
-				/* It does not open: what it held is a gap, its files are named lost */
-				s_vbk$event(a_ctx, VBK$K_EV_BADREC, l_loc.vol, l_loc.blk);
-				l_resync = 1;
-				}
-
-			continue;
-			}
-
-		*a_type		= l_type;
-		*a_body		= a_ctx->rec;
-		*a_len		= l_len;
+		*a_type		= l_r.type;
+		*a_body		= l_body;
+		*a_len		= l_r.len;
 		a_ctx->resync	= l_resync;
 		a_ctx->insolid	= 0;
 
 		if ( a_loc )
-			*a_loc	= l_loc;
+			*a_loc	= l_r.loc;
 
 		return	STS$K_SUCCESS;
 		}
+}
+
+
+/*
+**  Batch mode on: the records read ahead, their decompression shared by
+**  the threads of the pool (VBK$CRP_SETPAR).  Of no effect without one
+**  (vbkx, the plugins) or on a stream; to be called when the reading
+**  begins - after VBK$RD_SETKEY.
+*/
+void	vbk$rd_batch	(
+		VBK$RCTX *	a_ctx
+			)
+{
+uint32_t	l_n = vbk$crp_nthr();
+
+	if ( (l_n < 2) || a_ctx->isstream )
+		return;
+
+	a_ctx->batch	= ((4 * l_n) < VBK$K_BATCHMAX) ? (4 * l_n) : VBK$K_BATCHMAX;
 }
 
 
@@ -1915,9 +2240,11 @@ VBK$RVOL *	l_vol;
 uint64_t	l_pos, l_start;
 int		l_status;
 
-	/* A SOLID being read is left: the seek goes elsewhere */
+	/* A SOLID being read is left, and what was read ahead: the seek goes elsewhere */
 	a_ctx->sollen = a_ctx->solpos = 0;
 	a_ctx->solgap = 0;
+	a_ctx->bn = a_ctx->bpos = 0;
+	a_ctx->bend = 0;
 
 	/* A stream has no places to go to: it is read through, forward */
 	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) || (a_ctx->crypt && !a_ctx->haskey) || a_ctx->isstream )

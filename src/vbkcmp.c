@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCMP"
-#define	__IDENT__	"X01-22"
-#define	__REV__		"1.22.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -27,6 +27,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		Compare in batch mode (VBK$RD_BATCH).
 **
 **	X01-22		 7-OCT-2026	RRL
 **		The catalog set against the FILE records read: a file it has that the
@@ -499,6 +502,9 @@ int		l_status;
 	while ( (1 & vbk$tlv_next(l_cmp->rctx.summary, l_cmp->rctx.sumlen, &l_pos, &l_tag, &l_vlen, &l_val)) && (l_cmp->nbase < VBK$K_MAXBASE) )
 		if ( (l_tag == VBK$K_TAG_BASE) && (l_cmp->base [l_cmp->nbase] = strndup((const char *) l_val, l_vlen)) )
 			l_cmp->nbase++;
+
+	/* The records read ahead, decompressed on all the threads (X01-23) */
+	vbk$rd_batch(&l_cmp->rctx);
 
 	while ( 1 & vbk$rd_next(&l_cmp->rctx, &l_type, &l_body, &l_len, NULL) )
 		{

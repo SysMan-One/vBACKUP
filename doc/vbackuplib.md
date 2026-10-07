@@ -504,7 +504,8 @@ encrypted: it is a file of this system.
 
 The encryption runs on several cores: the key stream of a block in
 stripes, the blocks of a group checked and decrypted side by side when
-reading. VBACKUP_CTHREADS=n sets the threads, 1 - none.
+reading. VBACKUP_CTHREADS=n sets the threads, 1 - none; the same
+threads decompress a restore, /COMPARE and /VERIFY (since X01-23).
 
 How: ChaCha20 and HMAC-SHA256 per block, the keys from the passphrase
 by PBKDF2-HMAC-SHA256 with 600000 iterations and a random salt per
