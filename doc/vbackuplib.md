@@ -373,7 +373,7 @@ Deflate 3.2 to 3.7 times at 33 to 11 MB/s; LZMA at 6, 7 4.0 to 4.2 times
 at 12 to 8 MB/s; at 8, 9 - the optimal parse of xz - 4.8 times at 2 MB/s,
 as xz -6. All cores work (VBACKUP_ZTHREADS). Small files are packed
 together in groups (/SOLID), so a tree of them shrinks much more:
-/usr/include at /LEVEL=9 is 32 MB, 53 MB with /NOSOLID.
+/usr/include at /LEVEL=9 is 33 MB, 53 MB with /NOSOLID.
 
 Every piece VBACKUP compresses is decompressed again at once and
 compared with the data; only a piece that comes back the same is
@@ -394,17 +394,24 @@ Example: vbackup /home /mnt/usb/home.bck /LEVEL=6
 
 When the save compresses (/DATA_FORMAT=COMPRESSED or /LEVEL), small
 files - each 256 KB or less - are put together in groups of up to
-1 MB. Each group is compressed as one piece, a SOLID record: the
-files, their names and their attributes all together. Files that are
-alike then share what they have in common, and the saveset gets much
-smaller:
+256 KB (1 MB in X01-21). Each group is compressed as one piece, a
+SOLID record: the files, their names and their attributes all
+together. Files that are alike then share what they have in common,
+and the saveset gets much smaller:
 
 ```
 /usr/include (210 MB, 22444 files)   /NOSOLID     /SOLID
 /LEVEL=1                             81 MB        62 MB
-/LEVEL=6                             55.6 MB      35.8 MB
-/LEVEL=9                             53 MB        32 MB
+/LEVEL=6                             55.6 MB      37 MB
+/LEVEL=9                             53 MB        33 MB
+/usr/lib/python3 (512 MB)
+/LEVEL=6                             172 MB       152 MB
+/LEVEL=9                             163 MB       141 MB
 ```
+
+The groups of X01-21 were 1 MB: the saveset was a few per cent
+smaller (/usr/lib/python3 at /LEVEL=9 135 MB), but a bad day cost far
+more files (below).
 
 It is as fast as before. /SOLID alone does not compress. /NOSOLID puts
 every file in records of its own, as before X01-21.
@@ -416,12 +423,27 @@ $ vbackup /home /mnt/usb/old.bck /LEVEL=6 /NOSOLID
 ```
 
 The price: when blocks are lost and cannot be repaired - more bad
-blocks in one group than /PARITY repairs - every file of the group
-they touch is lost, up to 1 MB of small files (dozens of files), not
-just one. A restore names every one of them (FILLOST). With the
-default parity one bad block in a group is still repaired, as always.
-For a saveset that must live through heavy damage, give /PARITY=2 or
-more, or /NOSOLID.
+blocks in one group than /PARITY repairs - the files of the group from
+the damage on are lost, not just the one they were in. The files of
+the group before the damage still come back: what is there of the
+group is decompressed as far as it is exactly right, and each file
+whole in it is restored and checked by its checksum. The file at the
+damage is incomplete (FILDAMAGED), the files after it are named by
+FILLOST. The same for a saveset whose save was interrupted. VBACKUP
+does it since X01-22, for savesets of X01-21 too. Files lost per parity group
+damaged beyond repair (/usr/lib/python3/dist-packages):
+
+```
+                          /LEVEL=6   /LEVEL=1
+/NOSOLID                     19         11
+/SOLID, X01-21 (1 MB)        52         45
+/SOLID, X01-22 (256 KB)      24         22
+```
+
+A handful to a couple of dozen small files. With the default parity
+one bad block in a group is still repaired, as always. For a saveset
+that must live through heavy damage, give /PARITY=2 or more, or
+/NOSOLID.
 
 Every group is decompressed again and compared before it is written;
 a group that does not come back the same (ZCHECK), or does not
@@ -622,7 +644,10 @@ by root.
 
 After the saveset is written, VBACKUP reads it again and compares
 every file with the disk. A difference is reported with
-%VBACKUP-E-COMPARERR.
+%VBACKUP-E-COMPARERR. A file of the catalog that did not come out of
+the saveset - lost in bad blocks, or never there - is a difference
+too ("not compared"), so /VERIFY never says "Differences: 0" over a
+missing file.
 
 ## /LOG -- report every file
 
@@ -717,6 +742,11 @@ $ vbackup home.bck /EXTRACT=rrl/notes.txt | less
 Reads the saveset and compares every file with the disk: the type,
 the size, the contents, the target of a symbolic link. A difference
 is reported with %VBACKUP-E-COMPARERR, and the exit code is 2.
+
+A file of the catalog that the saveset did not give is a difference
+too: "not compared: its records were lost in bad blocks", or, when no
+block was lost, "not compared: the catalog has it, the record stream
+does not" (see NOTINSTREAM in Troubleshooting).
 
 ## /RECORD -- remember what has been saved
 
@@ -1013,7 +1043,9 @@ with VBACKUP when you need them.
 
 Damaged savesets are repaired as far as the XOR blocks allow. vbkx
 names every file that is incomplete ("is incomplete") and every file it
-could not reach ("not extracted"). Completion code: 0 -- done;
+could not reach ("not extracted"): lost in bad blocks, or named by
+the catalog and never in the saveset ("the catalog has it, the record
+stream does not"). Completion code: 0 -- done;
 1 -- something was damaged or not done; 2 -- the command or the
 saveset cannot be used.
 
@@ -1162,12 +1194,24 @@ together, /SOLID): VBACKUP, vbkx or a plugin before X01-21 cannot read
 it. Use X01-21 or later; for an older reader, save with /NOSOLID.
 
 **Many %VBACKUP-E-FILLOST at once.** One bad place in the saveset, and
-dozens of files are not restored. The small files of a compressed save
-are packed together in groups of up to 1 MB (/SOLID); a group whose
-blocks could not be repaired takes all its files. Every one of them is
-named; all other files are fine. Take them from another saveset. Next
-time, for savesets that must survive heavy damage, give /PARITY=2 or
-more, or /NOSOLID.
+a handful to a couple of dozen files are not restored. The small files
+of a compressed save are packed together in groups of up to 256 KB
+(/SOLID); blocks that could not be repaired take the files of the
+group from the damage on. The files of the group before the damage
+are restored and checked; the one at the damage is named by
+FILDAMAGED. Every lost file is named; all other files are fine. Take
+them from another saveset. Next time, for savesets that must survive
+heavy damage, give /PARITY=2 or more, or /NOSOLID.
+
+**%VBACKUP-E-NOTINSTREAM.** The catalog of the saveset names a file,
+but its records never came out of the saveset - and no block was lost.
+The file is not restored. A saveset that VBACKUP wrote right and
+nobody changed never does it: the saveset holds a record this VBACKUP
+does not know (one made by a newer VBACKUP), it was edited or forged,
+or it was made wrong. Try a newer VBACKUP; take the file from another
+saveset; and report it, with the saveset. /COMPARE and /VERIFY report
+such a file with COMPARERR and count it as a difference; vbkx says
+"not extracted: the catalog has it, the record stream does not".
 
 **%VBACKUP-W-UNNAMED.** Blocks were lost, and the saveset has no
 catalog, or its catalog was damaged too. Some files may be missing
@@ -1269,6 +1313,7 @@ that were in the cache stay there.
 %VBACKUP-W-BADREC       a damaged record has been skipped
 %VBACKUP-E-FILDAMAGED   a file is incomplete: data was lost
 %VBACKUP-E-FILLOST      a file was not restored: its records were lost
+%VBACKUP-E-NOTINSTREAM  a file of the catalog is not in the record stream
 %VBACKUP-W-UNNAMED      files were lost and cannot all be named
 %VBACKUP-E-PHYSMOUNTED  /PHYSICAL: the device is mounted
 %VBACKUP-E-PHYSHELD     /PHYSICAL: the device is in use (LVM, RAID, swap)

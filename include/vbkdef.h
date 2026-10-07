@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-21"
+#define	__IDENT__	"X01-22"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.21.0"
+#define	__REV__		"1.22.0"
 #endif
 
 /*
@@ -30,6 +30,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		NOTINSTREAM: a file of the catalog whose records the stream does not
+**		have, nothing lost on the way.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		SOLID of the options.
@@ -219,6 +223,7 @@ enum	{
 	VBACKUP$K_MSG_PARITYERR,		/* v2: the parity of a group disagrees		*/
 	VBACKUP$K_MSG_XATTRSKIP,		/* An extended attribute (a stream) not saved	*/
 	VBACKUP$K_MSG_ZCHECK,			/* A record compressed did not come back	*/
+	VBACKUP$K_MSG_NOTINSTREAM,		/* A file of the catalog not in the stream	*/
 
 	VBACKUP$K_MSG_MAX
 	};
@@ -324,6 +329,7 @@ enum	{
 #define	VBACKUP$_PARITYERR	$VBKSTS(VBACKUP$K_MSG_PARITYERR,	STS$K_WARN)
 #define	VBACKUP$_XATTRSKIP	$VBKSTS(VBACKUP$K_MSG_XATTRSKIP,	STS$K_WARN)
 #define	VBACKUP$_ZCHECK		$VBKSTS(VBACKUP$K_MSG_ZCHECK,		STS$K_WARN)
+#define	VBACKUP$_NOTINSTREAM	$VBKSTS(VBACKUP$K_MSG_NOTINSTREAM,	STS$K_ERROR)
 
 /*
 **  A diagnostic is signalled by $VBKMSG: $PUTMSG_FAO of StarLet under the

@@ -13,6 +13,10 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 7-OCT-2026	RRL	X-22 : /SOLID groups of 256 KB, a cut SOLID salvaged;
+.\"					/COMPARE, /VERIFY count files of the catalog not
+.\"					in the stream; NOTINSTREAM.
+.\"
 .\"		 7-OCT-2026	RRL	X-21 : /[NO]SOLID: the small files of a compressed save
 .\"					in SOLID records, format version 3.
 .\"
@@ -160,12 +164,15 @@ Readers before X01-19 report levels 2 .. 9 as damaged, never wrong.
 .TP
 .B /SOLID\fR, \fP/NOSOLID
 With compression the default is /SOLID: the small files (256 KB or
-less each) are packed together, groups of up to 1 MB each compressed as
-one SOLID record, and a tree of small files gets much smaller
-(/usr/include at /LEVEL=9: 32 MB, 53 MB with /NOSOLID).  /SOLID alone does not compress; /NOSOLID writes every
+less each) are packed together, groups of up to 256 KB (1 MB in
+X01-21) each compressed as one SOLID record, and a tree of small files
+gets much smaller (/usr/include at /LEVEL=9: 33 MB, 53 MB with
+/NOSOLID).  /SOLID alone does not compress; /NOSOLID writes every
 file in records of its own, as before X01-21.  Blocks lost beyond
-repair take every file of the SOLID they touch (FILLOST for each):
-give /PARITY=2 or more, or /NOSOLID, for savesets that must live
+repair take the files of the SOLID from the damage on, a handful to a
+couple of dozen (FILLOST for each, FILDAMAGED for the one at the cut);
+the files before it are restored, each checked by its CRC.  Give
+/PARITY=2 or more, or /NOSOLID, for savesets that must live
 through heavy damage.  Such a saveset is of format version 3: readers
 before X01-21 refuse it (NOTSAVESET), never misread it.
 .TP
@@ -224,7 +231,8 @@ Save the files flagged nodump (chattr +d) too.
 Extended attributes, ACLs, capabilities, SELinux label; on by default.
 .TP
 .B /VERIFY
-Read the new saveset back and compare it with the disk.
+Read the new saveset back and compare it with the disk.  A file of
+the catalog the saveset did not give is a difference too (COMPARERR).
 .TP
 .B /REPLACE
 Overwrite an existing saveset, file or output file.
@@ -239,7 +247,8 @@ List the saveset; /BRIEF (default), /FULL, /FORMAT=LS.
 Write one file to the output file or to the standard output.
 .TP
 .B /COMPARE
-Compare the saveset with the disk.
+Compare the saveset with the disk; a file of the catalog the saveset
+did not give, lost in bad blocks or never there, is a difference.
 .TP
 .B /LOG\fR, \fP/CONFIRM
 Report every file; ask before every file.
@@ -248,6 +257,10 @@ Report every file; ask before every file.
 The full description, out of the help library.
 .SH EXIT STATUS
 0 \- all done; 1 \- done, with warnings; 2 \- something was not done.
+A file of the catalog that the record stream does not hold, though no
+block was lost, is named by NOTINSTREAM (an error): a record this
+VBACKUP does not know, or a saveset made wrong \- report it, with the
+saveset.
 .SH EXAMPLES
 .nf
 $ vbackup /home/rrl /backup/rrl.bck /VERIFY

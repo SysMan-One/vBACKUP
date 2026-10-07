@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -31,6 +31,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		A SOLID cut by lost blocks: what is there of it before the gap is
+**		decompressed, and its records whole in that are returned - the files
+**		before the damage come back, each still checked by its FEND.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		Version 3: the SOLID record opened by VBK$RD_NEXT, its records returned
@@ -832,6 +837,7 @@ void	vbk$rd_close	(
 	free(a_ctx->gbuf);
 	free(a_ctx->rec);
 	free(a_ctx->sol);
+	a_ctx->solgap	= 0;
 
 	vbk$crp_wipe(a_ctx, sizeof(*a_ctx));
 }
@@ -846,6 +852,7 @@ int	vbk$rd_rewind	(
 {
 	/* A SOLID being read is left behind */
 	a_ctx->sollen = a_ctx->solpos = 0;
+	a_ctx->solgap = 0;
 
 	/*
 	**  A stream goes back only within the first group, while it is still
@@ -926,6 +933,26 @@ uint8_t *	l_pay = l_c->gbuf + (size_t) a_i * l_c->bsize + VBK$K_HDRSZ;
 **	STS$K_SUCCESS	- a group is in GBUF, GDATA DATA blocks of it.
 **--
 */
+static	int	s_vbk$loadgrp2	(VBK$RCTX *a_ctx, VBK$RVOL *a_vol, uint32_t a_n);
+
+/*
+**  The good DATA blocks of a group as the writer made them past PAYLEN:
+**  zeros up to the TAG.  What lies there carries nothing, no TAG covers
+**  it; a byte changed there would make the parity disagree, and nothing
+**  of the group be rebuilt.
+*/
+static	void	s_vbk$canon	(
+		VBK$RCTX *	a_ctx,
+		uint32_t	a_n
+			)
+{
+uint32_t	l_end = a_ctx->psize - (a_ctx->crypt ? VBK$K_TAGSZ : 0);
+
+	for ( uint32_t i = 0; i < a_n; i++ )
+		if ( a_ctx->gok [i] && (a_ctx->ghdr [i].type == a_ctx->dtype) && (a_ctx->ghdr [i].paylen < l_end) )
+			memset(a_ctx->gbuf + (size_t) i * a_ctx->bsize + VBK$K_HDRSZ + a_ctx->ghdr [i].paylen, 0, l_end - a_ctx->ghdr [i].paylen);
+}
+
 static	int	s_vbk$loadgrp2	(
 		VBK$RCTX *	a_ctx,
 		VBK$RVOL *	a_vol,
@@ -1025,6 +1052,9 @@ int		l_rc;
 
 		l_bad	+= !l_dok [i];
 		}
+
+	if ( l_bad )
+		s_vbk$canon(a_ctx, l_d);
 
 	/*
 	**  The repair: all the good rows first; when the result does not hold
@@ -1356,6 +1386,9 @@ uint8_t *	l_blk;
 			}
 		}
 
+	if ( l_bad )
+		s_vbk$canon(a_ctx, a_ctx->gdata);
+
 	/*
 	**  One bad DATA block and a good XOR block that covers exactly this
 	**  group: the payload is the XOR of all the others, the two fields of
@@ -1541,6 +1574,49 @@ uint32_t	l_raw;
 }
 
 /*
+**  A SOLID of which only <a_got> octets of the body are there, a gap after
+**  them: the beginning of its stream decompressed, as far as it is right.
+**  STS$K_ERROR - nothing to be had of it.
+*/
+static	int	s_vbk$solcut	(
+		VBK$RCTX *	a_ctx,
+		uint32_t	a_got,
+	const	VBK$LOC *	a_loc
+			)
+{
+uint32_t	l_raw, l_good = 0;
+
+	a_ctx->sollen = a_ctx->solpos = 0;
+
+	if ( a_got <= VBK$K_SOLIDHDR )
+		return	STS$K_ERROR;
+
+	if ( ((l_raw = vbk$get32(a_ctx->rec + 4)) > VBK$K_MAXSOLID) || (l_raw < VBK$K_RECHDR) )
+		return	STS$K_ERROR;
+
+	if ( l_raw > a_ctx->solsz )
+		{
+		uint8_t *	l_p;
+
+		if ( !(l_p = realloc(a_ctx->sol, l_raw)) )
+			return	STS$K_ERROR;
+
+		a_ctx->sol	= l_p;
+		a_ctx->solsz	= l_raw;
+		}
+
+	vbk$data_salvage(vbk$get32(a_ctx->rec), a_ctx->rec + VBK$K_SOLIDHDR, a_got - VBK$K_SOLIDHDR, a_ctx->sol, l_raw, &l_good);
+
+	if ( l_good < VBK$K_RECHDR )
+		return	STS$K_ERROR;
+
+	a_ctx->sollen	= l_good;
+	a_ctx->solloc	= *a_loc;
+
+	return	STS$K_SUCCESS;
+}
+
+/*
 **  The next record of the open SOLID: FILE, DATA or FEND only, whole in
 **  it.  STS$K_ERROR - anything else: the rest of the SOLID is dropped.
 */
@@ -1626,6 +1702,25 @@ int		l_status, l_resync = a_ctx->pendrs;
 
 	for ( ;; )
 		{
+		/* A SOLID cut short, its good records all returned: the gap after them */
+		if ( a_ctx->solgap && (a_ctx->solpos >= a_ctx->sollen) )
+			{
+			int	l_eos = (a_ctx->solgap == 2);
+
+			a_ctx->solgap	= 0;
+			a_ctx->sollen	= a_ctx->solpos = 0;
+			l_resync	= 1;
+
+			/* The end of the stream cut it: that end now */
+			if ( l_eos )
+				{
+				s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
+				a_ctx->resync	= 1;
+
+				return	STS$K_WARN;
+				}
+			}
+
 		/* The records of an open SOLID come first, as if they were in the stream */
 		if ( a_ctx->solpos < a_ctx->sollen )
 			{
@@ -1637,9 +1732,22 @@ int		l_status, l_resync = a_ctx->pendrs;
 				return	STS$K_SUCCESS;
 				}
 
-			/* A record in it that makes no sense: the rest is dropped, a gap - its files are named lost */
-			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->solloc.vol, a_ctx->solloc.blk);
+			/* A record in it that makes no sense: the rest is dropped, a gap - its files are named lost; cut short: the gap says it */
+			if ( !a_ctx->solgap )
+				s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->solloc.vol, a_ctx->solloc.blk);
+
 			l_resync = 1;
+
+			if ( a_ctx->solgap == 2 )
+				{
+				a_ctx->solgap	= 0;
+				s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
+				a_ctx->resync	= 1;
+
+				return	STS$K_WARN;
+				}
+
+			a_ctx->solgap	= 0;
 			}
 
 		/* A record header: never split, so it is wholly in one payload */
@@ -1718,12 +1826,29 @@ int		l_status, l_resync = a_ctx->pendrs;
 		if ( l_status == STS$K_INFO )
 			{
 			/* Lost in the middle of the body: what is there is dropped, a new header is at hand */
+			if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3)
+				&& (STS$K_SUCCESS == s_vbk$solcut(a_ctx, l_got, &l_loc)) )
+				{
+				/* ... but of a SOLID the records before the gap are good: they come first, the gap after them */
+				a_ctx->solgap	= 1;
+				a_ctx->pendrs	= 0;
+				continue;
+				}
+
 			l_resync = 1;
 			continue;
 			}
 
 		if ( l_status == STS$K_WARN )
 			{
+			/* ... the same for a SOLID the end of the stream cut: its records first, then the end */
+			if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3)
+				&& (STS$K_SUCCESS == s_vbk$solcut(a_ctx, l_got, &l_loc)) )
+				{
+				a_ctx->solgap	= 2;
+				continue;
+				}
+
 			/* The stream ends inside the record - a cut-short saveset */
 			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->payvol, a_ctx->payblk);
 			a_ctx->resync	= 1;
@@ -1792,6 +1917,7 @@ int		l_status;
 
 	/* A SOLID being read is left: the seek goes elsewhere */
 	a_ctx->sollen = a_ctx->solpos = 0;
+	a_ctx->solgap = 0;
 
 	/* A stream has no places to go to: it is read through, forward */
 	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) || (a_ctx->crypt && !a_ctx->haskey) || a_ctx->isstream )

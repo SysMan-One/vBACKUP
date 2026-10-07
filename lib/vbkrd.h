@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-21"
+#define	__IDENT__	"X01-22"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.21.0"
+#define	__REV__		"1.22.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		SOLGAP: a SOLID read as far as it is there, a gap after it.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		SOL, SOLLEN, SOLPOS, SOLLOC: the records of the SOLID being read.
@@ -154,6 +157,7 @@ typedef struct vbk_rctx_t
 	uint8_t *	sol;			/* The records of the SOLID being read		*/
 	uint32_t	solsz, sollen, solpos;
 	VBK$LOC		solloc;			/* Where that SOLID is				*/
+	int		solgap;			/* ... cut short by lost blocks: a gap after it	*/
 	int		insolid;		/* The record returned is one of a SOLID: a	*/
 						/* seek to it may stand at other files first	*/
 

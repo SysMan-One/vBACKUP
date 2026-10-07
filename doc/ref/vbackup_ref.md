@@ -11,9 +11,9 @@ extractor vbkx, the extractors of last resort and the file manager
 plugins, and lists every message the utility signals.
 
 **Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-20.
+VBACKUP X01-21.
 
-**Software Version:** VBACKUP X01-21
+**Software Version:** VBACKUP X01-22
 
 **Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
 vbackup.exe, vbkx.exe and the WCX plugin
@@ -22,7 +22,7 @@ vbackup.exe, vbkx.exe and the WCX plugin
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
-The information in this document reflects VBACKUP X01-21 as built from
+The information in this document reflects VBACKUP X01-22 as built from
 its sources. The saveset format is defined by `doc/format.md`; where this
 manual and that document differ on the bytes of the medium, `format.md`
 prevails.
@@ -267,6 +267,14 @@ catalog without reading anything else. The catalog of an incremental
 saveset lists also the files that it covers but did not save, with the
 status PRESENT (see Section 1.5).
 
+**Nothing left out without a word.** Since X01-22 a restore, `/COMPARE`,
+`/VERIFY` and vbkx `x` and `t` always set the catalog against the FILE
+records they met -- not only after lost blocks. A file of the catalog
+whose records never came is named: FILLOST when blocks were lost,
+NOTINSTREAM when none was (a record the reader does not know, a saveset
+made wrong); `/COMPARE` and `/VERIFY` count it as a difference
+(COMPARERR). From a pipe the catalog records are taken as they come.
+
 #### The TRAILER
 
 The last block of the saveset is the TRAILER. It holds the totals of the
@@ -432,39 +440,61 @@ Small files compress badly one by one: each starts with an empty
 dictionary, and its FILE and FEND records are not compressed at all.
 Since X01-21 a compressed save therefore gathers the small regular files
 -- each of at most 256 KB, not a further name of a hard link -- into
-groups of up to 1 MB, in the order of the walk, and compresses each group
-as one SOLID record (format.md 6.12): the FILE, DATA and FEND records of
-its files together, so the dictionary is shared and the metadata is
-compressed too. A directory, a link or a bigger file closes the open
-group first. It is the default whenever the save compresses; `/NOSOLID`
+groups of up to 256 KB (1 MB in X01-21), in the order of the walk, and
+compresses each group as one SOLID record (format.md 6.12): the FILE,
+DATA and FEND records of its files together, so the dictionary is
+shared and the metadata is compressed too. A directory, a link or a
+bigger file closes the open group first. It is the default whenever the save compresses; `/NOSOLID`
 writes every file in records of its own, as before. Measured on this
-host:
+host (saveset sizes):
 
-| Tree | /LEVEL | /NOSOLID | /SOLID (default) |
-|---|---|---|---|
-| `/usr/include` (210 MB, 22 444 files) | 1 | 81 MB | 62 MB |
-| `/usr/include` | 6 | 55.6 MB | 35.8 MB |
-| `/usr/include` | 9 | 53 MB | 32 MB |
-| `/usr/lib/python3` (512 MB) | 6 | 172 MB | 146 MB |
-| `/usr/lib/python3` | 9 | 163 MB | 135 MB |
+| Tree | /LEVEL | /NOSOLID | /SOLID, X01-21 (1 MB groups) | /SOLID, X01-22 (256 KB, default) |
+|---|---|---|---|---|
+| `/usr/include` (210 MB, 22 444 files) | 1 | 81 MB | 62 MB | 62 MB |
+| `/usr/include` | 2 | 60 MB | 44 MB | 45 MB |
+| `/usr/include` | 5 | 55 MB | 39 MB | 39 MB |
+| `/usr/include` | 6 | 56 MB | 36 MB | 37 MB |
+| `/usr/include` | 9 | 53 MB | 32 MB | 33 MB |
+| `/usr/lib/python3` (512 MB) | 1 | 269 MB | 254 MB | 255 MB |
+| `/usr/lib/python3` | 2 | 200 MB | 186 MB | 187 MB |
+| `/usr/lib/python3` | 5 | 187 MB | 172 MB | 173 MB |
+| `/usr/lib/python3` | 6 | 172 MB | 146 MB | 152 MB |
+| `/usr/lib/python3` | 9 | 163 MB | 135 MB | 141 MB |
 
-The speed of the save and of the restore is about the same either way.
-Big files are compressed record by record as before.
+The speed of the save and of the restore is about the
+same either way. Big files are compressed record by record as before.
+X01-22 makes the groups four times smaller than X01-21 did: the saveset
+is a few per cent bigger, and far less is lost on a bad day (below).
 
 **What it costs on the day of the restore.** With the default parity
 nothing changes: one bad block of a group is still rebuilt (any *m* with
-`/PARITY=m`). But blocks lost beyond repair -- more than *m*
-bad blocks in one group -- take every file of the SOLID they touch, up to
-about 1 MB of small files (dozens of files), not only the file they were
-in. The restore names every one of them (FILLOST); the other files are
-restored. For a saveset that must live through heavy damage, give
-`/PARITY=2` or more (see `/PARITY` in Chapter 3), or `/NOSOLID`.
+`/PARITY=m`). But blocks lost beyond repair -- more than *m* bad blocks
+in one group -- take more than the file they were in: the files of the
+SOLID they cut from the damage on, and every file of a SOLID that begins
+in them. The part of a SOLID before the cut is not lost (since X01-22):
+it is decompressed as far as it is exactly right, and the files wholly
+in it are restored, each checked by its FEND CRC; the file at the cut is
+restored as far as it came (FILDAMAGED), the files after it are named
+with FILLOST. The same holds for the end of a saveset whose save was
+interrupted. The other files are restored. Files lost per parity group
+damaged beyond repair, measured on `/usr/lib/python3/dist-packages`:
 
-A SOLID that does not decompress is treated like lost blocks (BADREC,
-then FILLOST for its files) -- never as wrong data. The writer
-decompresses every SOLID and compares it before it is written; a group
-that does not come back the same (ZCHECK) or does not shrink is written
-as ordinary records.
+| Saveset | /LEVEL=6 | /LEVEL=1 |
+|---|---|---|
+| `/NOSOLID` | 19 | 11 |
+| `/SOLID`, X01-21 (1 MB groups, no salvage) | 52 | 45 |
+| `/SOLID`, X01-22 (256 KB groups, salvage) | 24 | 22 |
+
+So a handful to a couple of dozen small files, not one. The salvage is
+the reader's: VBACKUP X01-22 does it for savesets of X01-21 too. For a
+saveset that must live through heavy damage, give `/PARITY=2` or more
+(see `/PARITY` in Chapter 3), or `/NOSOLID`.
+
+A SOLID that does not decompress at all, or holds a record that makes no
+sense, is treated like lost blocks (BADREC, then FILLOST for its files)
+-- never as wrong data. The writer decompresses every SOLID and compares
+it before it is written; a group that does not come back the same
+(ZCHECK) or does not shrink is written as ordinary records.
 
 #### Records and Checks
 
@@ -493,7 +523,9 @@ X01-21 or later, unless saved with `/NOSOLID`, has format version 3 in
 every block -- even when every group happened to be written as ordinary
 records; VBACKUP, vbkx and the plugins before X01-21 refuse it as a whole
 (NOTSAVESET) and never misread it. Read it with X01-21 or later, or save
-with `/NOSOLID` for older readers.
+with `/NOSOLID` for older readers. The smaller groups of X01-22 are the
+same version 3: X01-21 reads them, and X01-22 reads the savesets of
+X01-21.
 
 ### 1.8 Encryption
 
@@ -1413,6 +1445,12 @@ for under that directory by their stored names; without it, under the
 bases the saveset recorded (the places they were saved from). The first
 difference of each file is reported with COMPARERR; the totals with
 CMPSUMM. Any difference makes the exit status 2.
+
+A file of the catalog that the record stream did not give is a
+difference too (since X01-22): `not compared: its records were lost in
+bad blocks` after lost blocks, else `not compared: the catalog has it,
+the record stream does not`. A file missing from the saveset is never
+passed over in silence.
 
 `/SELECT` and `/EXCLUDE` restrict the comparison. The saveset may be `-`.
 The input must be exactly one saveset (otherwise NOTSAVESET).
@@ -2389,11 +2427,12 @@ Output save-set qualifier.
 
 With `/DATA_FORMAT=COMPRESSED` or `/LEVEL`, the small regular files --
 each of at most 256 KB, not a further name of a hard link -- are gathered
-into groups of up to 1 MB, in the order of the walk, and each group is
-compressed as one SOLID record: the FILE, DATA and FEND records of its
-files together (format.md 6.12). The dictionary is shared and the
-metadata is compressed too, so a tree of small files gets much smaller:
-`/usr/include` at `/LEVEL=6` 55.6 MB with `/NOSOLID`, 35.8 MB with
+into groups of up to 256 KB (1 MB in X01-21), in the order of the walk,
+and each group is compressed as one SOLID record: the FILE, DATA and
+FEND records of its files together (format.md 6.12). The dictionary is
+shared and the metadata is compressed too, so a tree of small files gets
+much smaller:
+`/usr/include` at `/LEVEL=6` 55.6 MB with `/NOSOLID`, 37 MB with
 `/SOLID` (Section 1.7). Big files, directories and links are written as
 before; each of them closes the open group first.
 
@@ -2413,12 +2452,15 @@ records by themselves; a single file is reached through the catalog by
 its SOLID, which is decompressed, the files before it passed.
 
 The cost: blocks lost beyond repair -- more than *m* bad blocks in one
-group, *m* being the `/PARITY` -- take every file of the SOLID they touch,
-up to about 1 MB of small files (dozens of files), not only the file they
-were in; the restore names every one of them with FILLOST. With the
-default parity one bad block per group is still rebuilt, as always. For
-a saveset that must live through heavy damage, give `/PARITY=2` or more,
-or `/NOSOLID`.
+group, *m* being the `/PARITY` -- take the files of the SOLID they cut
+from the damage on, and every file of a SOLID that begins in them, not
+only the file they were in: a handful to a couple of dozen small files
+(Section 1.7). The files of the SOLID before the cut are restored, each
+checked by its FEND CRC (since X01-22, for savesets of X01-21 too); the
+file at the cut is named with FILDAMAGED, the files after it with
+FILLOST. With the default parity one bad block per group is still
+rebuilt, as always. For a saveset that must live through heavy damage,
+give `/PARITY=2` or more, or `/NOSOLID`.
 
 **Examples**
 
@@ -2505,7 +2547,10 @@ Command qualifier.
 
 On a save, after the saveset has been written, reads it back and compares
 every file with the disk (VERIFYING, then COMPARERR for a difference and
-CMPSUMM for the totals). With a saveset written to the standard output it is
+CMPSUMM for the totals). A file of the catalog that the stream did not
+give -- lost in bad blocks, or never there -- counts as a difference
+(since X01-22), so `/VERIFY` never says `Differences: 0` over a missing
+file. With a saveset written to the standard output it is
 refused (QUALUSE). A saveset on another node is read back from there once
 the other side has completed, and compared with the disk here (Section
 1.10). `/DELETE` and, under `/VERIFY`, `/RECORD` act only when the
@@ -2968,7 +3013,9 @@ A SOLID record (Section 1.7) that does not decompress, or holds a record
 that makes no sense, is reported with the block where the SOLID begins.
 All of it is skipped, like lost blocks: none of its files is restored
 from it, and each of them is named with FILLOST -- never restored with
-wrong data.
+wrong data. A SOLID only cut short by lost blocks, or by the end of a
+saveset whose save was interrupted, is not reported here: its part
+before the cut is restored (see FILLOST).
 
 **User Action:** Check the files reported with FILDAMAGED and FILLOST. If
 the saveset was made by VBACKUP, report the problem with a copy of the
@@ -3047,7 +3094,9 @@ of important savesets.
 **Facility:** VBACKUP. **Severity:** Informational.
 
 **Explanation:** The totals of a comparison (`/COMPARE`, `/VERIFY`): the
-files compared and the files found different. Displayed without `/LOG`.
+files compared and the files found different -- among them the files of
+the catalog that the record stream did not give (COMPARERR `not
+compared`). Displayed without `/LOG`.
 After a copy `/VERIFY` it is displayed only when differences were found.
 
 **User Action:** None. If differences are reported, see COMPARERR.
@@ -3078,8 +3127,16 @@ differs`, `the file on the disk is shorter`, `the contents differ at octet
 n`, and for a copy `cannot be read back` or `the copy differs from the
 original`. Only the first difference of a file is reported.
 
+Since X01-22 the catalog is set against the records read, and a file of
+the catalog that the record stream did not give is a difference too:
+`not compared: its records were lost in bad blocks` after lost blocks
+(see FILLOST), `not compared: the catalog has it, the record stream does
+not` when no block was lost (see NOTINSTREAM). So `/VERIFY` cannot say
+`Differences: 0` over files lost in bad blocks.
+
 **User Action:** If the file was changed on purpose after the save, none.
-Otherwise save it again, or find out what changed it. Under `/VERIFY`, a
+Otherwise save it again, or find out what changed it. For `not compared`,
+see FILLOST or NOTINSTREAM. Under `/VERIFY`, a
 difference keeps `/DELETE` from deleting anything and `/RECORD` from
 recording the save.
 
@@ -3241,8 +3298,11 @@ a snapshot (LVM, btrfs).
 **Explanation:** Part of the data of a file lay in blocks that were lost
 (BLKLOST, MISSVOL); the file was restored, compared or extracted as far as
 its data could be read. In a `/PHYSICAL` restore, the device has lost
-parts. A saveset with compressed data read by VBACKUP before X01-04 gives
-this message as well.
+parts. Since X01-22 it also names the file at which lost blocks, or the
+end of an interrupted saveset, cut a SOLID record (Section 1.7): the
+files before it in the SOLID are restored whole, it is restored as far
+as it came, the files after it are FILLOST. A saveset with compressed
+data read by VBACKUP before X01-04 gives this message as well.
 
 **User Action:** Restore the file from another saveset. All files not named
 in a message are correct.
@@ -3269,10 +3329,17 @@ directory.
 its FILE record was in lost blocks. The file is missing from the output.
 
 Many FILLOST at once after one bad area (BLKLOST, or BADREC) mean that a
-SOLID record was lost (Section 1.7): the small files of a compressed
-save are kept in groups of up to 1 MB, and a group lost beyond repair
-takes all its files -- dozens of them -- not only one. Every one of them
-is named here; the other files are restored.
+SOLID record was hit (Section 1.7): the small files of a compressed save
+are kept in groups of up to 256 KB (1 MB in X01-21), and lost blocks take
+the files of the group from the damage on, and all the files of a group
+that begins in them -- a handful to a couple of dozen, not only one.
+Since X01-22 the files of a group before the damage are restored, each
+checked by its FEND CRC, for savesets of X01-21 too; the file at the cut
+is named with FILDAMAGED. Every lost one is named here; the other files
+are restored.
+
+`/COMPARE` and `/VERIFY` report such a file with COMPARERR `not compared:
+its records were lost in bad blocks`, and count it as a difference.
 
 **User Action:** Restore the files from another saveset. For savesets
 that must survive heavy damage, save next time with `/PARITY=2` or more,
@@ -3673,6 +3740,28 @@ and the chain ends there.
 
 **User Action:** Restore that saveset without `/INCREMENTAL`. Savesets made
 by X01-02 and later carry what `/INCREMENTAL` needs.
+
+---
+
+**NOTINSTREAM**, File: *file* - not restored: the catalog has it, the record stream does not, though no block was lost
+
+**Facility:** VBACKUP. **Severity:** Error.
+
+**Explanation:** After the record stream was read, the catalog was set
+against the FILE records met (since X01-22, always, not only after lost
+blocks), and it names a file whose records never came -- while no block
+was lost. The file is missing from the output. It does not happen with a
+saveset VBACKUP wrote right and nobody changed: the stream holds a record
+this reader does not know (for example a record of a newer VBACKUP in a
+saveset of an older format version), the saveset was edited or forged,
+or it was made wrong. From a pipe the catalog records are taken as they
+come. The completion is that of an error, as with FILLOST. `/COMPARE` and
+`/VERIFY` report the same file with COMPARERR `not compared: the catalog
+has it, the record stream does not`; vbkx says `File:` *file* `- not
+extracted: the catalog has it, the record stream does not`.
+
+**User Action:** Try a newer VBACKUP. Otherwise restore the file from
+another saveset, and report it, with the saveset.
 
 ---
 
@@ -4431,6 +4520,20 @@ tag by their lengths. Decompressed, a SOLID is a sequence of FILE, DATA
 and FEND records with their 8-byte headers, each wholly inside, the last
 ending at `rawlen`; a reader of version 3 delivers them as if they stood
 in the stream. A SOLID that does not open is a gap, like lost blocks.
+A SOLID cut by lost blocks, or by the end of a saveset cut short, is not
+all lost (VBACKUP since X01-22): the compressed bytes before the cut are
+decompressed as far as they are exactly right -- LZ4 and Deflate up to
+the last whole sequence or code, LZMA up to the last symbol decoded
+before the input ran out, never an octet guessed -- and the records
+wholly in that are delivered, then the gap. The writer closes a group
+before its records would pass 262144 bytes (1048576 in X01-21).
+
+After a sequential pass the catalog, when there is one, is set against
+the FILE records met -- always, not only after a loss (VBACKUP since
+X01-22). A file of the catalog (STATUS 0..2) whose FILE record never
+came is named: lost with the blocks when blocks were lost, else "the
+catalog has it, the stream does not" (NOTINSTREAM). A stream does it
+with its CATALOG records as they come (`format.md`, section 8).
 
 ### B.6 Tags
 
@@ -4512,7 +4615,9 @@ a compressed save (Section 1.7, `/SOLID`) -- as well as versions 1 and 2,
 in all its commands: `l`, `x`, `p`, `t`. A file named to `x` or `p` is
 reached through the catalog by its SOLID, which is decompressed, the
 files before it passed. vbkx before X01-21 refuses such a saveset (`is
-not a saveset`).
+not a saveset`). vbkx of X01-22 restores the files of a SOLID before the
+place where lost blocks cut it, as VBACKUP does (Section 1.7), and with
+`x` and `t` names every file of the catalog the stream did not give.
 
 ### C.2 Format
 
@@ -4533,7 +4638,7 @@ for the standard input), then the options and names in any order.
 | `l` | Lists the files, one line each, from the catalog (or from the stream when there is none). |
 | `x` | Extracts all files in one pass, or only the names given, each reached through the catalog. A directory name takes everything below it. |
 | `p` | Writes one file to the standard output. |
-| `t` | Reads the whole saveset and checks every checksum; on success displays *saveset*`: all files read, all checksums match`. |
+| `t` | Reads the whole saveset and checks every checksum; on success displays *saveset*`: all files read, all checksums match`. A file of the catalog the stream did not give is named, and the check fails. |
 
 The listing has the form, the time being local:
 
@@ -4571,10 +4676,15 @@ The names of a saveset are not trusted: a name with `..`, a leading `/`, or
 a way through a symbolic link is refused, and every directory on the way
 is opened with O_NOFOLLOW. Damage is repaired as far as the XOR blocks
 allow; every file cut short is named `is incomplete`, every file of the
-catalog that could not be reached `not extracted` -- after a SOLID lost
-beyond repair, all its files. From a pipe (`-`) the
+catalog that could not be reached `not extracted` -- after lost blocks
+cut a SOLID, the files of it from the damage on; those before are
+extracted. The catalog is always set against the stream (since X01-22):
+a file of the catalog whose records never came, though no block was
+lost, is named `not extracted: the catalog has it, the record stream
+does not` (as NOTINSTREAM of VBACKUP). From a pipe (`-`) the
 saveset is listed and extracted as it is read; names are refused, because
-its catalog comes last.
+its catalog comes last; its catalog records are set against the stream
+as they come.
 
 ### C.6 Diagnostics
 
@@ -4586,6 +4696,8 @@ date, process number and message identifier:
 vbkx: Block: 3, Volume: 1 - is bad and cannot be rebuilt
 vbkx: File: rrl/big.bin - checksum mismatch: the data differ from what was saved
 vbkx: File: rrl/big.bin - is incomplete: its data was lost in bad blocks
+vbkx: File: rrl/c.txt - not extracted: its records were lost in bad blocks
+vbkx: File: rrl/d.txt - not extracted: the catalog has it, the record stream does not
 vbkx: Saveset: e.bck - the passphrase does not open it
 ```
 
@@ -4676,7 +4788,9 @@ extracted`) file. A `/PHYSICAL` saveset comes out as the image file of the
 device, an `/IMAGE` saveset as the tree of its files. The three of X01-21
 read savesets of version 3: each opens a SOLID record with its own
 decoder and takes its records as if they stood in the stream; a SOLID
-that does not open is a gap, and its files are named as missing.
+that does not open is a gap, and its files are named as missing. They
+do not salvage a SOLID cut by lost blocks, as VBACKUP and vbkx do since
+X01-22: they lose the whole SOLID, and still name every file of it.
 
 vbkx-pl uses Digest::SHA when it is installed, only for speed; without it
 its own SHA-256 is some hundred times slower (opening an encrypted saveset
@@ -4698,7 +4812,9 @@ saveset. The listing comes from the catalog, so a saveset of hundreds of
 gigabytes opens at once, and a file is copied out through its place in the
 catalog -- for a small file of a compressed save, through its SOLID
 record (Section 1.7). The plugins of X01-21 read savesets of format
-version 3; older ones do not open them.
+version 3; older ones do not open them. The plugins share the reader of
+VBACKUP: since X01-22 they too restore the files of a SOLID before the
+place where lost blocks cut it.
 
 A file manager cannot ask for a passphrase. To open an encrypted saveset,
 put the passphrase into a key file (`chmod 600`) and name the file in the

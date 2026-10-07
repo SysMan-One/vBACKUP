@@ -29,6 +29,12 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 7-OCT-2026	RRL	X-22 : Nothing left out without a word: the files of an
+#						unknown record named (NOTINSTREAM, /COMPARE, vbkx); a
+#						SOLID cut by a lost block gives back what is before it;
+#						a byte past PAYLEN does not spoil the repair of a group;
+#						an encrypted saveset with a forged ETRAILER is restored.
+#
 #		 7-OCT-2026	RRL	X-21 : SOLID smaller than /NOSOLID: the small files alone, 8 KB
 #						blocks - with a big random file next to them the gain
 #						could round away to the same number of blocks.
@@ -949,5 +955,87 @@ for root, ds, fs in os.walk(src):
 		if ("/" + rel) not in log:
 			sys.exit(1)
 PYEOF' "SOLID lost: a file missing or wrong without a word (rc $RC): $(grep -E -- '-[EFW]-' solf.log | head -3)"
+
+#
+#	19. Nothing left out without a word (X01-22): the SOLID records of a
+#	saveset made version 1 are records it does not know - the files in
+#	them are named by restore (NOTINSTREAM), /COMPARE and vbkx; and a
+#	SOLID cut by a lost block gives back the files before the damage
+#
+python3 - sol6.bck solv1.bck <<'PYEOF'
+import sys, zlib, struct
+d = bytearray(open(sys.argv[1], 'rb').read()); B = struct.unpack_from('<I', d, 8)[0]
+for o in range(0, len(d), B):
+	if d[o:o + 4] == b'VBKB':
+		struct.pack_into('<H', d, o + 6, 1); struct.pack_into('<I', d, o + 60, 0)
+		struct.pack_into('<I', d, o + 60, zlib.crc32(bytes(d[o:o + B])))
+open(sys.argv[2], 'wb').write(d)
+PYEOF
+rm -rf solv1.r; $VB solv1.bck solv1.r > solv1.log 2>&1
+check '[ $? = 2 ] && grep -q "NOTINSTREAM, File: solv1.r/t/a/f17.txt" solv1.log && ! grep -q FILLOST solv1.log' "the files of an unknown record not named: $(grep -E -- '-[EFW]-' solv1.log | head -2)"
+$VB solv1.bck sol /COMPARE > solv1.c.log 2>&1
+check '[ $? != 0 ] && grep -q "COMPARERR, File: sol/t/a/f17.txt - not compared: the catalog has it" solv1.c.log' "/COMPARE: the files of an unknown record not counted: $(tail -2 solv1.c.log)"
+if [ -n "$VBKX" ]; then
+	rm -rf solv1.x; $VBKX x solv1.bck -C solv1.x > solv1.x.log 2>&1
+	check '[ $? = 1 ] && grep -q "File: t/a/f17.txt - not extracted: the catalog has it" solv1.x.log' "vbkx: the files of an unknown record not named: $(head -2 solv1.x.log)"
+fi
+check '[ $(grep -c "\-I-" solf.log) -ge 1 ] && [ $(find solf.r -type f | wc -l) -ge 5 ]' "a SOLID cut by a lost block: the files before the damage not given back ($(find solf.r -type f | wc -l))"
+
+#	A byte changed past PAYLEN of a good block - no TAG covers it - and a bad block in the same group: rebuilt all the same
+rm -rf tailt && cp -r sol/t/a tailt
+for E in "/ENCRYPT /KEY_FILE=key" ""; do
+	#	A last group of two DATA blocks or more: a file more until there is one
+	for N in 1 2 3 4 5 6 7 8 9 10 11 12; do
+		rm -f tail.bck; $VB tailt tail.bck /PARITY=2 /GROUP_SIZE=5 /BLOCK_SIZE=16384 $E > /dev/null 2>&1
+		python3 - tail.bck <<'PYEOF'
+import sys, struct
+d = open(sys.argv[1], 'rb').read(); B = struct.unpack_from('<I', d, 8)[0]
+t = [d[i * B + 12] for i in range(len(d) // B)]
+x = [i for i, v in enumerate(t) if v == 2]
+sys.exit(0 if t[x[-1] - 2] in (1, 5) else 1)
+PYEOF
+		[ $? = 0 ] && break
+		head -c 9000 /dev/zero | tr '\0' 'x' > tailt/pad$N
+	done
+	python3 - tail.bck <<'PYEOF'
+import sys, zlib, struct
+p = sys.argv[1]; d = bytearray(open(p, 'rb').read()); B = struct.unpack_from('<I', d, 8)[0]; P = B - 64
+def reseal(o):
+	struct.pack_into('<I', d, o + 60, 0); struct.pack_into('<I', d, o + 60, zlib.crc32(bytes(d[o:o + B])))
+blk = [(i, d[i * B + 12], struct.unpack_from('<H', d, i * B + 14)[0], struct.unpack_from('<I', d, i * B + 48)[0]) for i in range(len(d) // B)]
+crypt = any(t == 5 for _, t, _, _ in blk); dt = 5 if crypt else 1; room = P - (32 if crypt else 0)
+# The last DATA block with room past PAYLEN, and another DATA block of its group
+for i, t, g, n in reversed(blk):
+	if t == dt and g > 0 and n + 16 < room and blk[i - 1][1] == dt:
+		o = i * B; d[o + 64 + n + 8] ^= 0x5A; reseal(o)
+		# The other one bad: by its TAG when encrypted, else by its CRC - a plain block whose CRC is sealed again cannot be told
+		o = (i - 1) * B; d[o + 64 + 100] ^= 0x5A
+		if crypt:
+			reseal(o)
+		break
+else:
+	sys.exit(1)
+open(p, 'wb').write(d)
+PYEOF
+	RC0=$?
+	rm -rf tail.r; $VB tail.bck tail.r ${E#/ENCRYPT } > tail.log 2>&1
+	RC=$?
+	check '[ $RC0 = 0 ] && [ $RC -le 1 ] && ! grep -q "BLKLOST\|PARITYERR" tail.log && same_tree tailt tail.r/tailt' "${E:-plain}: a byte past PAYLEN spoilt the repair of its group (rc $RC0/$RC): $(grep -E -- '-[EFW]-' tail.log | head -2)"
+done
+
+#	An encrypted saveset whose ETRAILER fails its TAG: restored all the same, without its catalog (before X01-22: nothing, no word)
+rm -f etrl.bck; $VB sol/t/a etrl.bck /ENCRYPT /KEY_FILE=key > /dev/null 2>&1
+python3 - etrl.bck <<'PYEOF'
+import sys, zlib, struct
+p = sys.argv[1]; d = bytearray(open(p, 'rb').read()); B = struct.unpack_from('<I', d, 8)[0]; o = len(d) - B
+d[o + 64 + 10] ^= 0x5A
+struct.pack_into('<I', d, o + 60, 0); struct.pack_into('<I', d, o + 60, zlib.crc32(bytes(d[o:o + B])))
+open(p, 'wb').write(d)
+PYEOF
+rm -rf etrl.r; $VB etrl.bck etrl.r /KEY_FILE=key > etrl.log 2>&1
+RC=$?
+check '[ $RC = 1 ] && grep -q BLKFORGED etrl.log && same_tree sol/t/a etrl.r/a' "an ETRAILER that fails its TAG: not restored (rc $RC): $(grep -E -- '-[EFW]-' etrl.log | head -2)"
+$VB etrl.bck /LIST /KEY_FILE=key > etrl.lst 2>&1
+check 'grep -q "a/f17.txt" etrl.lst' "an ETRAILER that fails its TAG: not listed: $(head -2 etrl.lst)"
 
 tap_end

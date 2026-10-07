@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-21"
+#define	__IDENT__	"X01-22"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.21.0"
+#define	__REV__		"1.22.0"
 #endif
 
 /*
@@ -34,6 +34,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		VBK$K_SOLIDGRP 256 KB: a group lost beyond repair takes a quarter of the
+**		files it took at 1 MB, the saveset 3.5 % bigger.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		Version 3 and the SOLID record (format.md 5, 6.12): the records of
@@ -101,7 +105,7 @@ extern "C" {
 #define	VBK$K_SOLIDHDR	12			/* codec, rawlen, count of a SOLID		*/
 #define	VBK$K_MAXSOLID	(1048576 + 65536)	/* The records of a SOLID, at most		*/
 #define	VBK$K_SOLIDFILE	262144			/* A file of this size at most goes into one	*/
-#define	VBK$K_SOLIDGRP	1048576			/* The records of a SOLID the writer aims at	*/
+#define	VBK$K_SOLIDGRP	262144			/* The records of a SOLID the writer aims at: 256 KB (X01-22, measured)	*/
 #define	VBK$K_MAXCMD	4096			/* CMDLINE of the SUMMARY			*/
 #define	VBK$K_NONE	0xFFFFFFFFU		/* "No record begins here"			*/
 #define	VBK$K_TLVHDR	6			/* u16 tag, u32 length				*/

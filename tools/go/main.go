@@ -124,6 +124,13 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-22		 7-OCT-2026	RRL
+**		The repair of a group: the good DATA blocks first made as the
+**		writer left them past PAYLEN - zeros up to the TAG.  Nothing
+**		authenticates those octets, the parity covers them: one byte
+**		changed there in a good block, and the bad one of its group
+**		could not be rebuilt.
+**
 **	X01-21		 7-OCT-2026	RRL
 **		Version 3 (format.md 3, 6.12): the SOLID record (type 8) opened,
 **		its FILE, DATA and FEND records given as if in the stream; one
@@ -229,7 +236,7 @@ const (
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
 	rtSolid   = 8 // the records of several files compressed together, version 3: format.md 6.12
 
-	ident = "X01-21"
+	ident = "X01-22"
 
 	maxData      = 1 << 20 // the most octets a DATA or DATAZ record holds
 	codecLZ4     = 1
@@ -734,6 +741,23 @@ func (r *reader) volend(n int) uint64 {
 ** Read the next group (section 4), check its blocks, rebuild one bad DATA
 ** block from the XOR block; false - the end of the saveset.
  */
+/*
+** The good DATA blocks of a group as the writer made them past PAYLEN:
+** zeros up to the TAG.  What lies there carries nothing, no TAG covers
+** it; a byte changed there would make the parity disagree, and nothing
+** of the group be rebuilt.
+ */
+func (r *reader) canon(blks [][]byte, hdrs []bhdr, ok []bool, n int) {
+	for i := 0; i < n; i++ {
+		if ok[i] && hdrs[i].typ == r.dtype && hdrs[i].paylen < r.cap {
+			p := blks[i][hdrSize+int(hdrs[i].paylen) : hdrSize+int(r.cap)]
+			for j := range p {
+				p[j] = 0
+			}
+		}
+	}
+}
+
 func (r *reader) loadGroup() bool {
 	var v volume
 	var end uint64
@@ -814,6 +838,10 @@ func (r *reader) loadGroup() bool {
 			nbad++
 			badi = i
 		}
+	}
+
+	if nbad > 0 {
+		r.canon(blks, hdrs, ok, gdata)
 	}
 
 	/* One bad DATA block: its payload is the XOR of all the others, two header fields kept by the next block */
@@ -1120,6 +1148,10 @@ func (r *reader) group2(v volume, n int, blks [][]byte, hdrs []bhdr, ok []bool) 
 		} else {
 			nbad++
 		}
+	}
+
+	if nbad > 0 {
+		r.canon(blks, hdrs, ok, d)
 	}
 
 	forged, done := false, false

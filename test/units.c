@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -26,6 +26,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		A stream cut short: what VBK$DATA_SALVAGE gives is the beginning of the
+**		data, never an octet more; a SOLID cut by lost blocks gives its first
+**		records.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		SOLID records: opened by VBK$RD_NEXT in version 3, a forged one a
@@ -1307,6 +1312,77 @@ char		l_spec [1100];
 	$CHECK((1 & s_solid("sol10.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen - 3, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "2!4"), "cut short: %s", l_got);
 	$CHECK((1 & s_solid("sol11.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S3S4"), "the same, whole: %s", l_got);
 	}
+	}
+
+	s_begin("VBK$DATA_SALVAGE: a stream cut anywhere gives the beginning of the data, never a wrong octet");
+	{
+	static	uint8_t	l_src [200000], l_z [VBK$LZ4_BOUND(200000)], l_chk [200000], l_out [200000];
+	uint32_t	l_zlen, l_codec, l_got, l_bad = 0, l_short = 0, l_n = 0;
+
+	for ( uint32_t k = 0, l_x = 12345; k < sizeof(l_src); k++ )
+		{
+		l_x	= l_x * 1103515245U + 12345U;
+		l_src [k] = (k % 7000 < 3500) ? (uint8_t) "some text of a file, again and again; " [(k * 3 + k / 37) % 38] : (uint8_t) (l_x >> 24);
+		}
+
+	for ( int l = 1; l <= VBK$K_ZLEVELS; l++ )
+		{
+		if ( STS$K_SUCCESS != vbk$data_pack(l, l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen, &l_codec, l_chk) )
+			{
+			l_bad++;
+			continue;
+			}
+
+		for ( uint32_t l_cut = 1; l_cut < l_zlen; l_cut += 1 + l_zlen / 97 )
+			{
+			memset(l_out, 0xA5, sizeof(l_out));
+			vbk$data_salvage(l_codec, l_z, l_cut, l_out, sizeof(l_src), &l_got);
+			l_n++;
+
+			if ( (l_got > sizeof(l_src)) || memcmp(l_out, l_src, l_got) )
+				{
+				l_bad++;
+				$NOTE("/LEVEL=%d, codec %u, cut at %u of %u: %u octets out, wrong", l, l_codec, l_cut, l_zlen, l_got);
+				}
+
+			/* Most of what was there comes back: well over half of its share */
+			if ( (l_cut > l_zlen / 10) && ((uint64_t) l_got * l_zlen < (uint64_t) sizeof(l_src) * l_cut / 2) )
+				l_short++;
+			}
+
+		vbk$data_salvage(l_codec, l_z, l_zlen, l_out, sizeof(l_src), &l_got);
+
+		if ( (l_got != sizeof(l_src)) || memcmp(l_out, l_src, l_got) )
+			{
+			l_bad++;
+			$NOTE("/LEVEL=%d, codec %u, the whole stream: %u octets out of %u", l, l_codec, l_got, (uint32_t) sizeof(l_src));
+			}
+		}
+
+	$CHECK(!l_bad, "%u of %u cuts gave a wrong octet, or the whole stream not all", l_bad, l_n);
+	$CHECK(!l_short, "%u of %u cuts gave back too little", l_short, l_n);
+	}
+
+	{
+	static	uint8_t	l_raw [8192], l_z [VBK$K_SOLIDHDR + 16384], l_chk [8192];
+	uint32_t	l_n, l_zlen, l_codec;
+	char		l_got [64];
+
+	/* Two files of a SOLID, the second a big DATA: the stream cut in the middle of it */
+	l_n = s_inner(l_raw, 0, VBK$K_RT_FILE, 20, 'f');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_FEND, 20, 'e');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_FILE, 20, 'g');
+	for ( uint32_t k = 0; k < 6000; k++ )
+		l_raw [l_n + VBK$K_RECHDR + k] = (uint8_t) (k * 7 + k / 13);
+	vbk$put16(l_raw + l_n, VBK$K_RT_DATA);
+	vbk$put16(l_raw + l_n + 2, 0);
+	vbk$put32(l_raw + l_n + 4, 6000);
+	l_n += VBK$K_RECHDR + 6000;
+	vbk$data_pack(6, l_raw, l_n, l_z + VBK$K_SOLIDHDR, sizeof(l_z) - VBK$K_SOLIDHDR, &l_zlen, &l_codec, l_chk);
+	vbk$put32(l_z, l_codec);
+	vbk$put32(l_z + 4, l_n);
+	vbk$put32(l_z + 8, 2);
+	$CHECK((1 & s_solid("sol12.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S4S2S3S4"), "whole: %s", l_got);
 	}
 
 	if ( s_tap )

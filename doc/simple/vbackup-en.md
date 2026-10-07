@@ -468,15 +468,17 @@ and compares it with your file. Only a piece that comes back the same is
 kept packed.
 
 **Many small files.** When VBACKUP packs, it puts small files (letters,
-notes, little programs) together in bundles of up to 1 MB, and packs each
+notes, little programs) together in bundles of up to 256 KB, and packs each
 bundle in one go. Files that look alike share what they have in common, so
 the box gets much smaller: a folder of 22 444 small files at `/LEVEL=9` took 53 MB
-before, and now takes 32 MB. This is on by itself — you type nothing.
+before, and now takes 33 MB. This is on by itself — you type nothing.
 
 **What it costs.** If the USB stick gets badly broken and a piece of the box
-cannot be repaired, the whole bundle is lost: not one file, but up to a few
-dozen small files. VBACKUP tells you the name of each one (`FILLOST`). One
-broken piece is still repaired by itself, as always. If the box must live
+cannot be repaired, more than one file is lost: the files of the bundle from
+the broken place on — a handful to a couple of dozen small files. The files
+of the bundle before the broken place still come back, whole and checked.
+VBACKUP tells you the name of each lost one (`FILLOST`). One broken piece is
+still repaired by itself, as always. If the box must live
 through a badly broken disk, add `/PARITY=2` (see section 1), or turn the
 bundles off with `/NOSOLID`:
 
@@ -1004,9 +1006,10 @@ Next time make two boxes on two different USB sticks.
 vbackup /mnt/usb/old.bck /LIST
 ```
 
-**Many `FILLOST` at once?** One broken place, and a long list of lost
-files: the box was made smaller (section 8), and a whole bundle of small
-files was in that place. Every lost file is named; all the others are
+**Many `FILLOST` at once?** One broken place, and a list of lost files:
+the box was made smaller (section 8), and a bundle of small files was in
+that place. The files of the bundle after the broken place are lost; those
+before it came back. Every lost file is named; all the others are
 fine. Take them from another box. Next time, for an important box, add
 `/PARITY=2` — or `/NOSOLID`, so that small files are not packed together.
 
@@ -1026,6 +1029,26 @@ Some files may be lost, but VBACKUP cannot name them all.
 ```
 vbackup /mnt/usb/old.bck /LIST
 ```
+
+### NOTINSTREAM
+
+**What you see:**
+
+```
+%VBACKUP-E-NOTINSTREAM, File: /home/ivan/restored/ivan/notes.txt - not restored: the catalog has it, the record stream does not, though no block was lost
+```
+
+**What happened:** the "table of contents" of the box names this file, but
+the file itself is not in the box — and nothing in the box is broken. That
+should never happen. Maybe the box was made by a newer VBACKUP, and yours
+does not understand a piece of it; maybe someone changed the box.
+
+**What to do:** try a newer VBACKUP. Take the file from another box. And
+tell the people who make VBACKUP, and give them the box.
+
+`/COMPARE` and `/VERIFY` count such a file as a difference
+(`COMPARERR … not compared`), so they never say "all is fine" while a file
+is missing.
 
 ### MISSVOL
 
