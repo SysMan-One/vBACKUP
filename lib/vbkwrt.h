@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-14"
+#define	__IDENT__	"X01-21"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.14.0"
+#define	__REV__		"1.21.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		SOLID: set by the caller - the saveset may hold SOLID records, version 3.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		PARITY, VERSION, PAR, HPAR.
@@ -88,6 +91,8 @@ typedef struct vbk_wctx_t
 	const VBK$KEYS *keys;			/* Set by the caller before VBK$WRT_OPEN: the	*/
 						/* saveset is encrypted (format.md 6.10)	*/
 	uint32_t	grpsz;			/* DATA blocks under one XOR, 0 - no XOR	*/
+	int		solid;			/* Set by the caller before VBK$WRT_OPEN: SOLID	*/
+						/* records may come - version 3 (format.md 6.12)	*/
 	uint32_t	parity;			/* Set by the caller before VBK$WRT_OPEN: the	*/
 						/* parity blocks of a group, 0 or 1 - the XOR	*/
 						/* block alone (version 1); 2 .. VBK$K_MAXPAR -	*/

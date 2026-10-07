@@ -31,6 +31,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 7-OCT-2026	RRL	X-04 : The key file a line of text: random octets may begin
+#						with a line feed - an empty first line, refused.
+#
 #		 6-OCT-2026	RRL	X-03 : /LEVEL: Deflate and LZMA both ways.
 #
 #		 6-OCT-2026	RRL	X-02 : Stage 14: the attributes of NTFS, the security
@@ -106,7 +109,7 @@ echo 3 > "$T/x?"
 echo 4 > "$T/trail."
 mkfifo $T/fifo
 touch -d '2001-02-03 04:05:06' $T/a.txt
-head -c 64 /dev/urandom > key && chmod 600 key
+head -c 48 /dev/urandom | base64 -w0 > key && chmod 600 key
 
 #	The tree as Windows can have it: the reference of what comes back
 mkdir -p ref && cp -a $T ref/ && rm -f "ref/tree/a:b" ref/tree/con.txt "ref/tree/x?" ref/tree/trail. ref/tree/fifo

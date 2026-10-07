@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWCX"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -107,6 +107,10 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Version 3: the SOLID records opened by the reader; a file whose place
+**		is a SOLID found in there past the files before it.
 **
 **	X01-06		 5-OCT-2026	RRL
 **		Encrypted savesets: the passphrase from VBACKUP_KEY_FILE.
@@ -1381,6 +1385,26 @@ struct timespec	l_ts [2] = { { (time_t) a_e->atime.sec, (long) a_e->atime.nsec }
 
 
 /*
+**  The FILENO of a FILE record, 0 - none
+*/
+static	uint32_t	s_vbkw$fileno	(
+	const	uint8_t *	a_body,
+		uint32_t	a_len
+			)
+{
+uint32_t	l_pos = 0, l_vlen;
+uint16_t	l_tag;
+const uint8_t *	l_val;
+
+	while ( 1 & vbk$tlv_next(a_body, a_len, &l_pos, &l_tag, &l_vlen, &l_val) )
+		if ( l_tag == VBK$K_TAG_FILENO )
+			return	(uint32_t) vbk$tlv_getu(l_vlen, l_val);
+
+	return	0;
+}
+
+
+/*
 **  The data of the file from where the stream stands: the FILE record
 **  of <a_fileno> first (catalog mode: just reached by the seek), then its
 **  DATA and DATAZ records up to its FEND - written into <a_out>, or only
@@ -1430,6 +1454,13 @@ int		l_damaged = 0, l_fend = 0, l_hasfcrc = 0;
 					{
 					s_vbkw$entfree(&l_e);
 
+					/* The place is a SOLID: the files before it in there are passed */
+					if ( l_r->insolid && !l_r->resync )
+						{
+						a_wantfile = 1;
+						continue;
+						}
+
 					return	WCX$K_E_BAD_DATA;
 					}
 
@@ -1461,8 +1492,11 @@ int		l_damaged = 0, l_fend = 0, l_hasfcrc = 0;
 			break;
 			}
 
-		if ( a_wantfile )
+		if ( a_wantfile && !(l_r->insolid && !l_r->resync) )
 			return	WCX$K_E_BAD_DATA;
+
+		if ( a_wantfile )
+			continue;
 
 		if ( (l_type == VBK$K_RT_DATA) || (l_type == VBK$K_RT_DATAZ) )
 			{
@@ -1670,8 +1704,11 @@ int		l_status, l_seek = a_arc->catalog;
 		uint32_t	l_len;
 		uint16_t	l_type;
 
+		/* In a SOLID: past the files before it in there */
 		if ( STS$K_SUCCESS == vbk$rd_seek(&a_arc->rctx, &l_e->loc) )
-			vbk$rd_next(&a_arc->rctx, &l_type, &l_body, &l_len, NULL);
+			while ( (1 & vbk$rd_next(&a_arc->rctx, &l_type, &l_body, &l_len, NULL)) && a_arc->rctx.insolid && !a_arc->rctx.resync
+				&& ((l_type != VBK$K_RT_FILE) || (s_vbkw$fileno(l_body, l_len) != l_e->fileno)) )
+				;
 		}
 
 	return	l_status;

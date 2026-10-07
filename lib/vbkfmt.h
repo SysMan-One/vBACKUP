@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-18"
+#define	__IDENT__	"X01-21"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.18.0"
+#define	__REV__		"1.21.0"
 #endif
 
 /*
@@ -34,6 +34,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Version 3 and the SOLID record (format.md 5, 6.12): the records of
+**		several small files compressed together; VBK$K_TAG_SOLID of a catalog
+**		entry.
 **
 **	X01-18		 6-OCT-2026	RRL
 **		VBK$K_TAG_WINATTR, VBK$K_TAG_NTSD: the attributes and the security
@@ -79,6 +84,7 @@ extern "C" {
 */
 #define	VBK$K_VERSION	1			/* Format version				*/
 #define	VBK$K_VERSION2	2			/* ... with PARITY blocks (format.md 4.1)	*/
+#define	VBK$K_VERSION3	3			/* ... with SOLID records, PARITY by the tag	*/
 #define	VBK$K_HDRSZ	64			/* Block header					*/
 #define	VBK$K_SZ_SPEC	4096			/* Longest volume specification			*/
 #define	VBK$K_MINBSZ	8192			/* Smallest block				*/
@@ -92,6 +98,10 @@ extern "C" {
 #define	VBK$K_MAXDATA	1048576			/* Data bytes in one DATA record		*/
 #define	VBK$K_MAXCAT	1048576			/* Body of one CATALOG record			*/
 #define	VBK$K_MAXREC	(16 * 1048576)		/* Sanity ceiling of a record body		*/
+#define	VBK$K_SOLIDHDR	12			/* codec, rawlen, count of a SOLID		*/
+#define	VBK$K_MAXSOLID	(1048576 + 65536)	/* The records of a SOLID, at most		*/
+#define	VBK$K_SOLIDFILE	262144			/* A file of this size at most goes into one	*/
+#define	VBK$K_SOLIDGRP	1048576			/* The records of a SOLID the writer aims at	*/
 #define	VBK$K_MAXCMD	4096			/* CMDLINE of the SUMMARY			*/
 #define	VBK$K_NONE	0xFFFFFFFFU		/* "No record begins here"			*/
 #define	VBK$K_TLVHDR	6			/* u16 tag, u32 length				*/
@@ -123,6 +133,7 @@ enum	{					/* Record types					*/
 	VBK$K_RT_CATALOG,
 	VBK$K_RT_END,
 	VBK$K_RT_DATAZ,				/* DATA, compressed (X01-04)			*/
+	VBK$K_RT_SOLID,				/* FILE, DATA, FEND of small files, compressed (X01-21) */
 
 	VBK$K_RT_SSET	= 16,			/* Journal: a saveset				*/
 	VBK$K_RT_FSTATE				/* Journal: the state of a saved file		*/
@@ -151,6 +162,7 @@ enum	{					/* TLV tags, one space for all records		*/
 	VBK$K_TAG_NLINK,
 	VBK$K_TAG_WINATTR,			/* FILE: FILE_ATTRIBUTE_* of Windows, u32	*/
 	VBK$K_TAG_NTSD,				/* FILE: the security descriptor, self-relative	*/
+	VBK$K_TAG_SOLID,			/* CATALOG: u8 1 - LOC is the SOLID that holds it */
 
 	VBK$K_TAG_CRC	= 32,
 	VBK$K_TAG_STATUS,

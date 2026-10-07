@@ -29,6 +29,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 7-OCT-2026	RRL	X-20 : SOLID (format.md 6.12): version 3, the tree back, members
+#						by the catalog, /NOSOLID; a SOLID lost - its
+#						members said, the rest whole.
+#
 #		 6-OCT-2026	RRL	X-19 : /LEVEL: every codec saved, listed, restored, compared,
 #						verified; a forged block of compressed data - its file said,
 #						never given wrong.
@@ -872,5 +876,71 @@ PYEOF' "/LEVEL=$L, forged blocks, $R: a file given wrong without a word, or noth
 	done
 done
 
+
+#
+#	18. SOLID (format.md 6.12): the small files of a compressed save in
+#	groups - version 3, smaller, the same tree back, each member reached
+#	by the catalog; /NOSOLID and an uncompressed save as before (version 1)
+#
+mkdir -p sol/t/a sol/t/b/c
+for i in $(seq 1 30); do seq $i 400 | sed "s/$/ line $i of a small file/" > sol/t/a/f$i.txt; done
+for i in $(seq 1 30); do seq $i 300 | sed "s/$/ another line $i/" > sol/t/b/c/g$i.txt; done
+head -c 2000000 /dev/urandom > sol/t/b/big.bin
+: > sol/t/empty
+truncate -s 200K sol/t/sparse && printf 'in the middle' | dd of=sol/t/sparse bs=1 seek=100000 conv=notrunc 2> /dev/null
+ln -s a/f1.txt sol/t/link
+ln sol/t/a/f2.txt sol/t/b/hard
+$VB sol/t sol6.bck /LEVEL=6 > sol6.log 2>&1
+check '[ $? = 0 ] && [ "$(od -An -tu2 -j6 -N2 sol6.bck | tr -d " ")" = 3 ]' "/LEVEL=6: not version 3: $(od -An -tu2 -j6 -N2 sol6.bck) $(grep -E -- '-[EFW]-' sol6.log | head -2)"
+$VB sol/t soln.bck /LEVEL=6 /NOSOLID > /dev/null 2>&1
+$VB sol/t solu.bck /SOLID > /dev/null 2>&1
+check '[ "$(od -An -tu2 -j6 -N2 soln.bck | tr -d " ")" = 1 ] && [ "$(od -An -tu2 -j6 -N2 solu.bck | tr -d " ")" = 1 ]' "/NOSOLID, or /SOLID uncompressed: not version 1"
+$VB sol/t solp.bck /LEVEL=1 /PARITY=2 > /dev/null 2>&1
+check '[ "$(od -An -tu2 -j6 -N2 solp.bck | tr -d " ")" = 3 ]' "/LEVEL=1 /PARITY=2: not version 3"
+check '[ $(stat -c %s sol6.bck) -lt $(stat -c %s soln.bck) ]' "SOLID not smaller than /NOSOLID: $(stat -c %s sol6.bck soln.bck | tr '\n' ' ')"
+for B in sol6 solp; do
+	rm -rf $B.r; $VB $B.bck $B.r > $B.r.log 2>&1
+	check '[ $? = 0 ] && same_tree sol/t $B.r/t && [ "$(stat -c %i $B.r/t/a/f2.txt)" = "$(stat -c %i $B.r/t/b/hard)" ] && [ "$(readlink $B.r/t/link)" = a/f1.txt ]' \
+		"$B: not restored the same: $(grep -E -- '-[EFW]-' $B.r.log | head -2)"
+	$VB $B.bck sol /COMPARE > $B.c.log 2>&1
+	check 'grep -q "Differences: 0" $B.c.log' "$B: /COMPARE: $(grep -E -- '-[EFW]-' $B.c.log | head -2)"
+done
+check '[ "$($VB sol6.bck /LIST /FORMAT=LS 2>&1 | grep -v Saveset)" = "$($VB soln.bck /LIST /FORMAT=LS 2>&1 | grep -v Saveset)" ]' "SOLID: the listing differs from /NOSOLID"
+$VB sol6.bck /EXTRACT=t/a/f17.txt sol17.out > /dev/null 2>&1
+check 'cmp -s sol17.out sol/t/a/f17.txt' "SOLID: /EXTRACT of a member not the first of its group: differs"
+$VB sol6.bck /EXTRACT=t/sparse solsp.out > /dev/null 2>&1
+check 'cmp -s solsp.out sol/t/sparse' "SOLID: /EXTRACT of a sparse member: differs"
+rm -rf sols.r; $VB sol6.bck sols.r '/SELECT=t/b/c/g2*.txt' > sols.log 2>&1
+check '[ $? = 0 ] && [ $(find sols.r -type f | wc -l) = 11 ] && cmp -s sols.r/t/b/c/g25.txt sol/t/b/c/g25.txt' "SOLID: /SELECT of members: $(find sols.r -type f | wc -l) files, $(grep -E -- '-[EFW]-' sols.log | head -2)"
+if [ -n "$VBKX" ]; then
+	check '$VBKX p sol6.bck t/b/c/g30.txt | cmp -s - sol/t/b/c/g30.txt' "SOLID: vbkx p of a member: differs"
+	rm -rf solx.r; $VBKX x sol6.bck -C solx.r > solx.log 2>&1
+	check '[ $? = 0 ] && same_tree sol/t solx.r/t' "SOLID: vbkx x: not the same tree: $(head -2 solx.log)"
+fi
+
+#	The day it is needed: one SOLID lost - no parity, an octet changed - its members said, every other file whole
+mkdir -p solf/a && for i in $(seq 1 60); do head -c 15000 /dev/urandom | base64 > solf/a/r$i.txt; done
+$VB solf/a solf.bck /LEVEL=6 /GROUP_SIZE=0 /BLOCK_SIZE=8192 > /dev/null 2>&1
+python3 - solf.bck <<'PYEOF'
+import sys
+p = sys.argv[1]; d = bytearray(open(p, 'rb').read())
+d[20 * 8192 + 64 + 100] ^= 0x5A
+open(p, 'wb').write(d)
+PYEOF
+rm -rf solf.r; $VB solf.bck solf.r > solf.log 2>&1
+RC=$?
+check '[ $RC = 2 ] && [ $(grep -c FILLOST solf.log) -gt 1 ] && python3 - solf/a solf.r/a solf.log <<PYEOF
+import os, sys
+src, out, log = sys.argv[1], sys.argv[2], open(sys.argv[3], errors="replace").read()
+for root, ds, fs in os.walk(src):
+	for f in fs:
+		p = os.path.join(root, f); rel = os.path.relpath(p, src); o = os.path.join(out, rel)
+		if os.path.islink(p):
+			continue
+		if os.path.exists(o) and open(p, "rb").read() == open(o, "rb").read():
+			continue
+		if ("/" + rel) not in log:
+			sys.exit(1)
+PYEOF' "SOLID lost: a file missing or wrong without a word (rc $RC): $(grep -E -- '-[EFW]-' solf.log | head -3)"
 
 tap_end

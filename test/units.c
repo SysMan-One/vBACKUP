@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -26,6 +26,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		SOLID records: opened by VBK$RD_NEXT in version 3, a forged one a
+**		gap and never a wrong record, a seek leaves the one being read.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		Codecs 2 and 3: every effort round trip and the same octets twice,
@@ -396,6 +400,119 @@ uint8_t		l_d [VBK$K_KEYSZ];
 
 	$CHECK(s_hexeq(l_d, sizeof(l_d), a_hex), "SHA-256 of %zu octets", a_len);
 }
+
+/*
+**  The inner records of a SOLID: header and body, appended at <a_at>
+*/
+static	uint32_t	s_inner	(
+		uint8_t *	a_buf,
+		uint32_t	a_at,
+		uint16_t	a_type,
+		uint32_t	a_len,
+		uint8_t		a_fill
+			)
+{
+	vbk$put16(a_buf + a_at, a_type);
+	vbk$put16(a_buf + a_at + 2, 0);
+	vbk$put32(a_buf + a_at + 4, a_len);
+	memset(a_buf + a_at + VBK$K_RECHDR, a_fill, a_len);
+
+	return	a_at + VBK$K_RECHDR + a_len;
+}
+
+/*
+**  A saveset of version 3 (<a_v3>, else 1): FILE "A", a SOLID of the
+**  body <a_body> - or <a_raw> packed by LZMA when <a_body> is NULL - and
+**  FEND "B".  Then read: the types that came, a resync per record ('!'),
+**  'S' for one that came out of a SOLID; <a_seek> - a seek back to "A"
+**  after the second record.
+*/
+static	int	s_solid	(
+	const	char *		a_name,
+		int		a_v3,
+	const	uint8_t *	a_raw,
+		uint32_t	a_rawlen,
+	const	uint8_t *	a_body,
+		uint32_t	a_blen,
+		int		a_seek,
+		char *		a_out,
+		size_t		a_outsz
+			)
+{
+static	uint8_t	l_rec [VBK$K_SOLIDHDR + VBK$LZ4_BOUND(VBK$K_MAXSOLID)], l_chk [VBK$K_MAXSOLID];
+VBK$WCTX	l_wctx = {0};
+VBK$RCTX	l_rctx = {0};
+VBK$TLVB	l_sum = {0}, l_trl = {0};
+VBK$LOC		l_aloc;
+char		l_spec [1100];
+const uint8_t *	l_body;
+uint32_t	l_len, l_zlen = 0, l_codec = 0, l_nvols;
+uint64_t	l_nblocks;
+uint16_t	l_type;
+size_t		l_o = 0;
+int		l_n = 0;
+
+	snprintf(l_spec, sizeof(l_spec), "%s/%s", s_dir, a_name);
+
+	vbk$tlv_str(&l_sum, VBK$K_TAG_PRODUCT, "VBACKUP UNITS");
+	vbk$tlv_u32(&l_sum, VBK$K_TAG_BLOCKSIZE, UNITS$K_BSZ);
+	vbk$tlv_u32(&l_sum, VBK$K_TAG_GROUPSIZE, 8);
+
+	if ( !a_body )
+		{
+		if ( STS$K_SUCCESS != vbk$data_pack(6, a_raw, a_rawlen, l_rec + VBK$K_SOLIDHDR, sizeof(l_rec) - VBK$K_SOLIDHDR, &l_zlen, &l_codec, l_chk) )
+			return	STS$K_ERROR;
+
+		vbk$put32(l_rec, l_codec);
+		vbk$put32(l_rec + 4, a_rawlen);
+		vbk$put32(l_rec + 8, 1);
+		a_body	= l_rec;
+		a_blen	= VBK$K_SOLIDHDR + l_zlen;
+		}
+
+	l_wctx.solid	= a_v3;
+
+	if ( !(1 & vbk$wrt_open(&l_wctx, l_spec, UNITS$K_BSZ, 8, 0, VBK$M_WRT_REPLACE, l_sum.buf, l_sum.len))
+		|| !(1 & vbk$wrt_record(&l_wctx, VBK$K_RT_FILE, "A", 1, &l_aloc))
+		|| !(1 & vbk$wrt_record(&l_wctx, VBK$K_RT_SOLID, a_body, a_blen, NULL))
+		|| !(1 & vbk$wrt_record(&l_wctx, VBK$K_RT_FEND, "B", 1, NULL)) )
+		return	STS$K_ERROR;
+
+	vbk$wrt_finish(&l_wctx, &l_nblocks, &l_nvols);
+	vbk$tlv_u64(&l_trl, VBK$K_TAG_NBLOCKS, l_nblocks);
+	vbk$tlv_u32(&l_trl, VBK$K_TAG_NVOLS, l_nvols);
+
+	if ( !(1 & vbk$wrt_close(&l_wctx, l_trl.buf, l_trl.len)) )
+		return	STS$K_ERROR;
+
+	vbk$tlv_free(&l_sum);
+	vbk$tlv_free(&l_trl);
+
+	memset(s_ev, 0, sizeof(s_ev));
+
+	if ( !(1 & vbk$rd_open(&l_rctx, l_spec, s_evcb, NULL)) )
+		return	STS$K_ERROR;
+
+	while ( (l_o + 4 < a_outsz) && (1 & vbk$rd_next(&l_rctx, &l_type, &l_body, &l_len, NULL)) )
+		{
+		if ( l_rctx.resync )
+			a_out [l_o++] = '!';
+
+		a_out [l_o++] = (char) ('0' + l_type);
+
+		if ( l_rctx.insolid )
+			a_out [l_o++] = 'S';
+
+		if ( (++l_n == 2) && a_seek && !(1 & vbk$rd_seek(&l_rctx, &l_aloc)) )
+			break;
+		}
+
+	a_out [l_o] = '\0';
+	vbk$rd_close(&l_rctx);
+
+	return	STS$K_SUCCESS;
+}
+
 
 int	main	(
 		int		a_argc,
@@ -1137,6 +1254,59 @@ char		l_spec [1100];
 		l_bad += (STS$K_WARN != vbk$data_pack(l, l_src, sizeof(l_src), l_z, sizeof(l_z), &l_zlen, &l_codec, l_chk));
 
 	$CHECK(!l_bad, "%u levels compressed noise", l_bad);
+	}
+
+	s_begin("SOLID: opened in version 3, a forged one a gap - never a wrong record");
+	{
+	static	uint8_t	l_raw [4096], l_bad [64];
+	uint32_t	l_n;
+	char		l_got [64];
+
+	/* FILE 2, DATA 3, FEND 4 inside; "A" FILE 2 and "B" FEND 4 around it */
+	l_n = s_inner(l_raw, 0, VBK$K_RT_FILE, 100, 'f');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_DATA, 2000, 'd');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_FEND, 40, 'e');
+
+	$CHECK((1 & s_solid("sol1.bck", 1, l_raw, l_n, NULL, 0, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S3S4S4"), "good SOLID: %s", l_got);
+	$CHECK((1 & s_solid("sol2.bck", 0, l_raw, l_n, NULL, 0, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "284"), "version 1: not opened, %s", l_got);
+	$CHECK((1 & s_solid("sol3.bck", 1, l_raw, l_n, NULL, 0, 1, l_got, sizeof(l_got))) && !strcmp(l_got, "22S22S3S4S4"), "a seek leaves it: %s", l_got);
+
+	/* A DATAZ inside, then a record running past the end: what is before them comes, the rest is a gap */
+	l_n = s_inner(l_raw, 0, VBK$K_RT_FILE, 10, 'f');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_DATAZ, 10, 'z');
+	$CHECK((1 & s_solid("sol4.bck", 1, l_raw, l_n, NULL, 0, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S!4"), "DATAZ inside: %s", l_got);
+
+	l_n = s_inner(l_raw, 0, VBK$K_RT_FILE, 10, 'f');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_DATA, 10, 'd');
+	vbk$put32(l_raw + 18 + 4, 11);
+	$CHECK((1 & s_solid("sol5.bck", 1, l_raw, l_n, NULL, 0, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S!4"), "a record past its end: %s", l_got);
+
+	/* The header: a codec unknown, RAWLEN out of bounds or not what comes out, a stream cut short */
+	l_n = s_inner(l_raw, 0, VBK$K_RT_FILE, 10, 'f');
+	memset(l_bad, 0, sizeof(l_bad));
+	vbk$put32(l_bad, 9);
+	vbk$put32(l_bad + 4, 18);
+	$CHECK((1 & s_solid("sol6.bck", 1, NULL, 0, l_bad, sizeof(l_bad), 0, l_got, sizeof(l_got))) && !strcmp(l_got, "2!4") && s_ev [VBK$K_EV_BADREC],
+		"codec 9: %s", l_got);
+	vbk$put32(l_bad, VBK$K_CODEC_LZ4);
+	vbk$put32(l_bad + 4, VBK$K_MAXSOLID + 1);
+	$CHECK((1 & s_solid("sol7.bck", 1, NULL, 0, l_bad, sizeof(l_bad), 0, l_got, sizeof(l_got))) && !strcmp(l_got, "2!4"), "RAWLEN too big: %s", l_got);
+	$CHECK((1 & s_solid("sol8.bck", 1, NULL, 0, l_bad, 8, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "2!4"), "no header: %s", l_got);
+
+	{
+	static	uint8_t	l_z [VBK$K_SOLIDHDR + 8192], l_chk [4096];
+	uint32_t	l_zlen, l_codec;
+
+	l_n = s_inner(l_raw, 0, VBK$K_RT_FILE, 10, 'f');
+	l_n = s_inner(l_raw, l_n, VBK$K_RT_DATA, 3000, 'd');
+	vbk$data_pack(6, l_raw, l_n, l_z + VBK$K_SOLIDHDR, sizeof(l_z) - VBK$K_SOLIDHDR, &l_zlen, &l_codec, l_chk);
+	vbk$put32(l_z, l_codec);
+	vbk$put32(l_z + 4, l_n + 1);
+	$CHECK((1 & s_solid("sol9.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "2!4"), "RAWLEN not what comes out: %s", l_got);
+	vbk$put32(l_z + 4, l_n);
+	$CHECK((1 & s_solid("sol10.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen - 3, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "2!4"), "cut short: %s", l_got);
+	$CHECK((1 & s_solid("sol11.bck", 1, NULL, 0, l_z, VBK$K_SOLIDHDR + l_zlen, 0, l_got, sizeof(l_got))) && !strcmp(l_got, "22S3S4"), "the same, whole: %s", l_got);
+	}
 	}
 
 	if ( s_tap )

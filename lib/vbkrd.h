@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-14"
+#define	__IDENT__	"X01-21"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.14.0"
+#define	__REV__		"1.21.0"
 #endif
 
 /*
@@ -29,6 +29,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		SOL, SOLLEN, SOLPOS, SOLLOC: the records of the SOLID being read.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		PARITY, VERSION, NFORGED; the event VBK$K_EV_PARITY; the group
@@ -148,6 +151,11 @@ typedef struct vbk_rctx_t
 	uint32_t	recsz;
 	int		resync;			/* The record returned follows a gap		*/
 	int		pendrs;			/* A gap before the next record, from a seek	*/
+	uint8_t *	sol;			/* The records of the SOLID being read		*/
+	uint32_t	solsz, sollen, solpos;
+	VBK$LOC		solloc;			/* Where that SOLID is				*/
+	int		insolid;		/* The record returned is one of a SOLID: a	*/
+						/* seek to it may stand at other files first	*/
 
 	uint64_t	nrepaired, nlost;
 	uint64_t	nforged;		/* Groups whose surplus parity disagreed (v2)	*/

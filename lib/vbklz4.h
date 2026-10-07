@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-19"
+#define	__IDENT__	"X01-21"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.19.0"
+#define	__REV__		"1.21.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		VBK$DATA_UNPACK: the octets of a codec, for the SOLID records too.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		Codecs 2 (raw Deflate, lib/vbkdfl.c) and 3 (raw LZMA1, lib/vbklzm.c);
@@ -72,6 +75,7 @@ int	vbk$lz4_pack		(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_
 int	vbk$data_pack		(int a_level, const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen,
 				 uint32_t *a_codec, uint8_t *a_check);
 uint32_t vbk$data_codec		(int a_level);
+int	vbk$data_unpack		(uint32_t a_codec, const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_rawlen);
 int	vbk$data_get		(uint16_t a_type, const uint8_t *a_body, uint32_t a_len, uint8_t *a_scratch,
 				uint32_t *a_fileno, uint64_t *a_off, const uint8_t **a_data, uint32_t *a_n);
 

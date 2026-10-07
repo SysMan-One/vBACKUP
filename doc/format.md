@@ -42,6 +42,11 @@ skips them by the rules of sections 5 and 6:
   the CATALOG) and NTSD, since X01-18; the alternate data streams of NTFS
   as XATTR items named `user.<stream>`.  A reader of an earlier version
   skips the two tags and restores the files without them;
+- the SOLID record (type 8, 6.12) and the catalog tag SOLID: the
+  records of a group of small files compressed together, since X01-21;
+  a saveset that holds one has version 3 in every block header.  A
+  reader of an earlier version refuses it at its first block - it never
+  takes the members of a SOLID for missing files;
 - the XATTR value (6.1) carries a counted name (u8 length, name) since
   X01-03; before it the name was ended by a NUL.  No saveset of the
   earlier form was ever given out: the change is made within version 1,
@@ -116,9 +121,9 @@ G (group) = DATA x n, then XOR, then PARITY x (m - 1)
 |---|---|---|---|
 | 0 | 4 | magic | bytes `V` `B` `K` `B` |
 | 4 | 2 | hdrlen | 64 |
-| 6 | 2 | version | 1; 2 in every block of a saveset with m >= 2 (4.1) |
+| 6 | 2 | version | 1; 2 in every block of a saveset with m >= 2 (4.1); 3 in every block of a saveset that may hold SOLID records (6.12), with any m |
 | 8 | 4 | bsize | B |
-| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER; 5 EDATA, 6 ETRAILER - those two of an encrypted saveset (6.10); 7 PARITY (version 2 only, 4.1) |
+| 12 | 1 | type | 1 DATA, 2 XOR, 3 VHDR, 4 TRAILER; 5 EDATA, 6 ETRAILER - those two of an encrypted saveset (6.10); 7 PARITY (version 2 and 3, 4.1) |
 | 13 | 1 | flags | bit 0 LASTINVOL: last block of this volume; bit 1 LASTINSET: last block of the saveset |
 | 14 | 2 | gindex | DATA: position in its group, 0-based; XOR: n, the number of DATA blocks it covers; PARITY: n + 256 * j, j its row (1 .. m - 1); else 0 |
 | 16 | 16 | ssuuid | UUID of the saveset |
@@ -133,6 +138,12 @@ G (group) = DATA x n, then XOR, then PARITY x (m - 1)
 A block is valid when magic, hdrlen, version, bsize, ssuuid match and
 the CRC is right.  The version of every block of a saveset is that of
 its first VHDR.
+
+Version 3 changes nothing in the blocks: its groups are those of version
+1 when the SUMMARY has no PARITY tag (or PARITY 1) - the XOR block alone,
+`recoff` 0xFFFFFFFF and `paylen` P in it - and those of version 2 (4.1)
+when PARITY is 2 or more.  It only says that the record stream may hold
+SOLID records.
 
 ## 4. XOR blocks and the repair of one lost block
 
@@ -244,12 +255,15 @@ Record header, 8 bytes:
 | 5 | CATALOG | a sequence of entries: u32 entry length, then TLV items, section 6.4 |
 | 6 | END | TLV items, section 6.5 |
 | 7 | DATAZ | u32 fileno, u32 codec (1 = LZ4 block, 2 = raw Deflate, 3 = raw LZMA1), u64 offset in the file, u32 rawlen (at most 1048576), then the compressed bytes - section 6.7 |
+| 8 | SOLID | u32 codec (as in DATAZ), u32 rawlen (at most 1114112), u32 count, then the compressed bytes: the records of several files - section 6.12; version 3 only |
 
 Order in the stream:
 
 ```
 SUMMARY
-  ( FILE [DATA|DATAZ ...] FEND ) ... one group per file, files in walk order
+  ( FILE [DATA|DATAZ ...] FEND ) ... one group per file, files in walk order;
+                                     version 3: any run of these groups
+                                     may be one SOLID instead (6.12)
   CATALOG ...                        one or more records, at most 1 MiB body each
 END
 ```
@@ -290,6 +304,7 @@ Value types: u8 .. u64, TIME, STR (raw bytes), UUID.
 | 20 | NLINK | u32 | st_nlink |
 | 21 | WINATTR | u32 | a file saved on Windows: its FILE_ATTRIBUTE_* bits READONLY 0x1, HIDDEN 0x2, SYSTEM 0x4, ARCHIVE 0x20, TEMPORARY 0x100, NOT_CONTENT_INDEXED 0x2000; the others are not kept (6.11) |
 | 22 | NTSD | STR | a file saved on Windows: its security descriptor - owner, group, DACL, SACL when it could be read - in the self-relative form of Windows (6.11) |
+| 23 | SOLID | u8 | CATALOG only: 1 - the FILE record is inside the SOLID record at LOCVOL, LOCBLK, LOCOFF (6.12) |
 
 FILE always has FILENO, PATH, FTYPE, MODE, UID, GID, SIZE, MTIME.
 
@@ -323,12 +338,14 @@ BASEIDX as in the FILE record, plus:
 | 33 | STATUS | u8 | as in FEND, or 3 PRESENT: covered, not saved in this saveset (6.6) |
 | 34 | LOCVOL | u32 | volume of the block in which the FILE record begins |
 | 35 | LOCBLK | u64 | blkno of that block |
-| 36 | LOCOFF | u32 | offset of the FILE record header in that block's payload |
+| 36 | LOCOFF | u32 | offset of the FILE record header in that block's payload; with SOLID 1, of the header of the SOLID record that holds it |
 
 STATUS 3 is a catalog value only; FEND never carries it.  A PRESENT
 entry has no FILE record in the stream and therefore no LOCVOL, LOCBLK,
 LOCOFF and no CRC; its FILENO is a number of its own all the same.
-CTIME and DEVINO are written since X01-02.
+CTIME and DEVINO are written since X01-02; SOLID since X01-21, by a
+writer that grouped the file and then wrote the group as it is when it
+did not shrink, as 0 (LOC is its own FILE record then).
 
 A listing shows the saved entries only (STATUS 0..2); the PRESENT ones
 are counted.
@@ -698,6 +715,68 @@ the files of Windows:
 - A sparse file is saved by its allocated ranges, as by SEEK_DATA on
   Linux; a file that is not sparse is all data.
 
+### 6.12 SOLID: the records of small files compressed together
+
+Small files compress badly one by one: each DATAZ record starts with an
+empty dictionary, and the FILE and FEND records - a third of a saveset
+of source code - are not compressed at all.  A SOLID record carries the
+complete records of several files - FILE, its DATA, FEND, then the next
+file - in one compressed body:
+
+| Off | Size | Field |
+|---|---|---|
+| 0 | 4 | codec: 1 LZ4 block, 2 raw Deflate, 3 raw LZMA1, as in 6.7 |
+| 4 | 4 | rawlen: the length of the records, decompressed; 8 .. 1114112 |
+| 8 | 4 | count: the files whose FILE record is in it (for the curious - a reader needs it not) |
+| 12 | ... | the compressed bytes |
+
+Decompressed, the body is a sequence of records, each with its 8-byte
+header as in section 5: FILE, DATA, FEND only - never DATAZ, never
+another SOLID - every one wholly inside, the last one ending exactly at
+`rawlen`.  The DATA records of a member are records of type 3 as in the
+stream, at most 1048576 bytes each; FEND and the CRC are per file as
+always.
+
+Rules of the writer (VBACKUP since X01-21, `/DATA_FORMAT=COMPRESSED` or
+`/LEVEL`, unless `/NOSOLID`):
+
+1. Only a regular file of at most 262144 bytes, not a further name of a
+   hard link, goes into a group; everything else - a directory, a link,
+   a bigger file - closes the open group first, so the stream keeps the
+   order of the walk: a reader that restores records as they come makes
+   the directories before their files exactly as before.
+2. A group is closed before its records would pass 1048576 bytes, and at
+   the end of the walk.
+3. The group is compressed and decompressed again; when that does not
+   come back the same (ZCHECK) or does not shrink, its records are
+   written into the stream as they are, top-level, and the catalog
+   entries of its members point at their own FILE records (SOLID 0).
+4. Otherwise one SOLID record is written, and the catalog entry of every
+   member has LOCVOL, LOCBLK, LOCOFF of the SOLID and SOLID 1.
+5. A saveset whose writer may write SOLID records has version 3 in every
+   block header - VBACKUP sets it whenever it groups, even if every group
+   then went out as it is.
+
+Rules of the reader:
+
+- In version 1 and 2 a record of type 8 is an unknown record and is
+  skipped (section 5); in version 3 it is opened and its records are
+  delivered one by one, as if they stood in the stream.
+- A SOLID that does not open - an unknown codec, `rawlen` out of
+  bounds, a compressed stream that is not right, a record inside that is
+  not FILE, DATA, FEND or does not end inside - is a bad record: all of
+  it is a gap, exactly like lost blocks.  Its members have no FILE record
+  seen; the reader names them from the catalog (VBACKUP: FILLOST).
+- Catalog mode: LOC of a member is the SOLID; the reader decompresses
+  it and passes the records of the members before it, by FILENO.
+
+What it costs: a SOLID is one record of up to about 250 KB on the
+medium.  Lost blocks that the group parity cannot rebuild (section 4:
+more than m bad blocks in one group) take every member of the SOLID they
+touch, not just the file they were in.  With the default parity one bad
+block per group is still repaired.  For a saveset that must live through
+worse, give `/PARITY=m` with m >= 2, or `/NOSOLID`.
+
 ## 7. Writer rules
 
 1. Volume 1, block 0: VHDR.  Then the record stream.
@@ -719,7 +798,8 @@ Two access modes share one record parser.
 **Catalog mode** (`/LIST`, `/SELECT` on restore, `/EXTRACT`): read the
 last block of the last volume - it must be the TRAILER.  Go to CATVOL,
 CATBLK, CATOFF and read the CATALOG records.  A single file is reached
-through its LOCVOL, LOCBLK, LOCOFF without reading anything else.
+through its LOCVOL, LOCBLK, LOCOFF without reading anything else - with
+SOLID 1, through the SOLID, past the members before it (6.12).
 
 **Sequential mode** (full restore, `/COMPARE`, damaged or truncated
 savesets): read the blocks in order.  For each group - N + m blocks, fewer at the end of a volume -

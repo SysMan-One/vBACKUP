@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -87,6 +87,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Version 3: the SOLID records opened by the reader; a file whose place
+**		is a SOLID found in there past the files before it.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		Savesets of version 2 (/PARITY) through VBKRD.C and VBKRS.C; the
@@ -1574,17 +1578,30 @@ static	void	s_vbkx$stream	(
 const uint8_t *	l_body;
 uint32_t	l_len;
 uint16_t	l_type;
-int		l_files = 0, l_ended = 0;
+int		l_files = 0, l_ended = 0, l_pass = 0;
 
 	while ( 1 & vbk$rd_next(a_rctx, &l_type, &l_body, &l_len, NULL) )
 		{
 		if ( a_rctx->resync && a_out->active )
 			a_out->damaged	= 1;
 
+		/* A file of a SOLID before the one wanted: its records passed */
+		if ( l_pass && (l_type != VBK$K_RT_FILE) && a_rctx->insolid && !a_rctx->resync )
+			continue;
+
+		l_pass	= 0;
+
 		if ( l_type == VBK$K_RT_FILE )
 			{
 			if ( a_out->active )
 				s_vbkx$end(a_out, NULL, 0);
+
+			/* The place is a SOLID: the files before it in there are not it */
+			if ( a_one && !l_files && a_rctx->insolid && !a_rctx->resync && (s_vbkx$fileno(l_body, l_len) != a_one) )
+				{
+				l_pass	= 1;
+				continue;
+				}
 
 			if ( a_one && (l_files++ || (s_vbkx$fileno(l_body, l_len) != a_one)) )
 				return;

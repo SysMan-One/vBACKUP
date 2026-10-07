@@ -25,6 +25,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 7-OCT-2026	RRL	X-02 : SOLID: small files in the tree, so the saves of every
+#					level write SOLID records; /NOSOLID, /EXTRACT of a
+#					member; the key a line of text.
+#
 #		 6-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
@@ -51,8 +55,9 @@ mkdir -p src/tree/sub
 seq 1 60000 | sed 's/$/ a line that compresses/' > src/tree/text.txt
 head -c 200000 /dev/urandom > src/tree/sub/rand.bin
 : > src/tree/empty
+mkdir -p src/tree/small && for i in $(seq 1 40); do seq $i 500 | sed "s/$/ small $i/" > src/tree/small/s$i.txt; done
 truncate -s 3M src/tree/sparse
-head -c 32 /dev/urandom > key && chmod 600 key
+head -c 48 /dev/urandom | base64 -w0 > key && chmod 600 key
 
 mkdir -p u.d
 vg units $UT u.d
@@ -64,6 +69,13 @@ for L in 1 2 5 6 8 9; do
 	vg r$L $VB l$L.bck r$L
 	check '[ $? = 0 ] && cmp -s src/tree/text.txt r$L/tree/text.txt' "restore /LEVEL=$L under valgrind: $(head -5 r$L.vg)"
 done
+
+vg sn $VB src/tree n.bck /LEVEL=6 /NOSOLID
+check '[ $? = 0 ]' "save /NOSOLID under valgrind: $(head -5 sn.vg)"
+vg rn $VB n.bck rn
+check '[ $? = 0 ] && cmp -s src/tree/small/s7.txt rn/tree/small/s7.txt' "restore /NOSOLID under valgrind: $(head -5 rn.vg)"
+vg xs $VB l6.bck /EXTRACT=tree/small/s33.txt s33.out
+check '[ $? = 0 ] && cmp -s src/tree/small/s33.txt s33.out' "/EXTRACT of a SOLID member under valgrind: $(head -5 xs.vg)"
 
 VBACKUP_KDFITER=1000 vg se $VB src/tree e.bck /ENCRYPT /KEY_FILE=key /PARITY=3 /LEVEL=4 /BLOCK_SIZE=16384
 check '[ $? = 0 ]' "save /ENCRYPT /PARITY=3 under valgrind: $(head -5 se.vg)"

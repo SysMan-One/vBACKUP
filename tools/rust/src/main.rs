@@ -60,6 +60,12 @@
 **		decompressed under the same checks as everything else - a
 **		length or an offset out of bounds makes it a bad record, and
 **		its file is named incomplete.
+**		SOLID records (version 3, format.md 6.12: the FILE, DATA
+**		and FEND records of small files compressed together, by the
+**		same codecs) are opened and their records taken as if they
+**		stood in the stream; one that does not open, or holds a
+**		record that is not right, is a gap like lost blocks - its
+**		files named from the catalog, never wrong octets.
 **
 **  VOLUMES:	a saveset of vbackup /PHYSICAL (format.md 6.8) holds one device:
 **		it comes out as one sparse file, the image of that device
@@ -88,7 +94,7 @@
 **
 **  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 **		rebuilt from the group's XOR block - with vbackup /PARITY=m
-**		(format.md 4.1, version 2) any m bad blocks of a group, by
+**		(format.md 4.1, version 2 or 3) any m bad blocks of a group, by
 **		Reed-Solomon in GF(2^8), written out here too; after a loss the stream
 **		is picked up at the next good block.  A file that lost data
 **		is kept as far as it got and named: "File: <name> - is
@@ -119,6 +125,13 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Savesets of version 3 (format.md 3, 6.12): the groups of version 1,
+**		or of version 2 with PARITY 2 or more; the SOLID record opened, its
+**		FILE, DATA, FEND records taken one by one as if in the stream; a
+**		SOLID that does not open is a gap, its files named lost.  The block
+**		size tried on a header before the whole block is read.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		DATAZ codecs 2 (raw Deflate, RFC 1951: stored, fixed, dynamic
@@ -187,9 +200,9 @@ const BT_VHDR: u8 = 3;
 const BT_TRAILER: u8 = 4;
 const BT_EDATA: u8 = 5; // DATA of an encrypted saveset: format.md 6.10
 const BT_ETRAILER: u8 = 6; // its TRAILER
-const BT_PARITY: u8 = 7; // a parity row >= 1 of version 2: format.md 4.1
+const BT_PARITY: u8 = 7; // a parity row >= 1 of version 2 and 3: format.md 4.1
 const TAG_GROUPSIZE: u16 = 71;
-const TAG_PARITY: u16 = 93; // m, the parity blocks of a group (version 2)
+const TAG_PARITY: u16 = 93; // m, the parity blocks of a group (version 2 and 3)
 const MAXPAR: u32 = 8;
 
 /* Encryption, format.md 6.10 */
@@ -211,8 +224,11 @@ const RT_FEND: u16 = 4;
 const RT_CATALOG: u16 = 5;
 const RT_END: u16 = 6;
 const RT_DATAZ: u16 = 7; // DATA, compressed: format.md 6.7
+const RT_SOLID: u16 = 8; // FILE, DATA, FEND of small files, compressed: format.md 6.12
 
 const MAXDATA: u32 = 1 << 20; // the most octets a DATA or DATAZ record holds
+const MAXSOLID: u32 = (1 << 20) + 65536; // the records of a SOLID, at most
+const SOLIDHDR: usize = 12; // codec, rawlen, count of a SOLID
 const CODEC_LZ4: u32 = 1;
 const CODEC_DEFLATE: u32 = 2; // raw Deflate, RFC 1951: format.md 6.7.2
 const CODEC_LZMA: u32 = 3; // raw LZMA1, lc=3 lp=0 pb=2, end marker: format.md 6.7.3
@@ -1625,7 +1641,7 @@ struct Bhdr {
 ** field taken as 0) followed by the whole payload area.
 */
 fn check(crc: &Crc, b: &[u8], bsize: u32, uuid: Option<&[u8; 16]>) -> Option<Bhdr> {
-    if b.len() != bsize as usize || b.len() < HDR || &b[0..4] != b"VBKB" || u16_at(b, 4) != HDR as u16 || !(1..=2).contains(&u16_at(b, 6)) {
+    if b.len() != bsize as usize || b.len() < HDR || &b[0..4] != b"VBKB" || u16_at(b, 4) != HDR as u16 || !(1..=3).contains(&u16_at(b, 6)) {
         return None;
     }
     let mut h = Bhdr {
@@ -1642,12 +1658,12 @@ fn check(crc: &Crc, b: &[u8], bsize: u32, uuid: Option<&[u8; 16]>) -> Option<Bhd
     };
     h.uuid.copy_from_slice(&b[16..32]);
     let psize = bsize - HDR as u32;
-    /* The parity blocks of version 2 carry the header parity in RECOFF and PAYLEN (format.md 4.1) */
-    let hpar = h.version == 2 && (h.typ == BT_XOR || h.typ == BT_PARITY);
+    /* The parity blocks of version 2 (and 3, PARITY >= 2) carry the header parity in RECOFF and PAYLEN (format.md 4.1) */
+    let hpar = h.version >= 2 && (h.typ == BT_XOR || h.typ == BT_PARITY);
     if u32_at(b, 8) != bsize
         || h.typ < BT_DATA
         || h.typ > BT_PARITY
-        || (h.typ == BT_PARITY && h.version != 2)
+        || (h.typ == BT_PARITY && h.version < 2)
         || (!hpar && (h.paylen > psize || (h.recoff != NONE && h.recoff >= psize)))
     {
         return None;
@@ -1783,6 +1799,15 @@ fn read_block(f: Option<&File>, bsize: u32, pos: u64) -> Vec<u8> {
     buf
 }
 
+/* The header alone could be that of a block of this size: the whole block is not read for nothing */
+fn head_is(f: &File, bsize: u32, pos: u64) -> bool {
+    let mut h = [0u8; 16];
+    match f.read_at(&mut h, pos.saturating_mul(bsize as u64)) {
+        Ok(16) => &h[0..4] == b"VBKB" && u16_at(&h, 4) == HDR as u16 && (1..=3).contains(&u16_at(&h, 6)) && u32_at(&h, 8) == bsize,
+        _ => false,
+    }
+}
+
 fn blocks_in(f: &File, bsize: u32) -> u64 {
     match f.metadata() {
         Ok(m) => m.len() / bsize as u64,
@@ -1795,7 +1820,7 @@ struct Reader {
     spec: String,
     bsize: u32,
     grpsz: u32,
-    parity: u32,  // parity blocks of a group: 1, or 2 .. 8 in version 2
+    parity: u32,  // parity blocks of a group: 1, or 2 .. 8 in version 2 (and 3)
     version: u16, // of every block: that of the VHDR
     gf: Gf,
     uuid: [u8; 16],
@@ -1825,6 +1850,12 @@ struct Reader {
     payvol: usize,
     resync: bool, // the record returned follows a loss
     bad: bool,    // something was damaged or not done: completion 1
+
+    /* The SOLID being read (version 3, format.md 6.12): its records, decompressed */
+    sol: Vec<u8>,
+    solpos: usize, // the next record in it
+    solblk: u64,   // where it begins: the messages
+    solvol: usize,
 }
 
 fn volspec(spec: &str, n: u32) -> String {
@@ -1910,6 +1941,10 @@ impl Reader {
             payvol: 0,
             resync: false,
             bad: false,
+            sol: Vec::new(),
+            solpos: 0,
+            solblk: 0,
+            solvol: 0,
         };
         /* The block size comes from the first header; it is believed only when the block checks */
         let mut head = [0u8; HDR];
@@ -1925,7 +1960,8 @@ impl Reader {
                         r.uuid = h.uuid;
                         r.grpsz = g;
                         r.version = h.version;
-                        r.parity = if h.version == 2 { m } else { 1 };
+                        /* Version 3: the groups of version 1, or of version 2 with PARITY >= 2 */
+                        r.parity = if h.version == 2 || (h.version == 3 && m >= 2) { m } else { 1 };
                         r.vcrypt = vc;
                         found = true;
                     }
@@ -1935,8 +1971,8 @@ impl Reader {
         if !found && !r.guess(&f) {
             return Err(format!("File: {} - is not a saveset", spec));
         }
-        /* Version 2: as many parity blocks as the SUMMARY says, and groups (format.md 4.1) */
-        if r.version == 2 && (r.parity < 2 || r.parity > MAXPAR || r.grpsz == 0) {
+        /* Version 2 (3 with PARITY): as many parity blocks as the SUMMARY says, and groups (format.md 4.1) */
+        if (r.version == 2 || r.parity > 1) && (r.parity < 2 || r.parity > MAXPAR || r.grpsz == 0) {
             return Err(format!("File: {} - is not a saveset", spec));
         }
         let n1 = blocks_in(&f, r.bsize);
@@ -1962,7 +1998,7 @@ impl Reader {
                     if !found && r.vcrypt.is_none() {
                         if let Some((_, m, vc)) = summary_group(&read_block(Some(&vf), r.bsize, 0), &h) {
                             r.vcrypt = vc;
-                            if h.version == 2 && h.version == r.version && m >= 2 {
+                            if h.version >= 2 && h.version == r.version && m >= 2 {
                                 r.parity = m;
                             }
                         }
@@ -2067,6 +2103,9 @@ impl Reader {
         let mut bs = MINBSZ;
         while bs <= MAXBSZ {
             for pos in 1..=8u64 {
+                if !head_is(f, bs, pos) {
+                    continue;
+                }
                 let h = match check(&self.crc, &read_block(Some(f), bs, pos), bs, None) {
                     Some(h) if h.volno == 1 && h.blkno == pos => h,
                     _ => continue,
@@ -2082,8 +2121,8 @@ impl Reader {
                         self.enc_seen |= x.typ == BT_EDATA || x.typ == BT_ETRAILER;
                         if x.typ == BT_XOR && (x.gindex & 0xFF) as u64 == p - 1 && x.version == self.version {
                             self.grpsz = (x.gindex & 0xFF) as u32;
-                            /* Version 2: the PARITY blocks after it, row by row, are the parity count */
-                            if self.version == 2 {
+                            /* Version 2 and 3: the PARITY blocks after it, row by row, are the parity count */
+                            if self.version >= 2 {
                                 self.parity = 1;
                                 while self.parity < MAXPAR {
                                     match check(&self.crc, &read_block(Some(f), bs, p + self.parity as u64), bs, Some(&self.uuid)) {
@@ -2520,10 +2559,66 @@ impl Reader {
         self.pay.as_ref().map_or(0, |p| p.len())
     }
 
+    /*
+    ** A SOLID record (format.md 6.12) opened: its records decompressed into
+    ** SOL, to be taken one by one; false - it does not open: an unknown
+    ** codec, a length out of bounds, a stream that is not right.
+    */
+    fn solopen(&mut self, body: &[u8]) -> bool {
+        self.sol = Vec::new();
+        self.solpos = 0;
+        if body.len() < SOLIDHDR {
+            return false;
+        }
+        let rawlen = u32_at(body, 4);
+        if rawlen > MAXSOLID || rawlen < 8 {
+            return false;
+        }
+        let z = &body[SOLIDHDR..];
+        let d = match u32_at(body, 0) {
+            CODEC_LZ4 => lz4_decompress(z, rawlen),
+            CODEC_DEFLATE => inflate(z, rawlen),
+            CODEC_LZMA => lzma_decompress(z, rawlen),
+            _ => None,
+        };
+        match d {
+            Some(d) if d.len() == rawlen as usize => {
+                self.sol = d;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /* The next record of the open SOLID: FILE, DATA or FEND only, whole in it; None - anything else, the rest dropped */
+    fn solnext(&mut self) -> Option<(u16, Vec<u8>)> {
+        let left = self.sol.len() - self.solpos;
+        let (typ, len) = (u16_at(&self.sol, self.solpos), u32_at(&self.sol, self.solpos + 4) as usize);
+        if left < 8 || !matches!(typ, RT_FILE | RT_DATA | RT_FEND) || len > left - 8 {
+            self.sol = Vec::new();
+            self.solpos = 0;
+            return None;
+        }
+        let at = self.solpos + 8;
+        self.solpos = at + len;
+        Some((typ, self.sol[at..at + len].to_vec()))
+    }
+
     /* The next record of the stream (section 5); None - the end.  RESYNC: blocks were lost before it. */
     fn next_record(&mut self) -> Option<(u16, Vec<u8>)> {
         let mut resync = false;
         loop {
+            /* The records of an open SOLID come first, as if they were in the stream */
+            if self.solpos < self.sol.len() {
+                if let Some(rec) = self.solnext() {
+                    self.resync = resync;
+                    return Some(rec);
+                }
+                /* A record in it that makes no sense: the rest is a gap, its files are named lost */
+                msg!("Block: {}, Volume: {} - a SOLID record that is not right, the rest of it is lost", self.solblk, self.solvol);
+                self.bad = true;
+                resync = true;
+            }
             while self.pay.is_none() || self.payoff >= self.paylen() {
                 match self.next_pay() {
                     1 => resync = true,
@@ -2550,6 +2645,7 @@ impl Reader {
                 continue;
             }
             self.payoff += 8;
+            let (hblk, hvol) = (self.payblk, self.payvol);
             let length = length as usize;
             let mut body: Vec<u8> = Vec::with_capacity(length);
             let mut st = 0u8;
@@ -2576,6 +2672,18 @@ impl Reader {
                 self.bad = true;
                 self.resync = true;
                 return None;
+            }
+            /* Version 3: a SOLID is opened, and its records taken from the top of the loop */
+            if typ == RT_SOLID && self.version == 3 {
+                self.solblk = hblk;
+                self.solvol = hvol;
+                if !self.solopen(&body) {
+                    /* It does not open: what it held is a gap, its files are named lost */
+                    msg!("Block: {}, Volume: {} - a SOLID record that does not open, its files are lost", hblk, hvol);
+                    self.bad = true;
+                    resync = true;
+                }
+                continue;
             }
             self.resync = resync;
             return Some((typ, body));
@@ -3091,7 +3199,7 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
 
 fn usage() -> i32 {
     eprintln!(
-        "vbkx-rs X01-19 - the extractor of last resort for VBACKUP savesets\n\n  \
+        "vbkx-rs X01-21 - the extractor of last resort for VBACKUP savesets\n\n  \
          vbkx-rs l saveset [-k file]           list the files (times in UTC)\n  \
          vbkx-rs x saveset [-C dir] [-k file]  extract them all\n  \
          vbkx-rs t saveset [-k file]           read it all, check the checksums\n  \

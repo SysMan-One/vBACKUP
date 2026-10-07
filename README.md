@@ -29,7 +29,8 @@ What a saveset gives you:
   deleted files gone;
 - a copy disk to disk with everything a restore would give back;
 - compression on all cores - `/DATA_FORMAT=COMPRESSED` LZ4, `/LEVEL=2..5`
-  Deflate, `/LEVEL=6..9` LZMA, every record checked before it is written - a whole
+  Deflate, `/LEVEL=6..9` LZMA, small files packed together (SOLID), every
+  record checked before it is written - a whole
   device block by block (`/PHYSICAL`) or a whole file system (`/IMAGE`);
 - encryption (`/ENCRYPT`, `/KEY_FILE`): ChaCha20 and HMAC-SHA256 per
   block, keys by PBKDF2 - the names of the files hidden too, damage
@@ -168,30 +169,37 @@ time; `tar | gzip` and `tar | xz` for comparison:
 | /usr/include, 210 MB | Size | Save | Restore |
 |---|---|---|---|
 | uncompressed | 239 MB | 1.0 s | 1.9 s |
-| /LEVEL=1 | 81 MB | 1.3 s | 2.1 s |
-| /LEVEL=2 | 60 MB | 1.5 s | 2.5 s |
-| /LEVEL=5 | 55 MB | 2.7 s | 2.4 s |
-| /LEVEL=6 | 56 MB | 2.5 s | 4.6 s |
-| /LEVEL=9 | 53 MB | 24.5 s | 4.5 s |
+| /LEVEL=1 | 62 MB | 1.3 s | 2.0 s |
+| /LEVEL=2 | 44 MB | 1.2 s | 2.3 s |
+| /LEVEL=5 | 39 MB | 2.4 s | 2.3 s |
+| /LEVEL=6 | 36 MB | 2.1 s | 3.6 s |
+| /LEVEL=9 | 32 MB | 21.2 s | 3.4 s |
+| /LEVEL=9 /NOSOLID | 53 MB | 24.7 s | 4.5 s |
 | tar, gzip -6 | 28 MB | 5.0 s | |
 | tar, xz -T8 -6 | 19 MB | 9.9 s | |
 
 | /usr/lib/python3, 512 MB | Size | Save | Restore |
 |---|---|---|---|
 | uncompressed | 571 MB | 2.9 s | 2.6 s |
-| /LEVEL=1 | 269 MB | 2.5 s | 3.3 s |
-| /LEVEL=2 | 200 MB | 4.4 s | 5.0 s |
-| /LEVEL=5 | 187 MB | 11.4 s | 4.7 s |
-| /LEVEL=6 | 172 MB | 9.6 s | 12.5 s |
-| /LEVEL=9 | 163 MB | 50.8 s | 12.2 s |
+| /LEVEL=1 | 254 MB | 2.5 s | 3.3 s |
+| /LEVEL=2 | 186 MB | 3.1 s | 4.8 s |
+| /LEVEL=5 | 172 MB | 8.0 s | 4.4 s |
+| /LEVEL=6 | 146 MB | 7.0 s | 11.0 s |
+| /LEVEL=9 | 135 MB | 41.2 s | 10.6 s |
+| /LEVEL=9 /NOSOLID | 163 MB | 51.0 s | 12.4 s |
 | tar, gzip -6 | 149 MB | 22.1 s | |
 | tar, xz -T8 -6 | 96 MB | 29.3 s | |
 
 What the numbers say: on big files VBACKUP compresses as gzip or xz do,
-and faster than one-thread gzip at level 1..5. On many small files it
-gives less than one tar of them: each file is compressed on its own -
-that is what keeps a bad block to one file - so what one file shares
-with the next is not used. Restore is fast at every level. Since X01-20
+and faster than one-thread gzip at level 1..5. Since X01-21 small files
+(up to 256 KB) are packed together, up to 1 MB at a time, into one SOLID
+record - their names and attributes compressed too: /usr/include at
+/LEVEL=9 went from 53 MB to 32 MB, and the saves got faster. A tar of
+them still gives less: tar | xz has one dictionary for all. The price is
+paid on a bad day only: blocks lost beyond repair take every file of the
+SOLID they touch (all named on restore), not just one file. For a
+saveset that must live through heavy damage give `/PARITY=2` or more,
+or `/NOSOLID`. Restore is fast at every level. Since X01-20
 levels 8 and 9 use the optimal parse of xz (+8% over X01-19 on text),
 and the compression pool keeps its cores busy on small files (/LEVEL=8 on
 /usr/include: 37 s -> 16 s).

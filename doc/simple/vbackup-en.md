@@ -467,6 +467,24 @@ vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6
 and compares it with your file. Only a piece that comes back the same is
 kept packed.
 
+**Many small files.** When VBACKUP packs, it puts small files (letters,
+notes, little programs) together in bundles of up to 1 MB, and packs each
+bundle in one go. Files that look alike share what they have in common, so
+the box gets much smaller: a folder of 22 444 small files at `/LEVEL=9` took 53 MB
+before, and now takes 32 MB. This is on by itself — you type nothing.
+
+**What it costs.** If the USB stick gets badly broken and a piece of the box
+cannot be repaired, the whole bundle is lost: not one file, but up to a few
+dozen small files. VBACKUP tells you the name of each one (`FILLOST`). One
+broken piece is still repaired by itself, as always. If the box must live
+through a badly broken disk, add `/PARITY=2` (see section 1), or turn the
+bundles off with `/NOSOLID`:
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6 /PARITY=2
+vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6 /NOSOLID
+```
+
 **Careful:** an old VBACKUP (before X01-04) does not understand a small box.
 It says the files are damaged:
 
@@ -476,6 +494,16 @@ It says the files are damaged:
 ```
 
 The files in the box are fine. Just install the new VBACKUP.
+
+**Careful, too:** a VBACKUP older than X01-21 cannot open a small box made
+by a new VBACKUP at all. It says:
+
+```
+%VBACKUP-E-NOTSAVESET, File: /mnt/usb/ivan.bck - is not a saveset
+```
+
+The box is fine: open it with the new VBACKUP. If you must give the box to
+someone with an old VBACKUP, make it with `/NOSOLID`.
 
 ---
 
@@ -838,6 +866,10 @@ vbackup /home/ivan /mnt/usb/ivan.bck /REPLACE
 ls /mnt/usb
 ```
 
+**Or:** the box was made smaller (section 8) by a new VBACKUP, and you
+open it with an old one (before X01-21). The box is fine: open it with the
+new VBACKUP. For someone with an old VBACKUP, make the box with `/NOSOLID`.
+
 ### OPENIN … errno: 2 (No such file or directory)
 
 **What you see:**
@@ -971,6 +1003,12 @@ Next time make two boxes on two different USB sticks.
 ```
 vbackup /mnt/usb/old.bck /LIST
 ```
+
+**Many `FILLOST` at once?** One broken place, and a long list of lost
+files: the box was made smaller (section 8), and a whole bundle of small
+files was in that place. Every lost file is named; all the others are
+fine. Take them from another box. Next time, for an important box, add
+`/PARITY=2` — or `/NOSOLID`, so that small files are not packed together.
 
 ### UNNAMED
 

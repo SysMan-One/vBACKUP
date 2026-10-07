@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRD"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -31,6 +31,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Version 3: the SOLID record opened by VBK$RD_NEXT, its records returned
+**		one by one as if they were in the stream; a SOLID that does not open
+**		is a bad record, and what it held is a gap.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		Version 2: groups of GRPSZ + PARITY blocks, S_VBK$LOADGRP2 - up
@@ -81,6 +86,7 @@
 #include	<errno.h>
 
 #include	"vbkrd.h"
+#include	"vbklz4.h"
 #include	"vbkos.h"
 
 #define	VBK$K_RECINI	(VBK$K_MAXDATA + VBK$K_DATAHDR)	/* First allocation of the record buffer */
@@ -502,10 +508,10 @@ int		l_fd, l_isreg = 0;
 		}
 	}
 
-	/* Version 2: parity blocks, as many as the SUMMARY says (format.md 4.1); version 1: the XOR block */
+	/* Version 2: parity blocks, as many as the SUMMARY says (format.md 4.1); version 1: the XOR block; version 3: either */
 	a_ctx->version	= l_bhdr.version;
 
-	if ( a_ctx->version == VBK$K_VERSION )
+	if ( (a_ctx->version == VBK$K_VERSION) || ((a_ctx->version == VBK$K_VERSION3) && (a_ctx->parity < 2)) )
 		a_ctx->parity	= 1;
 	else if ( (a_ctx->parity < 2) || (a_ctx->parity > VBK$K_MAXPAR) || !a_ctx->grpsz )
 		a_ctx->grpsz	= VBK$K_MAXGRP + 1;
@@ -825,6 +831,7 @@ void	vbk$rd_close	(
 	free(a_ctx->trlraw);
 	free(a_ctx->gbuf);
 	free(a_ctx->rec);
+	free(a_ctx->sol);
 
 	vbk$crp_wipe(a_ctx, sizeof(*a_ctx));
 }
@@ -837,6 +844,9 @@ int	vbk$rd_rewind	(
 		VBK$RCTX *	a_ctx
 			)
 {
+	/* A SOLID being read is left behind */
+	a_ctx->sollen = a_ctx->solpos = 0;
+
 	/*
 	**  A stream goes back only within the first group, while it is still
 	**  in hand: the SUMMARY taken by VBK$RD_SETKEY; before anything has
@@ -1490,6 +1500,84 @@ int		l_status;
 
 
 /*
+**  A SOLID record (format.md 6.12) opened: its records decompressed into
+**  SOL, to be returned one by one.  STS$K_ERROR - it does not open: an
+**  unknown codec, a length out of bounds, a stream that is not right.
+*/
+static	int	s_vbk$solopen	(
+		VBK$RCTX *	a_ctx,
+		uint32_t	a_len,
+	const	VBK$LOC *	a_loc
+			)
+{
+uint32_t	l_raw;
+
+	a_ctx->sollen = a_ctx->solpos = 0;
+
+	if ( a_len < VBK$K_SOLIDHDR )
+		return	STS$K_ERROR;
+
+	if ( ((l_raw = vbk$get32(a_ctx->rec + 4)) > VBK$K_MAXSOLID) || (l_raw < VBK$K_RECHDR) )
+		return	STS$K_ERROR;
+
+	if ( l_raw > a_ctx->solsz )
+		{
+		uint8_t *	l_p;
+
+		if ( !(l_p = realloc(a_ctx->sol, l_raw)) )
+			return	a_ctx->err = ENOMEM, STS$K_FATAL;
+
+		a_ctx->sol	= l_p;
+		a_ctx->solsz	= l_raw;
+		}
+
+	if ( STS$K_SUCCESS != vbk$data_unpack(vbk$get32(a_ctx->rec), a_ctx->rec + VBK$K_SOLIDHDR, a_len - VBK$K_SOLIDHDR, a_ctx->sol, l_raw) )
+		return	STS$K_ERROR;
+
+	a_ctx->sollen	= l_raw;
+	a_ctx->solloc	= *a_loc;
+
+	return	STS$K_SUCCESS;
+}
+
+/*
+**  The next record of the open SOLID: FILE, DATA or FEND only, whole in
+**  it.  STS$K_ERROR - anything else: the rest of the SOLID is dropped.
+*/
+static	int	s_vbk$solnext	(
+		VBK$RCTX *	a_ctx,
+		uint16_t *	a_type,
+	const	uint8_t **	a_body,
+		uint32_t *	a_len,
+		VBK$LOC *	a_loc
+			)
+{
+uint32_t	l_left = a_ctx->sollen - a_ctx->solpos, l_len;
+uint16_t	l_type;
+
+	if ( l_left < VBK$K_RECHDR )
+		return	a_ctx->sollen = a_ctx->solpos = 0, STS$K_ERROR;
+
+	l_type	= vbk$get16(a_ctx->sol + a_ctx->solpos);
+	l_len	= vbk$get32(a_ctx->sol + a_ctx->solpos + 4);
+
+	if ( ((l_type != VBK$K_RT_FILE) && (l_type != VBK$K_RT_DATA) && (l_type != VBK$K_RT_FEND)) || (l_len > (l_left - VBK$K_RECHDR)) )
+		return	a_ctx->sollen = a_ctx->solpos = 0, STS$K_ERROR;
+
+	*a_type	= l_type;
+	*a_body	= a_ctx->sol + a_ctx->solpos + VBK$K_RECHDR;
+	*a_len	= l_len;
+
+	if ( a_loc )
+		*a_loc	= a_ctx->solloc;
+
+	a_ctx->solpos += VBK$K_RECHDR + l_len;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
@@ -1538,6 +1626,22 @@ int		l_status, l_resync = a_ctx->pendrs;
 
 	for ( ;; )
 		{
+		/* The records of an open SOLID come first, as if they were in the stream */
+		if ( a_ctx->solpos < a_ctx->sollen )
+			{
+			if ( STS$K_SUCCESS == s_vbk$solnext(a_ctx, a_type, a_body, a_len, a_loc) )
+				{
+				a_ctx->resync	= l_resync;
+				a_ctx->insolid	= 1;
+
+				return	STS$K_SUCCESS;
+				}
+
+			/* A record in it that makes no sense: the rest is dropped, a gap - its files are named lost */
+			s_vbk$event(a_ctx, VBK$K_EV_BADREC, a_ctx->solloc.vol, a_ctx->solloc.blk);
+			l_resync = 1;
+			}
+
 		/* A record header: never split, so it is wholly in one payload */
 		while ( !a_ctx->pay || (a_ctx->payoff >= a_ctx->paylen) )
 			{
@@ -1627,10 +1731,27 @@ int		l_status, l_resync = a_ctx->pendrs;
 			return	STS$K_WARN;
 			}
 
+		/* Version 3: a SOLID is opened, and its records returned from the top of the loop */
+		if ( (l_type == VBK$K_RT_SOLID) && (a_ctx->version == VBK$K_VERSION3) )
+			{
+			if ( STS$K_FATAL == (l_status = s_vbk$solopen(a_ctx, l_len, &l_loc)) )
+				return	STS$K_FATAL;
+
+			if ( l_status != STS$K_SUCCESS )
+				{
+				/* It does not open: what it held is a gap, its files are named lost */
+				s_vbk$event(a_ctx, VBK$K_EV_BADREC, l_loc.vol, l_loc.blk);
+				l_resync = 1;
+				}
+
+			continue;
+			}
+
 		*a_type		= l_type;
 		*a_body		= a_ctx->rec;
 		*a_len		= l_len;
 		a_ctx->resync	= l_resync;
+		a_ctx->insolid	= 0;
 
 		if ( a_loc )
 			*a_loc	= l_loc;
@@ -1668,6 +1789,9 @@ int	vbk$rd_seek	(
 VBK$RVOL *	l_vol;
 uint64_t	l_pos, l_start;
 int		l_status;
+
+	/* A SOLID being read is left: the seek goes elsewhere */
+	a_ctx->sollen = a_ctx->solpos = 0;
 
 	/* A stream has no places to go to: it is read through, forward */
 	if ( !a_loc->vol || (a_loc->vol > a_ctx->nvols) || (a_ctx->crypt && !a_ctx->haskey) || a_ctx->isstream )

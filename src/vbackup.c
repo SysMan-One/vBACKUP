@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-20"
-#define	__REV__		"1.20.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		/SOLID, negatable: the small files of a compressed save in SOLID
+**		records (format.md 6.12), the default; /NOSOLID - each in its own.
 **
 **	X01-20		 6-OCT-2026	RRL
 **		Stage 16: /LEVEL=8, 9 by the optimal parse of LZMA; the pool of the
@@ -202,6 +206,7 @@ enum	{
 	VBACKUP$K_QUAL_ENCRYPT,
 	VBACKUP$K_QUAL_KEY_FILE,
 	VBACKUP$K_QUAL_TRANSFER,
+	VBACKUP$K_QUAL_SOLID,
 
 	VBACKUP$K_QUAL_MAX
 	};
@@ -269,6 +274,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("ENCRYPT")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("KEY_FILE")},	.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("TRANSFER")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("SOLID")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL,	.flag = CLI$M_NEGATABLE },
 	{ .name = { .len = 0 } }
 	};
 
@@ -299,6 +305,7 @@ static	const char	s_usage [] = {
 	"            /SINCE=time /BEFORE=time /MODIFIED /CREATED /CHANGED\n"
 	"            /BY_OWNER=user /[NO]CROSS_DEVICE /IGNORE=NOBACKUP /VERIFY\n"
 	"            /RECORD /SINCE=BACKUP /JOURNAL=file /DATA_FORMAT=COMPRESSED /LEVEL=1..9\n"
+	"            /NOSOLID (compressed: small files in records of their own, version 1)\n"
 	"            /DELETE (with /VERIFY: the files saved and verified are deleted)\n"
 	"            /ENCRYPT (asks a passphrase twice, or /KEY_FILE=file)\n"
 	"  Saveset:  x.bck y.bck | x.bck - | - y.bck  block for block (/TRANSFER)\n"
@@ -821,6 +828,12 @@ ASC		l_val;
 		a_opts->zlevel	 = (int) l_v;
 		a_opts->compress = 1;
 		}
+
+	/* /NOSOLID: every file in records of its own, as before X01-21; /SOLID alone does not compress */
+	a_opts->solid	= 1;
+
+	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_SOLID, &l_neg) )
+		a_opts->solid = !l_neg;
 
 	/* /ENCRYPT: format.md 6.10; the passphrase is asked for when the saveset is made, never taken from the command */
 	if ( s_vbk$present(a_clictx, VBACKUP$K_QUAL_ENCRYPT, NULL) )

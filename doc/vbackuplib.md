@@ -341,9 +341,15 @@ sets the number of threads, 1 - none.
 A restore, /LIST, /COMPARE, /EXTRACT and vbkx need nothing: they see
 compressed data by themselves.
 
+Small files are packed together, in groups: see /SOLID. /NOSOLID
+packs every file alone, as before X01-21.
+
 Note: VBACKUP before X01-04, and vbkx before X01-04, cannot read
 compressed data. They do not write wrong files: they report the
 compressed files as damaged (CRCERR, FILDAMAGED). Update them.
+VBACKUP and vbkx before X01-21 do not read a compressed saveset of
+X01-21 (made without /NOSOLID) at all - they say it is not a saveset (see
+/SOLID).
 
 Example: vbackup /home /mnt/usb/home.bck /DATA_FORMAT=COMPRESSED
 
@@ -365,18 +371,69 @@ is fast at every level.
 Measured on one core (a text, 1 MB): LZ4 2.1 times smaller at 130 MB/s;
 Deflate 3.2 to 3.7 times at 33 to 11 MB/s; LZMA at 6, 7 4.0 to 4.2 times
 at 12 to 8 MB/s; at 8, 9 - the optimal parse of xz - 4.8 times at 2 MB/s,
-as xz -6. All cores work (VBACKUP_ZTHREADS). Many small files compress
-less than one tar of them: each file is compressed on its own.
+as xz -6. All cores work (VBACKUP_ZTHREADS). Small files are packed
+together in groups (/SOLID), so a tree of them shrinks much more:
+/usr/include at /LEVEL=9 is 32 MB, 53 MB with /NOSOLID.
 
 Every piece VBACKUP compresses is decompressed again at once and
 compared with the data; only a piece that comes back the same is
 written compressed (else it is stored plain, and ZCHECK says so). Each
-piece is compressed on its own: a bad block costs that piece alone,
-and the repair of bad blocks works as always. vbkx and vbkx-go, -rs,
+piece of a big file is compressed on its own: a bad block costs that
+piece alone, and the repair of bad blocks works as always. vbkx and vbkx-go, -rs,
 -pl read every level. VBACKUP and vbkx before X01-19 do not read levels
 2 to 9: they say the files are damaged, they never write them wrong.
 
 Example: vbackup /home /mnt/usb/home.bck /LEVEL=6
+
+## /SOLID -- pack small files together
+
+```
+/SOLID      (the default when the save compresses)
+/NOSOLID
+```
+
+When the save compresses (/DATA_FORMAT=COMPRESSED or /LEVEL), small
+files - each 256 KB or less - are put together in groups of up to
+1 MB. Each group is compressed as one piece, a SOLID record: the
+files, their names and their attributes all together. Files that are
+alike then share what they have in common, and the saveset gets much
+smaller:
+
+```
+/usr/include (210 MB, 22444 files)   /NOSOLID     /SOLID
+/LEVEL=1                             81 MB        62 MB
+/LEVEL=6                             55.6 MB      35.8 MB
+/LEVEL=9                             53 MB        32 MB
+```
+
+It is as fast as before. /SOLID alone does not compress. /NOSOLID puts
+every file in records of its own, as before X01-21.
+
+```
+$ vbackup /home /mnt/usb/home.bck /LEVEL=6
+$ vbackup /home /mnt/usb/home.bck /LEVEL=6 /PARITY=2
+$ vbackup /home /mnt/usb/old.bck /LEVEL=6 /NOSOLID
+```
+
+The price: when blocks are lost and cannot be repaired - more bad
+blocks in one group than /PARITY repairs - every file of the group
+they touch is lost, up to 1 MB of small files (dozens of files), not
+just one. A restore names every one of them (FILLOST). With the
+default parity one bad block in a group is still repaired, as always.
+For a saveset that must live through heavy damage, give /PARITY=2 or
+more, or /NOSOLID.
+
+Every group is decompressed again and compared before it is written;
+a group that does not come back the same (ZCHECK), or does not
+shrink, is written as plain records. A group that cannot be
+decompressed when it is read counts as lost blocks (BADREC, FILLOST) -
+never as wrong data.
+
+A restore, /LIST, /COMPARE, /EXTRACT, /SELECT, vbkx and the plugins
+read such a saveset by themselves. /TRANSFER copies it as it is. It is
+of format version 3: VBACKUP, vbkx and the plugins before X01-21 do
+not read it - they say it is not a saveset. Use X01-21 or later, or
+save with /NOSOLID for an older reader.
 
 ## /TRANSFER -- a saveset to a saveset, block for block
 
@@ -1035,8 +1092,8 @@ Windows.** /PHYSICAL and /IMAGE work on Linux only. Save the files
 instead, or do it on Linux.
 
 **%VBACKUP-W-ZCHECK.** A piece of data VBACKUP compressed did not come
-back the same when it was checked. It was stored uncompressed: the
-saveset is right. It is a fault of VBACKUP: please report it with the
+back the same when it was checked. It was stored uncompressed (a group
+of small files: as plain records): the saveset is right. It is a fault of VBACKUP: please report it with the
 file and the /LEVEL.
 
 **%VBACKUP-W-XATTRSKIP.** An extended attribute of the file was not
@@ -1085,8 +1142,8 @@ copy the saveset to another one.
 could not be repaired. The files named by FILDAMAGED are incomplete;
 the files named by FILLOST were not restored at all; all other files
 are fine. Next time give /PARITY=2 or more (several bad blocks of a
-group repaired), a smaller /GROUP_SIZE, or keep two copies of important
-savesets.
+group repaired), a smaller /GROUP_SIZE, /NOSOLID for a compressed save,
+or keep two copies of important savesets.
 
 **%VBACKUP-W-PARITYERR.** A saveset made with /PARITY: blocks of a group
 were bad, and its parity blocks did not agree with what was rebuilt -
@@ -1098,6 +1155,19 @@ other groups are fine.
 **%VBACKUP-E-NOTSAVESET for a saveset made with /PARITY.** It is of
 format version 2: VBACKUP or vbkx before X01-14 cannot read it. Use
 X01-14 or later.
+
+**%VBACKUP-E-NOTSAVESET for a compressed saveset.** A compressed
+saveset of X01-21 or later is of format version 3 (small files packed
+together, /SOLID): VBACKUP, vbkx or a plugin before X01-21 cannot read
+it. Use X01-21 or later; for an older reader, save with /NOSOLID.
+
+**Many %VBACKUP-E-FILLOST at once.** One bad place in the saveset, and
+dozens of files are not restored. The small files of a compressed save
+are packed together in groups of up to 1 MB (/SOLID); a group whose
+blocks could not be repaired takes all its files. Every one of them is
+named; all other files are fine. Take them from another saveset. Next
+time, for savesets that must survive heavy damage, give /PARITY=2 or
+more, or /NOSOLID.
 
 **%VBACKUP-W-UNNAMED.** Blocks were lost, and the saveset has no
 catalog, or its catalog was damaged too. Some files may be missing

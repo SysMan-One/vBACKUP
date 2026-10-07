@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -32,6 +32,13 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Stage 17: the small files of a compressed save in groups (format.md
+**		6.12): their FILE, DATA and FEND records gathered while the group is
+**		open, written as one SOLID record when it closes - before any other
+**		entry, when it is full, at the end - or as they are when they do not
+**		shrink; their catalog entries kept until then, LOC the SOLID.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		The codec of /LEVEL (VBK$DATA_PACK), every record checked before it
@@ -112,6 +119,26 @@ typedef struct vbk_hlink_t
 } VBK$HLINK;
 
 /*
+**  A group of small files (format.md 6.12): their records, and their
+**  catalog entries waiting for the place of the group
+*/
+typedef struct vbk_gmem_t
+{
+	uint8_t *	buf;			/* The catalog entry				*/
+	uint32_t	len, locat, solat;	/* ... where its LOCVOL and SOLID items are	*/
+	VBK$LOC		loc;			/* Its FILE record, when written as it is	*/
+} VBK$GMEM;
+
+typedef struct vbk_group_t
+{
+	struct vbk_save_t *sav;
+	uint8_t *	buf;			/* The records of the members			*/
+	uint32_t	len, cap;
+	VBK$GMEM *	mem;
+	uint32_t	nmem, maxmem;
+} VBK$GROUP;
+
+/*
 **  The state of a save
 */
 typedef struct vbk_save_t
@@ -130,6 +157,9 @@ typedef struct vbk_save_t
 	struct vbk_zp_t *zp;			/* Compression on several cores, NULL - none	*/
 	struct vbk_pcat_t *pend;		/* ... the catalog entry of the file in hand	*/
 	VBK$LOC		loc;			/* Where the FILE record in hand went		*/
+	VBK$GROUP *	grp;			/* The group of small files open, NULL - none	*/
+	int		ingrp;			/* The file in hand goes into it		*/
+	int		solid;			/* Small files in groups: compressed, /SOLID	*/
 	VBK$HLINK *	hlink [VBK$K_HLHASH];
 	uint32_t	fileno;
 	uint64_t	nfiles, nbytes, nentries;
@@ -267,6 +297,8 @@ static	VBK$LOC *	s_vbk$fileloc	(
 **  A record other than DATA: through the ring when there is one, so that
 **  the order of the stream is kept
 */
+static	int	s_vbk$gappend	(VBK$GROUP *a_grp, uint16_t a_type, const void *a_hdr, uint32_t a_hlen, const void *a_body, uint32_t a_len);
+
 static	int	s_vbk$rec	(
 		VBK$SAVE *	a_sav,
 		uint16_t	a_type,
@@ -275,6 +307,10 @@ static	int	s_vbk$rec	(
 		VBK$LOC *	a_loc
 			)
 {
+	/* A member of a group: into it, the place is the group's */
+	if ( a_sav->ingrp )
+		return	s_vbk$gappend(a_sav->grp, a_type, NULL, 0, a_body, a_len);
+
 	if ( a_sav->zp )
 		return	vbk$zp_record(a_sav->zp, a_type, a_body, a_len, a_loc);
 
@@ -327,7 +363,7 @@ static	int	s_vbk$catent	(
 {
 VBK$TLVB *	l_c = &a_sav->cat;
 uint8_t		l_len [4];
-uint32_t	l_locat = 0;
+uint32_t	l_locat = 0, l_solat = 0;
 int		l_ok = 1;
 
 	vbk$tlv_reset(l_c);
@@ -365,6 +401,13 @@ int		l_ok = 1;
 	if ( a_sav->opts->physical )
 		l_ok &= vbk$tlv_u8(l_c, VBK$K_TAG_PHYSICAL, 1);
 
+	/* A member of a group: SOLID, put to 1 when the group is a SOLID record */
+	if ( a_sav->ingrp )
+		{
+		l_solat	= l_c->len;
+		l_ok &= vbk$tlv_u8(l_c, VBK$K_TAG_SOLID, 0);
+		}
+
 	/* A PRESENT entry has no records in the stream: nothing to point at, nothing summed */
 	if ( a_status != VBK$K_FS_PRESENT )
 		{
@@ -377,6 +420,38 @@ int		l_ok = 1;
 
 	if ( !l_ok )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+
+	/* A member of a group: the entry waits for the group to be written */
+	if ( a_sav->ingrp )
+		{
+		VBK$GROUP *	l_g = a_sav->grp;
+		VBK$GMEM *	l_m;
+
+		if ( l_g->nmem == l_g->maxmem )
+			{
+			uint32_t	l_max = l_g->maxmem ? (2 * l_g->maxmem) : 64;
+
+			if ( !(l_m = realloc(l_g->mem, l_max * sizeof(*l_m))) )
+				return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+
+			l_g->mem    = l_m;
+			l_g->maxmem = l_max;
+			}
+
+		l_m	= &l_g->mem [l_g->nmem];
+
+		if ( !(l_m->buf = malloc(l_c->len)) )
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM));
+
+		memcpy(l_m->buf, l_c->buf, l_c->len);
+		l_m->len	= l_c->len;
+		l_m->locat	= l_locat;
+		l_m->solat	= l_solat;
+		l_g->nmem++;
+		a_sav->nentries++;
+
+		return	STS$K_SUCCESS;
+		}
 
 	/* The ring: the entry waits for its FILE record, the place is put in when that is written */
 	if ( a_sav->zp )
@@ -421,6 +496,204 @@ int		l_ok = 1;
 
 
 /*
+**  A record of a member appended to the group: header, then <a_hdr> and
+**  <a_body> as its body
+*/
+static	int	s_vbk$gappend	(
+		VBK$GROUP *	a_grp,
+		uint16_t	a_type,
+	const	void *		a_hdr,
+		uint32_t	a_hlen,
+	const	void *		a_body,
+		uint32_t	a_len
+			)
+{
+uint32_t	l_need = a_grp->len + VBK$K_RECHDR + a_hlen + a_len;
+
+	/* Cannot be: a member is bounded by S_VBK$ENTRY - said all the same, not taken for a write error */
+	if ( l_need > VBK$K_MAXSOLID )
+		return	$VBKMSG(VBACKUP$_NOMEM, EOVERFLOW, strerror(EOVERFLOW)), a_grp->sav->failed = 1, STS$K_FATAL;
+
+	if ( l_need > a_grp->cap )
+		{
+		uint32_t	l_cap = a_grp->cap ? a_grp->cap : 65536;
+		uint8_t *	l_p;
+
+		while ( l_cap < l_need )
+			l_cap	*= 2;
+
+		if ( !(l_p = realloc(a_grp->buf, l_cap)) )
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), a_grp->sav->failed = 1, STS$K_FATAL;
+
+		a_grp->buf	= l_p;
+		a_grp->cap	= l_cap;
+		}
+
+	vbk$put16(a_grp->buf + a_grp->len, a_type);
+	vbk$put16(a_grp->buf + a_grp->len + 2, 0);
+	vbk$put32(a_grp->buf + a_grp->len + 4, a_hlen + a_len);
+	a_grp->len += VBK$K_RECHDR;
+
+	if ( a_hlen )
+		memcpy(a_grp->buf + a_grp->len, a_hdr, a_hlen);
+
+	if ( a_len )
+		memcpy(a_grp->buf + a_grp->len + a_hlen, a_body, a_len);
+
+	a_grp->len += a_hlen + a_len;
+
+	return	STS$K_SUCCESS;
+}
+
+static	void	s_vbk$gfree	(
+		VBK$GROUP *	a_grp
+			)
+{
+	for ( uint32_t i = 0; i < a_grp->nmem; i++ )
+		free(a_grp->mem [i].buf);
+
+	free(a_grp->mem);
+	free(a_grp->buf);
+	free(a_grp);
+}
+
+
+/*
+**  A group written, in its turn: one SOLID record of the packed octets
+**  <a_z>, the place of every member that of the SOLID; or - <a_z> NULL,
+**  they did not shrink or did not come back the same - the records as
+**  they are, the place of every member that of its FILE record.  Then
+**  the catalog entries of the members, in their order.
+*/
+static	void	s_vbk$gwrite	(
+		void *		a_arg,
+	const	uint8_t *	a_z,
+		uint32_t	a_zlen,
+		uint32_t	a_codec
+			)
+{
+VBK$GROUP *	l_g = (VBK$GROUP *) a_arg;
+VBK$SAVE *	l_sav = l_g->sav;
+VBK$LOC		l_loc = {0};
+uint8_t		l_hdr [VBK$K_SOLIDHDR], l_len [4];
+uint32_t	l_at, l_rlen, l_m = 0;
+uint16_t	l_type;
+int		l_ok = !l_sav->failed;
+
+	if ( l_ok && a_z )
+		{
+		vbk$put32(l_hdr, a_codec);
+		vbk$put32(l_hdr + 4, l_g->len);
+		vbk$put32(l_hdr + 8, l_g->nmem);
+
+		l_ok = (1 & vbk$wrt_rechdr(&l_sav->wctx, VBK$K_RT_SOLID, VBK$K_SOLIDHDR + a_zlen, &l_loc))
+			&& (1 & vbk$wrt_bytes(&l_sav->wctx, l_hdr, sizeof(l_hdr)))
+			&& (1 & vbk$wrt_bytes(&l_sav->wctx, a_z, a_zlen));
+
+		for ( uint32_t i = 0; i < l_g->nmem; i++ )
+			{
+			l_g->mem [i].loc = l_loc;
+			l_g->mem [i].buf [l_g->mem [i].solat + 6] = 1;
+			}
+		}
+	else	{
+		/* As they are: every FILE record gives the place of its member */
+		for ( l_at = 0; l_ok && (l_at < l_g->len); l_at += VBK$K_RECHDR + l_rlen )
+			{
+			l_type	= vbk$get16(l_g->buf + l_at);
+			l_rlen	= vbk$get32(l_g->buf + l_at + 4);
+
+			l_ok	= 1 & vbk$wrt_record(&l_sav->wctx, l_type, l_g->buf + l_at + VBK$K_RECHDR, l_rlen, &l_loc);
+
+			if ( (l_type == VBK$K_RT_FILE) && (l_m < l_g->nmem) )
+				l_g->mem [l_m++].loc = l_loc;
+			}
+		}
+
+	if ( !l_ok )
+		s_vbk$wrterr(l_sav);
+
+	for ( uint32_t i = 0; !l_sav->failed && (i < l_g->nmem); i++ )
+		{
+		VBK$GMEM *	l_e = &l_g->mem [i];
+
+		vbk$put32(l_e->buf + l_e->locat + 6, l_e->loc.vol);
+		vbk$put64(l_e->buf + l_e->locat + 6 + 4 + 6, l_e->loc.blk);
+		vbk$put32(l_e->buf + l_e->locat + 6 + 4 + 6 + 8 + 6, l_e->loc.off);
+		vbk$put32(l_len, l_e->len);
+
+		if ( (1 != fwrite(l_len, sizeof(l_len), 1, l_sav->spool)) || (1 != fwrite(l_e->buf, l_e->len, 1, l_sav->spool)) )
+			{
+			$VBKMSG(VBACKUP$_WRITERR, "the catalog spool", errno, strerror(errno));
+			l_sav->failed = 1;
+			}
+		}
+
+	s_vbk$gfree(l_g);
+}
+
+
+/*
+**  The open group closed: handed to the ring to be packed, or packed and
+**  written here.  STS$K_SUCCESS also when there is none; else the save
+**  has failed.
+*/
+static	int	s_vbk$gflush	(
+		VBK$SAVE *	a_sav
+			)
+{
+VBK$GROUP *	l_g = a_sav->grp;
+uint32_t	l_zlen = 0, l_codec = 0;
+int		l_rc;
+
+	if ( !l_g )
+		return	STS$K_SUCCESS;
+
+	a_sav->grp = NULL;
+
+	if ( a_sav->zp )
+		{
+		if ( !(1 & vbk$zp_solid(a_sav->zp, l_g->buf, l_g->len, s_vbk$gwrite, l_g)) )
+			{
+			s_vbk$gfree(l_g);
+
+			return	s_vbk$wrterr(a_sav);
+			}
+
+		return	STS$K_SUCCESS;
+		}
+
+	/* One core: packed into a buffer of its own, the check through ZCHECK as for DATA */
+	{
+	uint32_t	l_cap = VBK$LZ4_BOUND(l_g->len);
+	uint8_t *	l_z = malloc(l_cap), *l_chk = malloc(l_g->len);
+
+	if ( !l_z || !l_chk )
+		{
+		free(l_z);
+		free(l_chk);
+		s_vbk$gfree(l_g);
+
+		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
+		}
+
+	if ( STS$K_ERROR == (l_rc = vbk$data_pack(a_sav->opts->zlevel, l_g->buf, l_g->len, l_z, l_cap, &l_zlen, &l_codec, l_chk)) )
+		$VBKMSG(VBACKUP$_ZCHECK, 0);
+
+	a_sav->nzin  += l_g->len;
+	a_sav->nzout += (l_rc == STS$K_SUCCESS) ? (VBK$K_SOLIDHDR + l_zlen) : l_g->len;
+
+	s_vbk$gwrite(l_g, (l_rc == STS$K_SUCCESS) ? l_z : NULL, l_zlen, l_codec);
+
+	free(l_z);
+	free(l_chk);
+	}
+
+	return	a_sav->failed ? STS$K_FATAL : STS$K_SUCCESS;
+}
+
+
+/*
 **  One DATA or DATAZ record: compressed when it pays - by more than the
 **  4 octets the DATAZ header costs over DATA - else stored as it is.  A
 **  saveset so mixes both kinds, and a reader takes either.
@@ -436,6 +709,16 @@ static	int	s_vbk$put	(
 uint8_t		l_hdr [VBK$K_DATAHDR];
 uint32_t	l_zlen = 0, l_codec = 0;
 int		l_rc = STS$K_WARN;
+
+	/* A member of a group: its DATA into the group, packed with the group */
+	if ( a_sav->ingrp )
+		{
+		vbk$put32(l_hdr, a_fileno);
+		vbk$put32(l_hdr + 4, 0);
+		vbk$put64(l_hdr + 8, a_off);
+
+		return	s_vbk$gappend(a_sav->grp, VBK$K_RT_DATA, l_hdr, sizeof(l_hdr), a_data, a_n);
+		}
 
 	a_sav->nzin += a_n;
 
@@ -880,6 +1163,10 @@ int		l_fd = -1, l_status;
 		l_attr.baseidx	= a_ent->baseidx;
 		l_sav->npresent++;
 
+		/* The catalog keeps the order of the walk: the group before it */
+		if ( !(1 & s_vbk$gflush(l_sav)) )
+			return	STS$K_FATAL;
+
 		return	(1 & s_vbk$catent(l_sav, &l_attr, &l_loc, 0, VBK$K_FS_PRESENT)) ? STS$K_SUCCESS : STS$K_FATAL;
 		}
 
@@ -918,7 +1205,45 @@ int		l_fd = -1, l_status;
 	if ( !(1 & vbk$atr_tlv(&l_attr, &l_sav->rec)) )
 		return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
 
-	l_ploc	= s_vbk$fileloc(l_sav);
+	/*
+	**  A small regular file of a compressed save goes into the group
+	**  (format.md 6.12); anything else closes it first, so the stream
+	**  keeps the order of the walk.  The group is closed before it would
+	**  grow past 1 MB: a member is 256 KB of data at most, its FILE record
+	**  32 KB, and its DATA headers and FEND fit in the 4 KB left over.
+	*/
+	l_sav->ingrp = l_sav->solid && (l_attr.ftype == VBK$K_FT_REG) && (l_attr.size <= VBK$K_SOLIDFILE) && (l_sav->rec.len <= 32768);
+
+	if ( !l_sav->ingrp || (l_sav->grp && ((l_sav->grp->len + l_sav->rec.len + l_attr.size + 4096) > VBK$K_SOLIDGRP)) )
+		{
+		int	l_in = l_sav->ingrp;
+
+		l_sav->ingrp = 0;
+
+		if ( !(1 & s_vbk$gflush(l_sav)) )
+			{
+			if ( l_fd >= 0 )
+				close(l_fd);
+
+			return	STS$K_FATAL;
+			}
+
+		l_sav->ingrp = l_in;
+		}
+
+	if ( l_sav->ingrp && !l_sav->grp )
+		{
+		if ( !(l_sav->grp = calloc(1, sizeof(VBK$GROUP))) )
+			{
+			close(l_fd);
+
+			return	$VBKMSG(VBACKUP$_NOMEM, ENOMEM, strerror(ENOMEM)), STS$K_FATAL;
+			}
+
+		l_sav->grp->sav	= l_sav;
+		}
+
+	l_ploc	= l_sav->ingrp ? &l_loc : s_vbk$fileloc(l_sav);
 
 	if ( !(1 & s_vbk$rec(l_sav, VBK$K_RT_FILE, l_sav->rec.buf, l_sav->rec.len, l_ploc)) )
 		{
@@ -975,6 +1300,8 @@ int		l_fd = -1, l_status;
 
 	if ( !(1 & s_vbk$catent(l_sav, &l_attr, l_ploc, l_crc, l_fstat)) )
 		return	STS$K_FATAL;
+
+	l_sav->ingrp = 0;
 
 	/* /RECORD: what the journal is to know of it, once the saveset is complete (format.md, 9, rule 3) */
 	if ( l_o->record && (l_fstat == VBK$K_FS_OK) && (l_attr.ftype != VBK$K_FT_DIR) )
@@ -1360,6 +1687,8 @@ int		l_status = STS$K_SUCCESS;
 		}
 
 	l_sav->wctx.parity	= a_opts->parity;
+	l_sav->solid		= a_opts->compress && a_opts->solid && !a_opts->physical;
+	l_sav->wctx.solid	= l_sav->solid;
 	l_sav->wctx.volcb	= s_vbk$volcb;
 	l_sav->wctx.volarg	= l_sav;
 
@@ -1399,6 +1728,12 @@ int		l_status = STS$K_SUCCESS;
 		}
 
 	vbk$pre_stop(a_opts);
+
+	/* The last group, before the ring is emptied */
+	if ( !l_sav->failed )
+		s_vbk$gflush(l_sav);
+	else if ( l_sav->grp )
+		s_vbk$gfree(l_sav->grp), l_sav->grp = NULL;
 
 	/* The ring empty - everything written, every catalog entry spooled - before the catalog */
 	if ( l_sav->zp )

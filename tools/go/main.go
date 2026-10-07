@@ -57,6 +57,16 @@
 **		length or an offset out of bounds makes it a bad record, and
 **		its file is named incomplete.
 **
+**  SOLID:	a saveset of version 3 (vbackup /LEVEL or /DATA_FORMAT=COMPRESSED
+**		since X01-21, format.md 6.12) may hold SOLID records: the
+**		records of several small files compressed together, by the
+**		codecs of DATAZ.  One is decompressed whole and its FILE, DATA
+**		and FEND records are taken as if they stood in the stream.  A
+**		SOLID that does not open - a codec not known, a length out of
+**		bounds, a stream not right, a record in it that is not FILE,
+**		DATA or FEND or does not end in it - is a gap, as lost blocks
+**		are: its files are named from the catalog, never made wrong.
+**
 **  VOLUMES:	a saveset of vbackup /PHYSICAL (format.md 6.8) holds one device:
 **		it comes out as one sparse file, the image of that device
 **		(sdb1); one of vbackup /IMAGE (6.9) comes out as the plain tree
@@ -94,7 +104,7 @@
 **		CRC of the blocks after it.
 **
 **  PARITY:	a saveset of vbackup /PARITY=m (format.md 4.1, version 2 in
-**		every block header) closes each group with its XOR block and
+**		every block header, or 3 with SOLID records) closes each group with its XOR block and
 **		m - 1 PARITY blocks: any m bad blocks of a group are rebuilt
 **		by Reed-Solomon in GF(2^8) - the payloads and the RECOFF and
 **		PAYLEN of their headers alike; parity rows left over check the
@@ -113,6 +123,16 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Version 3 (format.md 3, 6.12): the SOLID record (type 8) opened,
+**		its FILE, DATA and FEND records given as if in the stream; one
+**		that does not open, or a record in it that makes no sense, is
+**		a gap - its files named lost from the catalog.  The groups of
+**		version 3 are those of version 1 without PARITY 2 or more.  A
+**		good first block of a version not known here is refused at
+**		once; the trying of block sizes reads a header before a block,
+**		no longer seconds of reading on every saveset it cannot take.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		DATAZ codecs 2 (raw Deflate, by compress/flate) and 3 (raw LZMA1,
@@ -207,13 +227,16 @@ const (
 	rtCatalog = 5
 	rtEnd     = 6
 	rtDataz   = 7 // DATA, compressed: format.md 6.7
+	rtSolid   = 8 // the records of several files compressed together, version 3: format.md 6.12
 
-	ident = "X01-19"
+	ident = "X01-21"
 
 	maxData      = 1 << 20 // the most octets a DATA or DATAZ record holds
 	codecLZ4     = 1
-	codecDeflate = 2 // raw Deflate, RFC 1951: format.md 6.7.2
-	codecLZMA    = 3 // raw LZMA1, lc=3 lp=0 pb=2, end marker: format.md 6.7.3
+	codecDeflate = 2       // raw Deflate, RFC 1951: format.md 6.7.2
+	codecLZMA    = 3       // raw LZMA1, lc=3 lp=0 pb=2, end marker: format.md 6.7.3
+	solHdr       = 12      // SOLID: u32 codec, u32 rawlen, u32 count
+	maxSolid     = 1114112 // the most octets a SOLID holds decompressed
 
 	ftReg      = 1
 	ftDir      = 2
@@ -290,7 +313,7 @@ type bhdr struct {
  */
 func check(b []byte, bsize uint32, uuid *[16]byte) (bhdr, bool) {
 	var h bhdr
-	if len(b) != int(bsize) || bsize < hdrSize || string(b[0:4]) != "VBKB" || u16(b, 4) != hdrSize || (u16(b, 6) != 1 && u16(b, 6) != 2) {
+	if len(b) != int(bsize) || bsize < hdrSize || string(b[0:4]) != "VBKB" || u16(b, 4) != hdrSize || u16(b, 6) < 1 || u16(b, 6) > 3 {
 		return h, false
 	}
 	h.version = u16(b, 6)
@@ -307,10 +330,10 @@ func check(b []byte, bsize uint32, uuid *[16]byte) (bhdr, bool) {
 	h.crc = u32(b, 60)
 	psize := bsize - hdrSize
 	if h.bsize != bsize || (uuid != nil && h.uuid != *uuid) || h.typ < btData || h.typ > btParity ||
-		(h.typ == btParity && h.version != 2) {
+		(h.typ == btParity && h.version < 2) {
 		return h, false
 	}
-	/* The parity blocks of version 2 hold the header parity in RECOFF and PAYLEN (format.md 4.1) */
+	/* The parity blocks of version 2 and 3 hold the header parity in RECOFF and PAYLEN (format.md 4.1) */
 	if (h.version == 1 || (h.typ != btXor && h.typ != btParity)) && (h.paylen > psize || (h.recoff != none && h.recoff >= psize)) {
 		return h, false
 	}
@@ -423,8 +446,8 @@ type reader struct {
 	spec    string
 	bsize   uint32
 	grpsz   uint32
-	parity  uint32 // parity blocks of a group: 1, or 2 .. 8 (version 2)
-	version uint16 // of every block: that of the VHDR
+	parity  uint32 // parity blocks of a group: 1, or 2 .. 8 (version 2, 3)
+	version uint16 // of every block: that of the VHDR; 1 .. 3
 	uuid    [16]byte
 	vols    []volume
 	trailer bool
@@ -455,6 +478,12 @@ type reader struct {
 	payblk uint64
 	payvol int
 	resync bool // the record returned follows a loss
+
+	/* An open SOLID (version 3, format.md 6.12): its records, decompressed, the next one at solpos */
+	sol    []byte
+	solpos int
+	solblk uint64
+	solvol int
 }
 
 func volspec(spec string, n int) string {
@@ -526,8 +555,13 @@ func summaryGroup(r *reader, blk []byte, h bhdr) (uint32, bool) {
 ** saveset.  The group size is then where the first XOR block stands.
  */
 func guess(r *reader, f *os.File) bool {
+	hd := make([]byte, hdrSize)
 	for bs := uint32(minBsz); bs <= maxBsz; bs += 512 {
 		for pos := uint64(1); pos <= 8; pos++ {
+			/* The header alone first: a size its block does not say is not read whole (2000 sizes, 8 blocks each) */
+			if n, _ := f.ReadAt(hd, int64(pos)*int64(bs)); n != hdrSize || string(hd[0:4]) != "VBKB" || u32(hd, 8) != bs {
+				continue
+			}
 			h, ok := check(readBlock(f, bs, pos), bs, nil)
 			if !ok || h.volno != 1 || h.blkno != pos {
 				continue
@@ -538,8 +572,8 @@ func guess(r *reader, f *os.File) bool {
 			for p := uint64(1); p <= maxGrp+1; p++ {
 				if x, ok := check(readBlock(f, bs, p), bs, &r.uuid); ok && x.typ == btXor && uint64(x.gindex&0xFF) == p-1 {
 					r.grpsz = uint32(x.gindex & 0xFF)
-					/* Version 2: the PARITY blocks that follow the XOR block, row after row */
-					for j := uint64(1); r.version == 2 && j < maxPar; j++ {
+					/* Version 2 and 3: the PARITY blocks that follow the XOR block, row after row */
+					for j := uint64(1); r.version >= 2 && j < maxPar; j++ {
 						y, ok := check(readBlock(f, bs, p+j), bs, &r.uuid)
 						if !ok || y.typ != btParity || uint64(y.gindex) != uint64(r.grpsz)|j<<8 {
 							break
@@ -568,6 +602,16 @@ func open(spec string) (*reader, error) {
 	found := false
 	if bs := u32(head, 8); string(head[0:4]) == "VBKB" && bs >= minBsz && bs <= maxBsz && bs%512 == 0 {
 		blk := readBlock(f, bs, 0)
+		/* A good block of a version not known here: refused at once, never taken for a damaged one */
+		if v := u16(blk, 6); u16(blk, 4) == hdrSize && (v < 1 || v > 3) {
+			var hdr [hdrSize]byte
+			copy(hdr[:], blk[:hdrSize])
+			le.PutUint32(hdr[60:], 0)
+			if crc32.Update(crc32.Update(0, crc32.IEEETable, hdr[:]), crc32.IEEETable, blk[hdrSize:]) == u32(blk, 60) {
+				f.Close()
+				return nil, fmt.Errorf("Saveset: %s, Version: %d - a version this extractor does not know (1 .. 3): it cannot be read", spec, v)
+			}
+		}
 		if h, ok := check(blk, bs, nil); ok && h.typ == btVhdr && h.volno == 1 {
 			if grp, ok := summaryGroup(r, blk, h); ok {
 				r.bsize, r.uuid, r.grpsz, r.version, found = bs, h.uuid, grp, h.version, true
@@ -578,8 +622,8 @@ func open(spec string) (*reader, error) {
 		f.Close()
 		return nil, fmt.Errorf("File: %s - is not a saveset", spec)
 	}
-	/* Version 1: the XOR block alone; version 2: as many parity blocks as the SUMMARY says */
-	if r.version == 1 {
+	/* Version 1, and 3 without PARITY 2 or more: the XOR block alone; else as many parity blocks as the SUMMARY says */
+	if r.version == 1 || (r.version == 3 && r.parity < 2) {
 		r.parity = 1
 	} else if r.parity < 2 || r.parity > maxPar || r.grpsz == 0 {
 		f.Close()
@@ -1186,10 +1230,65 @@ func (r *reader) nextPay() int {
 	}
 }
 
+/*
+** A SOLID record (format.md 6.12) opened: its records decompressed, to be
+** given one by one; false - it does not open: a codec not known, a length
+** out of bounds, a compressed stream that is not right.
+ */
+func (r *reader) solOpen(body []byte) bool {
+	r.sol, r.solpos = nil, 0
+	if len(body) < solHdr {
+		return false
+	}
+	raw := u32(body, 4)
+	if raw < 8 || raw > maxSolid {
+		return false
+	}
+	var d []byte
+	switch u32(body, 0) {
+	case codecLZ4:
+		d = lz4Decompress(body[solHdr:], raw)
+	case codecDeflate:
+		d = deflateDecompress(body[solHdr:], raw)
+	case codecLZMA:
+		d = lzmaDecompress(body[solHdr:], raw)
+	}
+	if uint32(len(d)) != raw {
+		return false
+	}
+	r.sol = d
+	return true
+}
+
+/* The next record of the open SOLID: FILE, DATA or FEND, whole in it; ok false - anything else, the rest dropped */
+func (r *reader) solNext() (uint16, []byte, bool) {
+	left := len(r.sol) - r.solpos
+	typ, length := u16(r.sol, r.solpos), uint64(u32(r.sol, r.solpos+4))
+	if left < 8 || (typ != rtFile && typ != rtData && typ != rtFend) || length > uint64(left-8) {
+		r.sol, r.solpos = nil, 0
+		return 0, nil, false
+	}
+	body := r.sol[r.solpos+8 : r.solpos+8+int(length)]
+	r.solpos += 8 + int(length)
+	return typ, body, true
+}
+
 /* The next record of the stream (section 5); ok false - the end.  RESYNC: blocks were lost before it. */
 func (r *reader) nextRecord() (uint16, []byte, bool) {
 	resync := false
 	for {
+		/* The records of an open SOLID come first, as if they stood in the stream */
+		if r.solpos < len(r.sol) {
+			if typ, body, ok := r.solNext(); ok {
+				r.resync = resync
+				return typ, body, true
+			}
+			/* A record in it that makes no sense: the rest of it is a gap, its files are named lost */
+			msg("Block: %d, Volume: %d - an invalid record, skipped", r.solblk, r.solvol)
+			bad = true
+			resync = true
+		}
+		r.sol, r.solpos = nil, 0
 		for r.pay == nil || r.payoff >= len(r.pay) {
 			switch r.nextPay() {
 			case 1:
@@ -1212,6 +1311,7 @@ func (r *reader) nextRecord() (uint16, []byte, bool) {
 			r.gap, r.pay = true, nil
 			continue
 		}
+		hblk, hvol := r.payblk, r.payvol
 		r.payoff += 8
 		body := make([]byte, 0, length)
 		st := 0
@@ -1238,6 +1338,16 @@ func (r *reader) nextRecord() (uint16, []byte, bool) {
 			bad = true
 			r.resync = true
 			return 0, nil, false
+		}
+		/* Version 3: a SOLID is opened, its records given from the top of the loop; one that does not open is a gap */
+		if typ == rtSolid && r.version == 3 {
+			r.solblk, r.solvol = hblk, hvol
+			if !r.solOpen(body) {
+				msg("Block: %d, Volume: %d - an invalid record, skipped", hblk, hvol)
+				bad = true
+				resync = true
+			}
+			continue
 		}
 		r.resync = resync
 		return typ, body, true
