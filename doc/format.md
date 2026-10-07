@@ -745,8 +745,11 @@ Rules of the writer (VBACKUP since X01-21, `/DATA_FORMAT=COMPRESSED` or
    a bigger file - closes the open group first, so the stream keeps the
    order of the walk: a reader that restores records as they come makes
    the directories before their files exactly as before.
-2. A group is closed before its records would pass 1048576 bytes, and at
-   the end of the walk.
+2. A group is closed before its records would pass 262144 bytes (1048576
+   in X01-21), and at the end of the walk; a member alone may pass that,
+   never `rawlen`'s bound.  Measured: a group lost beyond repair took
+   2.7 times the files of one without SOLID at 1 MB, 1.2 times at 256 KB
+   with the salvage below, for a saveset 3.5 % bigger than at 1 MB.
 3. The group is compressed and decompressed again; when that does not
    come back the same (ZCHECK) or does not shrink, its records are
    written into the stream as they are, top-level, and the catalog
@@ -767,15 +770,25 @@ Rules of the reader:
   not FILE, DATA, FEND or does not end inside - is a bad record: all of
   it is a gap, exactly like lost blocks.  Its members have no FILE record
   seen; the reader names them from the catalog (VBACKUP: FILLOST).
+- A SOLID whose body is cut by lost blocks, or by the end of a saveset
+  cut short, is not all lost: the compressed bytes before the cut are
+  decompressed as far as they are right - LZ4 and Deflate up to the
+  last whole sequence or code, LZMA up to the last symbol decoded before
+  the input ran out, never an octet guessed past it - and the records
+  wholly in that are delivered; then the gap.  The file at the cut is
+  incomplete (FEND missing), those before it are whole, each still
+  checked by its FEND CRC.  VBACKUP does it since X01-22.
 - Catalog mode: LOC of a member is the SOLID; the reader decompresses
   it and passes the records of the members before it, by FILENO.
 
-What it costs: a SOLID is one record of up to about 250 KB on the
-medium.  Lost blocks that the group parity cannot rebuild (section 4:
-more than m bad blocks in one group) take every member of the SOLID they
-touch, not just the file they were in.  With the default parity one bad
-block per group is still repaired.  For a saveset that must live through
-worse, give `/PARITY=m` with m >= 2, or `/NOSOLID`.
+What it costs: a SOLID is one record of about 256 KB on the medium at
+most, as a rule much less.  Lost blocks that the group parity cannot
+rebuild (section 4: more than m bad blocks in one group) take the
+members of the SOLID they touch from the damage on, and every member of
+a SOLID that begins in them, not just the file they were in.  With the
+default parity one bad block per group is still repaired.  For a saveset
+that must live through worse, give `/PARITY=m` with m >= 2, or
+`/NOSOLID`.
 
 ## 7. Writer rules
 
@@ -816,8 +829,25 @@ check every CRC:
 - volume missing: report it; files that lie wholly in the other volumes
   are still restored.
 
+Before a repair the payload of every good DATA block past its `paylen`
+is taken as zeros - what the writer left there - up to the TAG of an
+encrypted block.  Nothing covers those octets but the CRC (and no TAG
+covers them at all): a byte changed there and the CRC sealed again
+would make the parity of the group disagree and spoil the rebuilding
+of its really bad blocks (VBACKUP before X01-22 then gave up, or with a
+plain saveset rebuilt them wrong - caught only by the file CRC).
+
 A saveset without a TRAILER (the save was interrupted) is still readable
 in sequential mode up to the last good block.
+
+**Nothing left out without a word** (VBACKUP since X01-22): after a
+sequential pass the catalog, when there is one, is set against the FILE
+records met - always, not only after a loss.  A file of the catalog
+(STATUS 0..2) whose FILE record never came is named: lost with the
+blocks when blocks were lost, else "the catalog has it, the stream does
+not" (NOTINSTREAM) - a record the reader does not know, a saveset made
+wrong.  A stream does it with its CATALOG records as they come.
+`/COMPARE` and `/VERIFY` count such a file as a difference.
 
 A saveset can be read from the standard input (a pipe, "-" as the
 input, since X01-08): sequential mode only, forward only; a TRAILER

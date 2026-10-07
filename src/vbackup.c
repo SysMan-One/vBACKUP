@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -40,6 +40,13 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		Stage 19: restore and compare decompress on all the threads.
+**
+**	X01-22		 7-OCT-2026	RRL
+**		Stage 18: nothing left out without a word (NOTINSTREAM, /COMPARE),
+**		SOLID groups of 256 KB, a SOLID cut by lost blocks read up to the cut.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		/SOLID, negatable: the small files of a compressed save in SOLID

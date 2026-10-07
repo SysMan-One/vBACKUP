@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-21"
+#define	__IDENT__	"X01-23"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.21.0"
+#define	__REV__		"1.23.0"
 #endif
 
 /*
@@ -29,6 +29,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		BATCH, BSLOT, BN, BPOS, BMAP, BEND: batch mode; SOLBUF.
+**
+**	X01-22		 7-OCT-2026	RRL
+**		SOLGAP: a SOLID read as far as it is there, a gap after it.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		SOL, SOLLEN, SOLPOS, SOLLOC: the records of the SOLID being read.
@@ -151,9 +157,17 @@ typedef struct vbk_rctx_t
 	uint32_t	recsz;
 	int		resync;			/* The record returned follows a gap		*/
 	int		pendrs;			/* A gap before the next record, from a seek	*/
-	uint8_t *	sol;			/* The records of the SOLID being read		*/
+	uint8_t *	sol;			/* The records of the SOLID being read: SOLBUF,	*/
+						/* or a slot of the batch			*/
+	uint8_t *	solbuf;
 	uint32_t	solsz, sollen, solpos;
 	VBK$LOC		solloc;			/* Where that SOLID is				*/
+	int		solgap;			/* ... cut short by lost blocks: a gap after it	*/
+	uint32_t	batch;			/* VBK$RD_BATCH: records read ahead, 0 - none	*/
+	void *		bslot;			/* ... the slots				*/
+	uint32_t	bn, bpos;		/* ... filled, handed out			*/
+	uint32_t	bmap [64];		/* ... the slots to decompress, one job each	*/
+	int		bend, bendst, bendrs;	/* ... ended, by that status, its resync		*/
 	int		insolid;		/* The record returned is one of a SOLID: a	*/
 						/* seek to it may stand at other files first	*/
 
@@ -173,6 +187,7 @@ int	vbk$rd_addvol	(VBK$RCTX *a_ctx, uint32_t a_volno, const char *a_spec);
 int	vbk$rd_setkey	(VBK$RCTX *a_ctx, const void *a_pass, size_t a_plen);
 int	vbk$rd_rewind	(VBK$RCTX *a_ctx);
 int	vbk$rd_seek	(VBK$RCTX *a_ctx, const VBK$LOC *a_loc);
+void	vbk$rd_batch	(VBK$RCTX *a_ctx);
 int	vbk$rd_next	(VBK$RCTX *a_ctx, uint16_t *a_type, const uint8_t **a_body, uint32_t *a_len, VBK$LOC *a_loc);
 
 #ifdef	__cplusplus

@@ -126,6 +126,13 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-22		 7-OCT-2026	RRL
+**		The repair of a group: the good DATA blocks first made as the
+**		writer left them past PAYLEN - zeros up to the TAG.  Nothing
+**		authenticates those octets, the parity covers them: one byte
+**		changed there in a good block, and the bad one of its group
+**		could not be rebuilt.
+**
 **	X01-21		 7-OCT-2026	RRL
 **		Savesets of version 3 (format.md 3, 6.12): the groups of version 1,
 **		or of version 2 with PARITY 2 or more; the SOLID record opened, its
@@ -2156,6 +2163,23 @@ impl Reader {
     }
 
     /*
+    ** The good DATA blocks of a group as the writer made them past PAYLEN:
+    ** zeros up to the TAG.  What lies there carries nothing, no TAG covers
+    ** it; a byte changed there would make the parity disagree, and nothing
+    ** of the group be rebuilt.
+    */
+    fn canon(&self, blks: &mut [Vec<u8>], hdrs: &[Bhdr], ok: &[bool], n: usize) {
+        let end = HDR + self.cap as usize;
+        for i in 0..n {
+            if ok[i] && hdrs[i].typ == self.dtype && hdrs[i].paylen < self.cap {
+                for x in blks[i][HDR + hdrs[i].paylen as usize..end].iter_mut() {
+                    *x = 0;
+                }
+            }
+        }
+    }
+
+    /*
     ** Read the next group (section 4), check its blocks, rebuild one bad
     ** DATA block from the XOR block; false - the end of the saveset.
     */
@@ -2251,6 +2275,10 @@ impl Reader {
                 nbad += 1;
                 badi = i;
             }
+        }
+
+        if nbad > 0 {
+            self.canon(&mut blks, &hdrs, &ok, gdata);
         }
 
         /* One bad DATA block: its payload is the XOR of all the others, two header fields kept by the next block */
@@ -2396,6 +2424,9 @@ impl Reader {
         let dok: Vec<bool> = ok[..d].to_vec();
         let nbad = dok.iter().filter(|&&x| !x).count();
         let npok = pok.iter().filter(|&&x| x).count();
+        if nbad > 0 {
+            self.canon(&mut blks, &hdrs, &ok, d);
+        }
         if nbad > 0 && nbad <= npok {
             let mut forged = false;
             let mut done = false;
@@ -3199,7 +3230,7 @@ fn passphrase(keyfile: Option<&str>, spec: &str) -> Option<Vec<u8>> {
 
 fn usage() -> i32 {
     eprintln!(
-        "vbkx-rs X01-21 - the extractor of last resort for VBACKUP savesets\n\n  \
+        "vbkx-rs X01-22 - the extractor of last resort for VBACKUP savesets\n\n  \
          vbkx-rs l saveset [-k file]           list the files (times in UTC)\n  \
          vbkx-rs x saveset [-C dir] [-k file]  extract them all\n  \
          vbkx-rs t saveset [-k file]           read it all, check the checksums\n  \

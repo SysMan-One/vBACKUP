@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLZ4"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -30,6 +30,10 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		VBK$LZ4_DECODE: as VBK$LZ4_DECOMPRESS, and how many octets out are right
+**		when it fails - a SOLID cut by lost blocks is read up to there.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		VBK$DATA_UNPACK, exported.
@@ -295,6 +299,32 @@ int	vbk$data_unpack	(
 
 
 /*
+**  A compressed stream of which only the beginning is there: the octets
+**  that came of it as it is, <a_got>; never one guessed past its end
+*/
+int	vbk$data_salvage	(
+		uint32_t	a_codec,
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_rawlen,
+		uint32_t *	a_got
+			)
+{
+	*a_got	= 0;
+
+	switch ( a_codec )
+		{
+		case	VBK$K_CODEC_LZ4:	return	vbk$lz4_decode(a_src, a_len, a_dst, a_rawlen, a_got);
+		case	VBK$K_CODEC_DEFLATE:	return	vbk$dfl_decode(a_src, a_len, a_dst, a_rawlen, a_got);
+		case	VBK$K_CODEC_LZMA:	return	vbk$lzm_decode(a_src, a_len, a_dst, a_rawlen, a_got);
+		}
+
+	return	STS$K_ERROR;
+}
+
+
+/*
 **  The codec of a /LEVEL
 */
 uint32_t	vbk$data_codec	(
@@ -436,11 +466,12 @@ uint8_t	l_b;
 **			  <a_dst> then is not to be used.
 **--
 */
-int	vbk$lz4_decompress	(
+int	vbk$lz4_decode	(
 	const	uint8_t *	a_src,
 		uint32_t	a_len,
 		uint8_t *	a_dst,
-		uint32_t	a_rawlen
+		uint32_t	a_rawlen,
+		uint32_t *	a_got
 			)
 {
 uint32_t	l_ip = 0, l_op = 0, l_lit, l_off, l_ml;
@@ -449,16 +480,16 @@ uint8_t		l_tok;
 	for ( ;; )
 		{
 		if ( l_ip >= a_len )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		l_tok	= a_src [l_ip++];
 		l_lit	= l_tok >> 4;
 
 		if ( (l_lit == 15) && !s_vbk$getlen(a_src, a_len, &l_ip, &l_lit, a_rawlen) )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		if ( (l_lit > (a_len - l_ip)) || (l_lit > (a_rawlen - l_op)) )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		memcpy(a_dst + l_op, a_src + l_ip, l_lit);
 		l_ip	+= l_lit;
@@ -469,30 +500,47 @@ uint8_t		l_tok;
 			break;
 
 		if ( (a_len - l_ip) < 2 )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		l_off	= (uint32_t) a_src [l_ip] | ((uint32_t) a_src [l_ip + 1] << 8);
 		l_ip	+= 2;
 
 		if ( !l_off || (l_off > l_op) )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		l_ml	= l_tok & 15;
 
 		if ( (l_ml == 15) && !s_vbk$getlen(a_src, a_len, &l_ip, &l_ml, a_rawlen) )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		l_ml	+= VBK$K_LZ4MIN;
 
 		if ( l_ml > (a_rawlen - l_op) )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		/* Octet by octet: a match may overlap what it makes (a run) */
 		for ( uint32_t i = 0; i < l_ml; i++, l_op++ )
 			a_dst [l_op] = a_dst [l_op - l_off];
 		}
 
+	*a_got	= l_op;
+
 	return	(l_op == a_rawlen) ? STS$K_SUCCESS : STS$K_ERROR;
+}
+
+/*
+**  The same, when only the whole of it is wanted
+*/
+int	vbk$lz4_decompress	(
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_rawlen
+			)
+{
+uint32_t	l_got;
+
+	return	vbk$lz4_decode(a_src, a_len, a_dst, a_rawlen, &l_got);
 }
 
 

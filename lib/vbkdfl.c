@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKDFL"
-#define	__IDENT__	"X01-20"
-#define	__REV__		"1.20.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -37,6 +37,11 @@
 **  CREATION DATE:  6-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		VBK$DFL_DECODE: as VBK$DFL_DECOMPRESS, and how many octets out are right
+**		when it fails - a SOLID cut by lost blocks is read up to there; the
+**		codes of a block keep their place when they fail.
 **
 **	X01-20		 6-OCT-2026	RRL
 **		The hash table by the length of the record: a record of a few KB no
@@ -949,12 +954,12 @@ int32_t		l_e;
 	for ( ;; )
 		{
 		if ( 0 > (l_sym = s_vbk$decode(a_in, a_lit)) )
-			return	0;
+			return	*a_op = l_op, 0;
 
 		if ( l_sym < 256 )
 			{
 			if ( l_op >= a_rawlen )
-				return	0;
+				return	*a_op = l_op, 0;
 
 			a_dst [l_op++] = (uint8_t) l_sym;
 			continue;
@@ -967,20 +972,20 @@ int32_t		l_e;
 		uint32_t	l_len, l_dist;
 
 		if ( (l_sym -= 257) >= 29 )
-			return	0;
+			return	*a_op = l_op, 0;
 
 		if ( 0 > (l_e = s_vbk$get(a_in, s_lext [l_sym])) )
-			return	0;
+			return	*a_op = l_op, 0;
 
 		l_len	= s_lbase [l_sym] + (uint32_t) l_e;
 
 		if ( (0 > (l_sym = s_vbk$decode(a_in, a_dist))) || (l_sym >= 30) || (0 > (l_e = s_vbk$get(a_in, s_dext [l_sym]))) )
-			return	0;
+			return	*a_op = l_op, 0;
 
 		l_dist	= s_dbase [l_sym] + (uint32_t) l_e;
 
 		if ( (l_dist > l_op) || (l_len > (a_rawlen - l_op)) )
-			return	0;
+			return	*a_op = l_op, 0;
 
 		for ( ; l_len; l_len--, l_op++ )
 			a_dst [l_op] = a_dst [l_op - l_dist];
@@ -1013,11 +1018,12 @@ int32_t		l_e;
 **			  left over or missing.
 **--
 */
-int	vbk$dfl_decompress	(
+int	vbk$dfl_decode	(
 	const	uint8_t *	a_src,
 		uint32_t	a_len,
 		uint8_t *	a_dst,
-		uint32_t	a_rawlen
+		uint32_t	a_rawlen,
+		uint32_t *	a_got
 			)
 {
 VBK$DFLIN	l_in = { .src = a_src, .len = a_len };
@@ -1028,7 +1034,7 @@ int32_t		l_last, l_type;
 
 	do	{
 		if ( (0 > (l_last = s_vbk$get(&l_in, 1))) || (0 > (l_type = s_vbk$get(&l_in, 2))) )
-			return	STS$K_ERROR;
+			return	*a_got = l_op, STS$K_ERROR;
 
 		switch ( l_type )
 			{
@@ -1041,16 +1047,16 @@ int32_t		l_last, l_type;
 				l_in.n	   -= (l_in.n & 7);
 
 				if ( (0 > (l_n = s_vbk$get(&l_in, 16))) || (0 > (l_nn = s_vbk$get(&l_in, 16))) || (l_n != (~l_nn & 0xFFFF)) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				if ( (uint32_t) l_n > (a_rawlen - l_op) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				for ( ; l_n && (l_in.n >= 8); l_n-- )
 					a_dst [l_op++] = (uint8_t) s_vbk$get(&l_in, 8);
 
 				if ( (uint32_t) l_n > (l_in.len - l_in.ip) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				memcpy(a_dst + l_op, l_in.src + l_in.ip, (size_t) l_n);
 				l_op	 += (uint32_t) l_n;
@@ -1065,10 +1071,10 @@ int32_t		l_last, l_type;
 				s_vbk$fixed(l_fl, l_fd);
 
 				if ( !s_vbk$build(&l_lit, l_fl, 288) || !s_vbk$build(&l_dist, l_fd, 32) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				if ( !s_vbk$codesin(&l_in, &l_lit, &l_dist, a_dst, a_rawlen, &l_op) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				break;
 				}
@@ -1079,27 +1085,27 @@ int32_t		l_last, l_type;
 				uint8_t	l_cll [19] = { 0 };
 
 				if ( (0 > (l_hlit = s_vbk$get(&l_in, 5))) || (0 > (l_hdist = s_vbk$get(&l_in, 5))) || (0 > (l_hclen = s_vbk$get(&l_in, 4))) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				l_hlit	+= 257;
 				l_hdist	+= 1;
 				l_hclen	+= 4;
 
 				if ( (l_hlit > 286) || (l_hdist > 30) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				for ( int i = 0; i < l_hclen; i++ )
 					{
 					int32_t	l_v = s_vbk$get(&l_in, 3);
 
 					if ( l_v < 0 )
-						return	STS$K_ERROR;
+						return	*a_got = l_op, STS$K_ERROR;
 
 					l_cll [s_clorder [i]] = (uint8_t) l_v;
 					}
 
 				if ( !s_vbk$build(&l_cl, l_cll, 19) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				for ( int i = 0; i < (l_hlit + l_hdist); )
 					{
@@ -1107,7 +1113,7 @@ int32_t		l_last, l_type;
 					uint8_t	l_val = 0;
 
 					if ( l_sym < 0 )
-						return	STS$K_ERROR;
+						return	*a_got = l_op, STS$K_ERROR;
 
 					if ( l_sym < 16 )
 						{
@@ -1118,7 +1124,7 @@ int32_t		l_last, l_type;
 					if ( l_sym == 16 )
 						{
 						if ( !i )
-							return	STS$K_ERROR;
+							return	*a_got = l_op, STS$K_ERROR;
 
 						l_val	= l_lens [i - 1];
 						l_rep	= 3 + s_vbk$get(&l_in, 2);
@@ -1128,7 +1134,7 @@ int32_t		l_last, l_type;
 					else	l_rep	= 11 + s_vbk$get(&l_in, 7);
 
 					if ( (l_rep < 3) || ((i + l_rep) > (l_hlit + l_hdist)) )
-						return	STS$K_ERROR;
+						return	*a_got = l_op, STS$K_ERROR;
 
 					while ( l_rep-- )
 						l_lens [i++] = l_val;
@@ -1136,26 +1142,41 @@ int32_t		l_last, l_type;
 
 				/* No end-of-block code: no block can end */
 				if ( !l_lens [256] )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				if ( !s_vbk$build(&l_lit, l_lens, l_hlit) || !s_vbk$build(&l_dist, l_lens + l_hlit, l_hdist) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				if ( !s_vbk$codesin(&l_in, &l_lit, &l_dist, a_dst, a_rawlen, &l_op) )
-					return	STS$K_ERROR;
+					return	*a_got = l_op, STS$K_ERROR;
 
 				break;
 				}
 
 			default:
-				return	STS$K_ERROR;
+				return	*a_got = l_op, STS$K_ERROR;
 			}
 		}
 	while ( !l_last );
 
 	/* All of it: the octets wanted, the input to its last octet - only the padding bits of that one left */
 	if ( (l_op != a_rawlen) || (l_in.ip != l_in.len) || (l_in.n >= 8) )
-		return	STS$K_ERROR;
+		return	*a_got = l_op, STS$K_ERROR;
 
-	return	STS$K_SUCCESS;
+	return	*a_got = l_op, STS$K_SUCCESS;
+}
+
+/*
+**  The same, when only the whole of it is wanted
+*/
+int	vbk$dfl_decompress	(
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_rawlen
+			)
+{
+uint32_t	l_got;
+
+	return	vbk$dfl_decode(a_src, a_len, a_dst, a_rawlen, &l_got);
 }

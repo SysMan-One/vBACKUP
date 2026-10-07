@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKCMP"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -27,6 +27,14 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		Compare in batch mode (VBK$RD_BATCH).
+**
+**	X01-22		 7-OCT-2026	RRL
+**		The catalog set against the FILE records read: a file it has that the
+**		stream did not give - lost in bad blocks, or never there - is a
+**		difference (COMPARERR), so /VERIFY never says 0 over a missing file.
 **
 **	X01-07		 5-OCT-2026	RRL
 **		CMPSUMM always; texts made by FAO.
@@ -75,7 +83,37 @@ typedef struct vbk_cmp_t
 	uint8_t *	zbuf;			/* A DATAZ record decompressed			*/
 
 	uint64_t	nfiles, ndiff;
+	uint8_t *	seen;			/* FILENOs of the FILE records read, a bit each	*/
+	uint32_t	seensz;
+	int		lossy;			/* Records were lost on the way			*/
 } VBK$CMP;
+
+
+/*
+**  A FILE record read: its FILENO marked, whatever comes of it
+*/
+static	void	s_vbk$seen	(
+		VBK$CMP *	a_cmp,
+		uint32_t	a_fileno
+			)
+{
+uint32_t	l_byte = a_fileno / 8;
+
+	if ( l_byte >= a_cmp->seensz )
+		{
+		uint32_t	l_new = (l_byte + 1) * 2;
+		uint8_t *	l_p;
+
+		if ( !(l_p = realloc(a_cmp->seen, l_new)) )
+			return;
+
+		memset(l_p + a_cmp->seensz, 0, l_new - a_cmp->seensz);
+		a_cmp->seen	= l_p;
+		a_cmp->seensz	= l_new;
+		}
+
+	a_cmp->seen [l_byte] |= (uint8_t) (1 << (a_fileno % 8));
+}
 
 
 static	void	s_vbk$differs	(
@@ -151,6 +189,8 @@ ssize_t		l_n;
 
 	if ( !(1 & vbk$atr_parse(a_body, a_len, &l_attr)) )
 		return;
+
+	s_vbk$seen(a_cmp, l_attr.fileno);
 
 	$VBKFAOB(a_cmp->name, sizeof(a_cmp->name), "!AD", l_attr.pathlen, l_attr.path);
 
@@ -327,6 +367,98 @@ struct stat	l_st;
 **	STS$K_ERROR	- the saveset cannot be read.
 **--
 */
+/*
+**  The entries of one CATALOG record: one the stream did not give is a
+**  difference - its records lost, or never written
+*/
+static	void	s_vbk$catcmp	(
+		VBK$CMP *	a_cmp,
+	const	uint8_t *	a_body,
+		uint32_t	a_len
+			)
+{
+VBK$OPTS *	l_o = a_cmp->opts;
+VBK$ATTR	l_attr;
+const char *	l_dir;
+
+	for ( uint32_t l_off = 0; (l_off + 4) <= a_len; )
+		{
+		uint32_t	l_elen = vbk$get32(a_body + l_off);
+
+		if ( (l_off + 4 + l_elen) > a_len )
+			break;
+
+		if ( (1 & vbk$atr_parse(a_body + l_off + 4, l_elen, &l_attr)) && (l_attr.status != VBK$K_FS_PRESENT)
+			&& !(((l_attr.fileno / 8) < a_cmp->seensz) && (a_cmp->seen [l_attr.fileno / 8] & (1 << (l_attr.fileno % 8)))) )
+			{
+			$VBKFAOB(a_cmp->name, sizeof(a_cmp->name), "!AD", l_attr.pathlen, l_attr.path);
+			l_dir	= a_cmp->dir ? a_cmp->dir : ((l_attr.baseidx < a_cmp->nbase) ? a_cmp->base [l_attr.baseidx] : ".");
+
+			if ( !(l_o->nexclude && (1 & vbk$match(a_cmp->name, l_o->exclude, l_o->nexclude)))
+				&& !(l_o->nselect && !(1 & vbk$match(a_cmp->name, l_o->select, l_o->nselect)))
+				&& (1 & vbk$mkpath(l_dir, l_attr.path, l_attr.pathlen, a_cmp->path, sizeof(a_cmp->path))) )
+				{
+				a_cmp->ndiff++;
+				$VBKMSG(VBACKUP$_COMPARERR, a_cmp->path, a_cmp->lossy ? "not compared: its records were lost in bad blocks"
+							: "not compared: the catalog has it, the record stream does not");
+				}
+			}
+
+		l_off	+= 4 + l_elen;
+		}
+}
+
+/*
+**  After the pass: the catalog - at its place, or for a stream as it came
+*/
+static	void	s_vbk$catpass	(
+		VBK$CMP *	a_cmp,
+	const	char *		a_spec
+			)
+{
+VBK$LOC		l_loc = {0};
+const uint8_t *	l_val, *l_body;
+uint32_t	l_pos = 0, l_vlen, l_len;
+uint16_t	l_tag, l_type;
+int		l_hole;
+
+	if ( !a_cmp->rctx.trailer || a_cmp->rctx.isstream )
+		return;
+
+	while ( 1 & vbk$tlv_next(a_cmp->rctx.trailer, a_cmp->rctx.trllen, &l_pos, &l_tag, &l_vlen, &l_val) )
+		switch ( l_tag )
+			{
+			case	VBK$K_TAG_CATVOL:	l_loc.vol = (uint32_t) vbk$tlv_getu(l_vlen, l_val);	break;
+			case	VBK$K_TAG_CATBLK:	l_loc.blk = vbk$tlv_getu(l_vlen, l_val);		break;
+			case	VBK$K_TAG_CATOFF:	l_loc.off = (uint32_t) vbk$tlv_getu(l_vlen, l_val);	break;
+			}
+
+	if ( STS$K_ERROR == (l_hole = vbk$rd_seek(&a_cmp->rctx, &l_loc)) )
+		{
+		a_cmp->ndiff++;
+		$VBKMSG(VBACKUP$_UNNAMED, a_spec, "its catalog cannot be read");
+
+		return;
+		}
+
+	l_hole	= (l_hole == STS$K_WARN);
+
+	while ( (1 & vbk$rd_next(&a_cmp->rctx, &l_type, &l_body, &l_len, NULL)) && (l_type != VBK$K_RT_END) )
+		{
+		l_hole	|= a_cmp->rctx.resync;
+
+		if ( l_type == VBK$K_RT_CATALOG )
+			s_vbk$catcmp(a_cmp, l_body, l_len);
+		}
+
+	if ( l_hole )
+		{
+		a_cmp->ndiff++;
+		$VBKMSG(VBACKUP$_UNNAMED, a_spec, "its catalog is damaged");
+		}
+}
+
+
 int	vbk$compare	(
 		VBK$OPTS *	a_opts,
 	const	char *		a_saveset
@@ -371,8 +503,13 @@ int		l_status;
 		if ( (l_tag == VBK$K_TAG_BASE) && (l_cmp->base [l_cmp->nbase] = strndup((const char *) l_val, l_vlen)) )
 			l_cmp->nbase++;
 
+	/* The records read ahead, decompressed on all the threads (X01-23) */
+	vbk$rd_batch(&l_cmp->rctx);
+
 	while ( 1 & vbk$rd_next(&l_cmp->rctx, &l_type, &l_body, &l_len, NULL) )
 		{
+		l_cmp->lossy |= l_cmp->rctx.resync;
+
 		if ( l_cmp->rctx.resync && l_cmp->fileno )
 			{
 			$VBKMSG(VBACKUP$_FILDAMAGED, l_cmp->path);
@@ -388,11 +525,19 @@ int		l_status;
 			s_vbk$data(l_cmp, l_type, l_body, l_len);
 		else if ( l_type == VBK$K_RT_FEND )
 			s_vbk$fend(l_cmp, l_body, l_len);
+		else if ( (l_type == VBK$K_RT_CATALOG) && l_cmp->rctx.isstream )
+			{
+			/* A stream: its catalog as it comes, all the FILE records before it */
+			s_vbk$done(l_cmp);
+			s_vbk$catcmp(l_cmp, l_body, l_len);
+			}
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
 			break;
 		}
 
 	s_vbk$done(l_cmp);
+	l_cmp->lossy |= (l_cmp->rctx.nlost != 0);
+	s_vbk$catpass(l_cmp, a_saveset);
 
 	/* Always: a command says what it did, not only under /LOG */
 	$VBKMSG(VBACKUP$_CMPSUMM, l_cmp->nfiles, l_cmp->ndiff);
@@ -406,6 +551,7 @@ int		l_status;
 
 	free(l_cmp->buf);
 	free(l_cmp->zbuf);
+	free(l_cmp->seen);
 	free(l_cmp);
 
 	return	l_status;

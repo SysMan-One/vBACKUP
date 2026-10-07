@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKKEY"
-#define	__IDENT__	"X01-17"
-#define	__REV__		"1.17.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -32,6 +32,12 @@
 **  CREATION DATE:  5-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 6-OCT-2026	RRL
+**		An ETRAILER that fails its TAG: the saveset is read without its catalog,
+**		not refused - VBK$RD_SETKEY gives STS$K_WARN, which the callers took for
+**		a failure, and an encrypted saveset whose last block was damaged was
+**		not restored at all, without a word (found by damage.sh, seed 8).
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Windows: the passphrase from the console - ReadConsoleW, no echo, in
@@ -434,5 +440,6 @@ int		l_status;
 		return	$VBKMSG(VBACKUP$_WRONGKEY, a_spec);
 		}
 
-	return	l_status;
+	/* The passphrase is right, the ETRAILER is not (BLKFORGED said it): read as a saveset without a catalog */
+	return	STS$K_SUCCESS;
 }

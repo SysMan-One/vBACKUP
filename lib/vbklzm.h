@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-20"
+#define	__IDENT__	"X01-22"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.20.0"
+#define	__REV__		"1.22.0"
 #endif
 
 /*
@@ -39,6 +39,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-22		 7-OCT-2026	RRL
+**		VBK$LZM_DECODE: as VBK$LZM_DECOMPRESS, and how many octets out are right
+**		when it fails: those of the symbols decoded before the input ran out.
+**
 **	X01-20		 6-OCT-2026	RRL
 **		/LEVEL=8, 9: the optimal parse.
 **
@@ -64,6 +68,7 @@ extern "C" {
 
 int	vbk$lzm_compress	(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_cap, uint32_t *a_outlen, int a_effort);
 int	vbk$lzm_decompress	(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_rawlen);
+int	vbk$lzm_decode		(const uint8_t *a_src, uint32_t a_len, uint8_t *a_dst, uint32_t a_rawlen, uint32_t *a_got);
 
 #ifdef	__cplusplus
 }

@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKX"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -87,6 +87,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		x and t: the catalog always set against the FILE records met, not only
+**		after a loss - a file it has and the stream did not give is named,
+**		never left out silently; a pipe: its CATALOG records as they come.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		Version 3: the SOLID records opened by the reader; a file whose place
@@ -192,6 +197,7 @@ static	VBKX$DIR *	s_dirs;
 static	size_t		s_ndirs, s_szdirs;
 
 static	uint8_t *	s_seen;			/* FILENOs met in the stream, a bit each	*/
+static	int		s_gap;			/* Records were lost on the way: blocks, a SOLID */
 static	uint32_t	s_seensz;
 
 
@@ -1561,6 +1567,44 @@ const uint8_t *	l_val;
 }
 
 
+static	int	s_vbkx$wanted	(const VBKX$ENT *a_e, char **a_names, int a_nnames);
+
+/*
+**  The entries of one CATALOG record not met in the stream, named: after a
+**  loss (<a_lossy>) they went with the blocks, else the stream never had them
+*/
+static	void	s_vbkx$lostcat	(
+	const	uint8_t *	a_body,
+		uint32_t	a_len,
+		char **		a_names,
+		int		a_nnames,
+		int		a_lossy
+			)
+{
+VBKX$ENT	l_e;
+
+	for ( uint32_t l_off = 0; (l_off + 4) <= a_len; )
+		{
+		uint32_t	l_elen = vbk$get32(a_body + l_off);
+
+		if ( (l_off + 4 + l_elen) > a_len )
+			break;
+
+		memset(&l_e, 0, sizeof(l_e));
+
+		if ( (1 & s_vbkx$parse(a_body + l_off + 4, l_elen, &l_e)) && (l_e.status != VBK$K_FS_PRESENT) && !s_vbkx$isseen(l_e.fileno)
+			&& s_vbkx$wanted(&l_e, a_names, a_nnames) )
+			{
+			s_vbkx$msg("File: %.*s - not extracted: %s", (int) l_e.pathlen, l_e.path,
+				a_lossy ? "its records were lost in bad blocks" : "the catalog has it, the record stream does not");
+			s_bad	= 1;
+			}
+
+		l_off	+= 4 + l_elen;
+		}
+}
+
+
 /*
 **  Take the records of the stream from where it stands: every file (one
 **  pass), or the one file <a_one> - a FILENO - that begins here.  When
@@ -1582,6 +1626,8 @@ int		l_files = 0, l_ended = 0, l_pass = 0;
 
 	while ( 1 & vbk$rd_next(a_rctx, &l_type, &l_body, &l_len, NULL) )
 		{
+		s_gap	|= a_rctx->resync;
+
 		if ( a_rctx->resync && a_out->active )
 			a_out->damaged	= 1;
 
@@ -1617,6 +1663,15 @@ int		l_files = 0, l_ended = 0, l_pass = 0;
 			if ( a_one )
 				return;
 			}
+		else if ( (l_type == VBK$K_RT_CATALOG) && a_rctx->isstream && !a_one )
+			{
+			/* A pipe cannot go back to its catalog: it is set against the files met as it comes */
+			if ( a_out->active )
+				s_vbkx$end(a_out, NULL, 0);
+
+			l_ended	= 1;
+			s_vbkx$lostcat(l_body, l_len, NULL, 0, s_gap || a_rctx->nlost);
+			}
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
 			{
 			l_ended	= 1;
@@ -1632,6 +1687,7 @@ int		l_files = 0, l_ended = 0, l_pass = 0;
 		{
 		s_vbkx$msg("Saveset: %s - ends before its catalog: the save did not complete, or its last volumes are missing", s_spec);
 		s_bad	= 1;
+		s_gap	= 1;
 		}
 }
 
@@ -1864,13 +1920,19 @@ static	void	s_vbkx$lost	(
 {
 VBKX$ENT *	l_ents;
 size_t		l_n;
-int		l_hole;
+int		l_hole, l_lossy = s_gap || (a_rctx->nlost != 0);
 
-	l_ents	= s_vbkx$catalog(a_rctx, &l_n, &l_hole);
+	/* Nothing lost and no catalog: nothing to set the stream against, and nothing to say */
+	if ( !(l_ents = s_vbkx$catalog(a_rctx, &l_n, &l_hole)) && !l_lossy )
+		return;
 
 	for ( size_t i = 0; i < l_n; i++ )
 		if ( (l_ents [i].status != VBK$K_FS_PRESENT) && !s_vbkx$isseen(l_ents [i].fileno) && s_vbkx$wanted(&l_ents [i], a_names, a_nnames) )
-			s_vbkx$msg("File: %.*s - not extracted: its records were lost in bad blocks", (int) l_ents [i].pathlen, l_ents [i].path);
+			{
+			s_vbkx$msg("File: %.*s - not extracted: %s", (int) l_ents [i].pathlen, l_ents [i].path,
+				l_lossy ? "its records were lost in bad blocks" : "the catalog has it, the record stream does not");
+			s_bad	= 1;
+			}
 
 	if ( !l_ents || l_hole )
 		s_vbkx$msg("Saveset: %s - %s: files missing from the output cannot all be named", s_spec,
@@ -1900,8 +1962,8 @@ int		l_hole, l_found = 0;
 		{
 		s_vbkx$stream(a_rctx, &l_out, a_make, 0, NULL);
 
-
-		if ( s_bad )
+		/* Always, not only after a loss: a file of the catalog the stream did not give is never left out silently */
+		if ( !a_rctx->isstream )
 			s_vbkx$lost(a_rctx, NULL, 0);
 		}
 	else	{

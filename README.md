@@ -170,36 +170,39 @@ time; `tar | gzip` and `tar | xz` for comparison:
 |---|---|---|---|
 | uncompressed | 239 MB | 1.0 s | 1.9 s |
 | /LEVEL=1 | 62 MB | 1.3 s | 2.0 s |
-| /LEVEL=2 | 44 MB | 1.2 s | 2.3 s |
-| /LEVEL=5 | 39 MB | 2.4 s | 2.3 s |
-| /LEVEL=6 | 36 MB | 2.1 s | 3.6 s |
-| /LEVEL=9 | 32 MB | 21.2 s | 3.4 s |
-| /LEVEL=9 /NOSOLID | 53 MB | 24.7 s | 4.5 s |
+| /LEVEL=2 | 45 MB | 1.2 s | 1.9 s |
+| /LEVEL=5 | 39 MB | 2.4 s | 1.9 s |
+| /LEVEL=6 | 37 MB | 2.1 s | 2.2 s |
+| /LEVEL=9 | 33 MB | 21.2 s | 2.3 s |
+| /LEVEL=9 /NOSOLID | 53 MB | 24.7 s | 2.9 s |
 | tar, gzip -6 | 28 MB | 5.0 s | |
 | tar, xz -T8 -6 | 19 MB | 9.9 s | |
 
 | /usr/lib/python3, 512 MB | Size | Save | Restore |
 |---|---|---|---|
 | uncompressed | 571 MB | 2.9 s | 2.6 s |
-| /LEVEL=1 | 254 MB | 2.5 s | 3.3 s |
-| /LEVEL=2 | 186 MB | 3.1 s | 4.8 s |
-| /LEVEL=5 | 172 MB | 8.0 s | 4.4 s |
-| /LEVEL=6 | 146 MB | 7.0 s | 11.0 s |
-| /LEVEL=9 | 135 MB | 41.2 s | 10.6 s |
-| /LEVEL=9 /NOSOLID | 163 MB | 51.0 s | 12.4 s |
+| /LEVEL=1 | 255 MB | 2.5 s | 2.9 s |
+| /LEVEL=2 | 187 MB | 3.1 s | 3.1 s |
+| /LEVEL=5 | 173 MB | 8.0 s | 3.0 s |
+| /LEVEL=6 | 152 MB | 7.0 s | 4.7 s |
+| /LEVEL=9 | 141 MB | 41.2 s | 4.7 s |
+| /LEVEL=9 /NOSOLID | 163 MB | 51.0 s | 6.5 s |
 | tar, gzip -6 | 149 MB | 22.1 s | |
 | tar, xz -T8 -6 | 96 MB | 29.3 s | |
 
 What the numbers say: on big files VBACKUP compresses as gzip or xz do,
 and faster than one-thread gzip at level 1..5. Since X01-21 small files
-(up to 256 KB) are packed together, up to 1 MB at a time, into one SOLID
-record - their names and attributes compressed too: /usr/include at
-/LEVEL=9 went from 53 MB to 32 MB, and the saves got faster. A tar of
+(up to 256 KB) are packed together, up to 256 KB at a time, into one
+SOLID record - their names and attributes compressed too: /usr/include
+at /LEVEL=9 went from 53 MB to 33 MB, and the saves got faster. A tar of
 them still gives less: tar | xz has one dictionary for all. The price is
-paid on a bad day only: blocks lost beyond repair take every file of the
-SOLID they touch (all named on restore), not just one file. For a
-saveset that must live through heavy damage give `/PARITY=2` or more,
-or `/NOSOLID`. Restore is fast at every level. Since X01-20
+paid on a bad day only, and X01-22 keeps it small: a group of blocks
+lost beyond repair takes about a quarter more files than without SOLID
+(24 against 19 on /usr/lib/python3/dist-packages), since what is before
+the damage in a SOLID is still read back; every file missing is named.
+For a saveset that must live through heavy damage give `/PARITY=2` or
+more, or `/NOSOLID`. Restore is fast at every level: since X01-23 it
+decompresses on all cores too (python3 /LEVEL=9: 11.3 s -> 4.7 s). Since X01-20
 levels 8 and 9 use the optimal parse of xz (+8% over X01-19 on text),
 and the compression pool keeps its cores busy on small files (/LEVEL=8 on
 /usr/include: 37 s -> 16 s).

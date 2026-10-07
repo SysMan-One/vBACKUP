@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKMSG"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -19,6 +19,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		NOTINSTREAM: the catalog names a file the record stream does not hold.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		ZCHECK: a record compressed that did not come back the same.
@@ -190,7 +193,8 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$VBKREC(VBACKUP$_VMSRAW,	"VMSRAW, File: !AZ, Organization: !AZ, Record format: !AZ - restored as it is on the VMS disk: its records are not converted"),
 	$VBKREC(VBACKUP$_PARITYERR,	"PARITYERR, Block: !UQ, Volume: !UL - the group beginning here does not agree with its parity: a block of it with a right CRC holds other bytes, nothing of it is rebuilt"),
 	$VBKREC(VBACKUP$_XATTRSKIP,	"XATTRSKIP, File: !AZ - an extended attribute not saved: it cannot be read, or is longer than 64 KB (on Windows: a stream)"),
-	$VBKREC(VBACKUP$_ZCHECK,	"ZCHECK, Offset: !UQ - a record compressed did not decompress to the same octets: it is stored uncompressed (a fault of VBACKUP: report it)")
+	$VBKREC(VBACKUP$_ZCHECK,	"ZCHECK, Offset: !UQ - a record compressed did not decompress to the same octets: it is stored uncompressed (a fault of VBACKUP: report it)"),
+	$VBKREC(VBACKUP$_NOTINSTREAM,	"NOTINSTREAM, File: !AZ - not restored: the catalog has it, the record stream does not, though no block was lost")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

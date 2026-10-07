@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLZM"
-#define	__IDENT__	"X01-20"
-#define	__REV__		"1.20.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -45,6 +45,10 @@
 **  CREATION DATE:  6-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		VBK$LZM_DECODE: as VBK$LZM_DECOMPRESS, and how many octets out are right
+**		when it fails: those of the symbols decoded before the input ran out.
 **
 **	X01-20		 6-OCT-2026	RRL
 **		Stage 16: the optimal parse for /LEVEL=8, 9 - the prices of the model in
@@ -1624,36 +1628,41 @@ int		l_foot;
 **	STS$K_FATAL	- no memory.
 **--
 */
-int	vbk$lzm_decompress	(
+int	vbk$lzm_decode	(
 	const	uint8_t *	a_src,
 		uint32_t	a_len,
 		uint8_t *	a_dst,
-		uint32_t	a_rawlen
+		uint32_t	a_rawlen,
+		uint32_t *	a_got
 			)
 {
 VBK$RCDEC	l_rc = { .src = a_src, .len = a_len, .range = 0xFFFFFFFFU };
 VBK$LZMPROBS *	l_p;
 uint32_t	l_reps [4] = { 0 }, l_state = 0, l_op = 0, l_len;
+uint32_t	l_good = 0;
 int		l_status = STS$K_ERROR;
 
 	/* The range coder: a zero, then the code in four octets */
 	if ( (a_len < 5) || a_src [0] )
-		return	STS$K_ERROR;
+		return	*a_got = l_good, STS$K_ERROR;
 
 	l_rc.code = ((uint32_t) a_src [1] << 24) | ((uint32_t) a_src [2] << 16) | ((uint32_t) a_src [3] << 8) | a_src [4];
 	l_rc.ip	  = 5;
 
 	if ( l_rc.code == l_rc.range )
-		return	STS$K_ERROR;
+		return	*a_got = l_good, STS$K_ERROR;
 
 	if ( !(l_p = malloc(sizeof(*l_p))) )
-		return	STS$K_FATAL;
+		return	*a_got = l_good, STS$K_FATAL;
 
 	s_vbk$probs(l_p);
 
 	while ( !l_rc.bad )
 		{
 		uint32_t	l_ps = l_op & (VBK$K_LZMPOS - 1);
+
+		/* Every octet before this symbol came of the input as it is: the past end of it is not trusted */
+		l_good	= l_op;
 
 		if ( !s_vbk$dbit(&l_rc, &l_p->ismatch [l_state][l_ps]) )
 			{
@@ -1757,5 +1766,24 @@ int		l_status = STS$K_ERROR;
 
 	free(l_p);
 
-	return	l_status;
+	/* The loop ended without the input running out: what came out of its last symbol is right too */
+	if ( (l_status == STS$K_SUCCESS) || !l_rc.bad )
+		l_good	= l_op;
+
+	return	*a_got = l_good, l_status;
+}
+
+/*
+**  The same, when only the whole of it is wanted
+*/
+int	vbk$lzm_decompress	(
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_rawlen
+			)
+{
+uint32_t	l_got;
+
+	return	vbk$lzm_decode(a_src, a_len, a_dst, a_rawlen, &l_got);
 }

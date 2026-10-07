@@ -150,6 +150,13 @@
 #
 #  MODIFICATION HISTORY:
 #
+#	X01-22		 7-OCT-2026	RRL
+#		The repair of a group: the good DATA blocks first made as the
+#		writer left them past PAYLEN - zeros up to the TAG.  Nothing
+#		authenticates those octets, the parity covers them: one byte
+#		changed there in a good block, and the bad one of its group
+#		could not be rebuilt.
+#
 #	X01-21		 7-OCT-2026	RRL
 #		Version 3 (format.md 3, 6.12): its blocks taken as those of
 #		version 2, its groups those of version 1 without PARITY 2 or
@@ -872,6 +879,23 @@ sub volend
 }
 
 #
+#  The good DATA blocks of a group as the writer made them past PAYLEN:
+#  zeros up to the TAG.  What lies there carries nothing, no TAG covers
+#  it; a byte changed there would make the parity disagree, and nothing
+#  of the group be rebuilt.
+#
+sub canon
+{
+	my ($blks, $hdrs, $ok, $n) = @_;
+	for my $i (0 .. $n - 1)
+	{
+		my $h = $hdrs->[$i];
+		next unless $ok->[$i] && $h->{typ} == $R{dtype} && $h->{paylen} < $R{cap};
+		substr(${ $blks->[$i] }, HDRSZ + $h->{paylen}, $R{cap} - $h->{paylen}) = "\0" x ($R{cap} - $h->{paylen});
+	}
+}
+
+#
 #  Read the next group (section 4), check its blocks, rebuild one bad DATA
 #  block from the XOR block; 0 - the end of the saveset.
 #
@@ -944,6 +968,8 @@ sub load_group
 			$badi = $i;
 		}
 	}
+
+	canon(\@blks, \@hdrs, \@ok, $gdata) if $nbad;
 
 	# One bad DATA block: its payload is the XOR of all the others, two header fields kept by the next block
 	if ($nbad == 1 && $hasxor && $ok[$xi] && $hdrs[$xi]{gindex} == $gdata && $badi + 1 < $n && $hdrs[$badi + 1])
@@ -1158,10 +1184,11 @@ sub load_group2
 				$hdrs->[$i]{blkno}, $R{curvol});
 		}
 		$dok[$i] = $ok->[$i];
-		$pay[$i] = $dok[$i] ? substr(${ $blks->[$i] }, HDRSZ) : '';
 		$hv[$i]  = $dok[$i] ? pack('V V', $hdrs->[$i]{recoff}, $hdrs->[$i]{paylen}) : "\0" x 8;
 		$nbad++ unless $dok[$i];
 	}
+	canon($blks, $hdrs, $ok, $d) if $nbad;
+	$pay[$_] = $dok[$_] ? substr(${ $blks->[$_] }, HDRSZ) : '' for 0 .. $d - 1;
 
 	my ($done, $forged) = (0, 0);
 	for (my $skip = -1; $nbad && $nbad <= $npok && !$done && $skip < $m; $skip++)
@@ -2464,7 +2491,7 @@ sub selftest
 
 sub usage
 {
-	print STDERR "vbkx-pl X01-21 - the extractor of last resort for VBACKUP savesets\n\n",
+	print STDERR "vbkx-pl X01-22 - the extractor of last resort for VBACKUP savesets\n\n",
 		"  perl vbkx.pl l saveset [-k file]           list the files (times in UTC)\n",
 		"  perl vbkx.pl x saveset [-C dir] [-k file]  extract them all\n",
 		"  perl vbkx.pl t saveset [-k file]           read it all, check the checksums\n",

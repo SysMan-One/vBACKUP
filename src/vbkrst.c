@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-23"
+#define	__REV__		"1.23.0"
 
 /*
 **++
@@ -32,6 +32,16 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-23		 7-OCT-2026	RRL
+**		Restore in batch mode (VBK$RD_BATCH): the compressed records
+**		decompressed on all the threads.
+**
+**	X01-22		 7-OCT-2026	RRL
+**		The catalog always set against the FILE records read, not only after a
+**		loss: a file it has and the stream does not, nothing lost, is named
+**		(NOTINSTREAM) - never left out silently.  A stream: its CATALOG records
+**		are taken as they come.
 **
 **	X01-21		 7-OCT-2026	RRL
 **		/EXTRACT: a file whose place is a SOLID found in there, past the files
@@ -1143,24 +1153,60 @@ struct stat	l_st;
 **	None.
 **--
 */
-static	void	s_vbk$lost	(
+static	void	s_vbk$lostcat	(
 		VBK$REST *	a_rst,
-		VBK$RCTX *	a_rctx,
-	const	char *		a_spec
+	const	uint8_t *	a_body,
+		uint32_t	a_len,
+		int		a_lossy
 			)
 {
 VBK$OPTS *	l_o = a_rst->opts;
-VBK$LOC		l_loc = {0};
 VBK$ATTR	l_attr;
+char		l_name [VBACKUP$K_SZ_PATH], l_out [VBACKUP$K_SZ_PATH];
+
+	for ( uint32_t l_off = 0; (l_off + 4) <= a_len; )
+		{
+		uint32_t	l_elen = vbk$get32(a_body + l_off);
+
+		if ( (l_off + 4 + l_elen) > a_len )
+			break;
+
+		if ( (1 & vbk$atr_parse(a_body + l_off + 4, l_elen, &l_attr)) && (l_attr.pathlen < sizeof(l_name))
+			&& (l_attr.status != VBK$K_FS_PRESENT)
+			&& !(((l_attr.fileno / 8) < a_rst->seensz) && (a_rst->seen [l_attr.fileno / 8] & (1 << (l_attr.fileno % 8)))) )
+			{
+			memcpy(l_name, l_attr.path, l_attr.pathlen);
+			l_name [l_attr.pathlen] = '\0';
+
+			/* Only what this restore would have restored: the same choice as VBK$RST_FILE */
+			if ( !(l_o->nexclude && (1 & vbk$match(l_name, l_o->exclude, l_o->nexclude)))
+				&& !(l_o->nselect && !(1 & vbk$match(l_name, l_o->select, l_o->nselect))) )
+				$VBKMSG(a_lossy ? VBACKUP$_FILLOST : VBACKUP$_NOTINSTREAM,
+					(1 & vbk$mkpath(l_o->output, l_attr.path, l_attr.pathlen, l_out, sizeof(l_out))) ? l_out : l_name);
+			}
+
+		l_off	+= 4 + l_elen;
+		}
+}
+
+static	void	s_vbk$lost	(
+		VBK$REST *	a_rst,
+		VBK$RCTX *	a_rctx,
+	const	char *		a_spec,
+		int		a_lossy
+			)
+{
+VBK$LOC		l_loc = {0};
 const uint8_t *	l_val, *l_body;
 uint32_t	l_pos = 0, l_vlen, l_len;
 uint16_t	l_tag, l_type;
 int		l_status, l_hole = 0;
-char		l_name [VBACKUP$K_SZ_PATH], l_out [VBACKUP$K_SZ_PATH];
 
+	/* No catalog: after a loss that is said; else there is nothing to set the stream against */
 	if ( !a_rctx->trailer )
 		{
-		$VBKMSG(VBACKUP$_UNNAMED, a_spec, "it has no catalog");
+		if ( a_lossy )
+			$VBKMSG(VBACKUP$_UNNAMED, a_spec, "it has no catalog");
 
 		return;
 		}
@@ -1193,29 +1239,7 @@ char		l_name [VBACKUP$K_SZ_PATH], l_out [VBACKUP$K_SZ_PATH];
 		if ( l_type != VBK$K_RT_CATALOG )
 			continue;
 
-		for ( uint32_t l_off = 0; (l_off + 4) <= l_len; )
-			{
-			uint32_t	l_elen = vbk$get32(l_body + l_off);
-
-			if ( (l_off + 4 + l_elen) > l_len )
-				break;
-
-			if ( (1 & vbk$atr_parse(l_body + l_off + 4, l_elen, &l_attr)) && (l_attr.pathlen < sizeof(l_name))
-				&& (l_attr.status != VBK$K_FS_PRESENT)
-				&& !(((l_attr.fileno / 8) < a_rst->seensz) && (a_rst->seen [l_attr.fileno / 8] & (1 << (l_attr.fileno % 8)))) )
-				{
-				memcpy(l_name, l_attr.path, l_attr.pathlen);
-				l_name [l_attr.pathlen] = '\0';
-
-				/* Only what this restore would have restored: the same choice as VBK$RST_FILE */
-				if ( !(l_o->nexclude && (1 & vbk$match(l_name, l_o->exclude, l_o->nexclude)))
-					&& !(l_o->nselect && !(1 & vbk$match(l_name, l_o->select, l_o->nselect))) )
-					$VBKMSG(VBACKUP$_FILLOST, (1 & vbk$mkpath(l_o->output, l_attr.path, l_attr.pathlen, l_out, sizeof(l_out)))
-						? l_out : l_name);
-				}
-
-			l_off	+= 4 + l_elen;
-			}
+		s_vbk$lostcat(a_rst, l_body, l_len, a_lossy);
 		}
 
 	/* A hole in the catalog - before END too, - or its end not reached: some names may be missing */
@@ -1359,7 +1383,7 @@ const uint8_t *	l_body;
 uint64_t	l_nf = 0, l_nb = 0;
 uint32_t	l_len;
 uint16_t	l_type;
-int		l_status, l_quit = 0, l_lossy = 0, l_end = 0;
+int		l_status, l_quit = 0, l_lossy = 0, l_end = 0, l_scat = 0, l_shole = 0;
 char **		l_bases = NULL;
 unsigned	l_nbases = 0;
 
@@ -1422,6 +1446,9 @@ unsigned	l_nbases = 0;
 		l_bases		= NULL;
 		}
 
+	/* The records read ahead, decompressed on all the threads (X01-23) */
+	vbk$rd_batch(&l_rctx);
+
 	while ( 1 & vbk$rd_next(&l_rctx, &l_type, &l_body, &l_len, NULL) )
 		{
 		/* Blocks were lost before this record: the file being restored lost data */
@@ -1445,6 +1472,17 @@ unsigned	l_nbases = 0;
 			s_vbk$data(l_rst, l_type, l_body, l_len);
 		else if ( l_type == VBK$K_RT_FEND )
 			s_vbk$fend(l_rst, l_body, l_len);
+		else if ( (l_type == VBK$K_RT_CATALOG) && l_rctx.isstream )
+			{
+			/* A stream cannot go back to its catalog: it is set against the records read as it comes */
+			if ( l_rst->active )
+				s_vbk$close(l_rst, 0);
+
+			l_end	= 1;
+			l_scat	= 1;
+			l_shole	|= l_rctx.resync;
+			s_vbk$lostcat(l_rst, l_body, l_len, l_lossy || l_rctx.nlost);
+			}
 		else if ( (l_type == VBK$K_RT_CATALOG) || (l_type == VBK$K_RT_END) )
 			{
 			l_end	= 1;
@@ -1455,9 +1493,19 @@ unsigned	l_nbases = 0;
 	if ( l_rst->active )
 		s_vbk$close(l_rst, 0);
 
-	/* Files whose records went with lost blocks are nowhere in the output: named here */
-	if ( !l_quit && (l_lossy || l_rctx.nlost || !l_end) )
-		s_vbk$lost(l_rst, &l_rctx, a_spec);
+	/*
+	**  Every file of the catalog not met in the stream is named: after a
+	**  loss it went with the blocks (FILLOST); without one the stream
+	**  never had it (NOTINSTREAM) - a record not understood, a saveset
+	**  made wrong.  Nothing is ever left out without a word.
+	*/
+	if ( !l_quit && l_rctx.isstream )
+		{
+		if ( l_shole || (!l_scat && (l_lossy || l_rctx.nlost || !l_end)) )
+			$VBKMSG(VBACKUP$_UNNAMED, a_spec, l_scat ? "its catalog is damaged" : "it has no catalog");
+		}
+	else if ( !l_quit )
+		s_vbk$lost(l_rst, &l_rctx, a_spec, l_lossy || l_rctx.nlost || !l_end);
 
 	/* Removed before the directories get their modes back: a read-only one would refuse */
 	if ( a_opts->incremental && !l_quit && (STS$K_FATAL == s_vbk$prune(l_rst, &l_names)) )

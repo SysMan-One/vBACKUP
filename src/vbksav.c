@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKSAV"
-#define	__IDENT__	"X01-21"
-#define	__REV__		"1.21.0"
+#define	__IDENT__	"X01-22"
+#define	__REV__		"1.22.0"
 
 /*
 **++
@@ -32,6 +32,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-22		 7-OCT-2026	RRL
+**		Groups of 256 KB (VBK$K_SOLIDGRP).
 **
 **	X01-21		 7-OCT-2026	RRL
 **		Stage 17: the small files of a compressed save in groups (format.md
@@ -1209,8 +1212,9 @@ int		l_fd = -1, l_status;
 	**  A small regular file of a compressed save goes into the group
 	**  (format.md 6.12); anything else closes it first, so the stream
 	**  keeps the order of the walk.  The group is closed before it would
-	**  grow past 1 MB: a member is 256 KB of data at most, its FILE record
-	**  32 KB, and its DATA headers and FEND fit in the 4 KB left over.
+	**  grow past VBK$K_SOLIDGRP (256 KB): a member alone may make more - 256
+	**  KB of data at most, its FILE record 32 KB, its DATA headers and FEND
+	**  in 4 KB - and stays far within VBK$K_MAXSOLID.
 	*/
 	l_sav->ingrp = l_sav->solid && (l_attr.ftype == VBK$K_FT_REG) && (l_attr.size <= VBK$K_SOLIDFILE) && (l_sav->rec.len <= 32768);
 

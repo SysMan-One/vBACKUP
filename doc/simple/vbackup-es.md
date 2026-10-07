@@ -468,15 +468,17 @@ empaquetarlo y lo compara con tu archivo. Solo se guarda empaquetado el
 trozo que vuelve igual.
 
 **Muchos archivos pequeños.** Cuando VBACKUP empaqueta, junta los archivos
-pequeños (cartas, notas, programas pequeños) en paquetes de hasta 1 MB y
+pequeños (cartas, notas, programas pequeños) en paquetes de hasta 256 KB y
 empaqueta cada paquete de una vez. Los archivos parecidos comparten lo que
 tienen en común, y la caja queda mucho más pequeña: una carpeta de 22 444
-archivos pequeños con `/LEVEL=9` ocupaba 53 MB, y ahora ocupa 32 MB. Esto funciona solo:
+archivos pequeños con `/LEVEL=9` ocupaba 53 MB, y ahora ocupa 33 MB. Esto funciona solo:
 no tienes que escribir nada.
 
 **Lo que cuesta.** Si la memoria USB se rompe mucho y un trozo de la caja no
-se puede reparar, se pierde todo el paquete: no un archivo, sino hasta unas
-decenas de archivos pequeños. VBACKUP te dice el nombre de cada uno
+se puede reparar, se pierde más de un archivo: los archivos del paquete desde
+el sitio roto en adelante, de unos pocos a un par de decenas de archivos
+pequeños. Los archivos del paquete antes del sitio roto vuelven igual,
+enteros y comprobados. VBACKUP te dice el nombre de cada uno que se pierde
 (`FILLOST`). Un trozo roto se sigue reparando solo, como siempre. Si la caja
 tiene que aguantar un disco muy roto, añade `/PARITY=2` (mira la sección 1),
 o apaga los paquetes con `/NOSOLID`:
@@ -1006,10 +1008,11 @@ La próxima vez haz dos cajas en dos memorias USB distintas.
 vbackup /mnt/usb/old.bck /LIST
 ```
 
-**¿Muchos `FILLOST` a la vez?** Un solo sitio roto, y una lista larga de
+**¿Muchos `FILLOST` a la vez?** Un solo sitio roto, y una lista de
 archivos perdidos: la caja se hizo más pequeña (sección 8), y en ese sitio
-había un paquete entero de archivos pequeños. Cada archivo perdido tiene su
-nombre; todos los demás están bien. Sácalos de otra caja. La próxima vez,
+había un paquete de archivos pequeños. Los archivos del paquete después del
+sitio roto se perdieron; los de antes volvieron. Cada archivo perdido tiene
+su nombre; todos los demás están bien. Sácalos de otra caja. La próxima vez,
 para una caja importante, añade `/PARITY=2`, o `/NOSOLID` para que los
 archivos pequeños no se junten en paquetes.
 
@@ -1029,6 +1032,26 @@ Pueden faltar archivos, pero VBACKUP no puede nombrarlos todos.
 ```
 vbackup /mnt/usb/old.bck /LIST
 ```
+
+### NOTINSTREAM
+
+**Qué ves:**
+
+```
+%VBACKUP-E-NOTINSTREAM, File: /home/ivan/restored/ivan/notes.txt - not restored: the catalog has it, the record stream does not, though no block was lost
+```
+
+**Qué pasó:** el «índice» de la caja nombra este archivo, pero el archivo no
+está en la caja, y nada en la caja está roto. Esto no debería pasar nunca.
+Quizá la caja la hizo un VBACKUP más nuevo y el tuyo no entiende un trozo de
+ella; quizá alguien cambió la caja.
+
+**Qué hacer:** prueba un VBACKUP más nuevo. Saca el archivo de otra caja. Y
+avisa a quienes hacen VBACKUP, y dales la caja.
+
+`/COMPARE` y `/VERIFY` cuentan ese archivo como una diferencia
+(`COMPARERR … not compared`), así que nunca dicen «todo está bien» cuando
+falta un archivo.
 
 ### MISSVOL
 
