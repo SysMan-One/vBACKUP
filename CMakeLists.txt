@@ -14,6 +14,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 6-OCT-2026	RRL	X-20 : Stage 16: the optimal parse of LZMA; test memcheck
+#						(valgrind) with VBACKUP$M_MEMCHECK=ON.
+#
 #		 6-OCT-2026	RRL	X-19 : Stage 15: lib/vbkdfl.c and lib/vbklzm.c, codecs 2 and 3, in
 #						every image that reads a saveset.
 #

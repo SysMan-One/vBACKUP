@@ -461,7 +461,7 @@ vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6
 
 `/LEVEL=1` is the fast one (the same as `/DATA_FORMAT=COMPRESSED`);
 `/LEVEL=5` is like zip; `/LEVEL=9` is like 7-Zip. Letters shrink about
-2 times at 1, almost 4 at 5, and 4.5 at 9.
+2 times at 1, almost 4 at 5, and almost 5 at 9.
 
 **Is it safe?** Yes. VBACKUP unpacks every piece right after it packs it
 and compares it with your file. Only a piece that comes back the same is

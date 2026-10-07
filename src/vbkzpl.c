@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKZPL"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-20"
+#define	__REV__		"1.20.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-20		 6-OCT-2026	RRL
+**		More slots - 16 a thread - their buffers by need, and a budget of
+**		octets in the ring as before (2n + 2 records of 1 MB): a small file takes
+**		three or four slots, and with 2n + 2 of them the slow levels compressed
+**		few records at once.
+**
 **	X01-19		 6-OCT-2026	RRL
 **		The codec of /LEVEL (VBK$DATA_PACK), every record checked by the worker
 **		before it is written; ZCHECK when one did not come back.
@@ -59,6 +65,7 @@
 #include	"vbkdef.h"
 
 #define	VBK$K_ZPMAXTHR	8			/* Workers at most				*/
+#define	VBK$K_ZPMAXSLOT	128			/* Slots of the ring at most			*/
 
 enum	{					/* A slot					*/
 	VBK$K_ZS_FREE = 0,
@@ -79,7 +86,7 @@ typedef struct vbk_zslot_t
 	uint32_t	fileno;
 	uint64_t	off;
 	uint8_t *	buf;			/* The octets, or the record body		*/
-	uint32_t	len, bufsz;
+	uint32_t	len, bufsz, zbufsz, checksz;
 	uint8_t *	zbuf;			/* DATAZ body: header and packed octets		*/
 	uint8_t *	check;			/* The record decompressed again, the check	*/
 	uint32_t	zlen;			/* 0 - stored as DATA				*/
@@ -102,6 +109,7 @@ typedef struct vbk_zp_t
 	pthread_t	thr [VBK$K_ZPMAXTHR];
 	uint64_t	nin, nout;
 	int		level;			/* /LEVEL					*/
+	uint64_t	inuse, budget;		/* Octets of data in the ring, at most		*/
 } VBK$ZP;
 
 
@@ -139,7 +147,7 @@ int		l_rc;
 
 		l_s->zlen	= 0;
 		l_s->zcheck	= 0;
-		l_rc		= vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, VBK$LZ4_BOUND(VBK$K_MAXDATA),
+		l_rc		= vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, l_s->zbufsz - VBK$K_DATAZHDR,
 						&l_zlen, &l_codec, l_s->check);
 
 		l_s->zcheck	= (l_rc == STS$K_ERROR);
@@ -230,7 +238,7 @@ static	int	s_vbk$zdrain	(
 			)
 {
 VBK$ZSLOT *	l_s;
-int		l_status = STS$K_SUCCESS;
+int		l_status = STS$K_SUCCESS, l_written = 0;
 
 	pthread_mutex_lock(&a_zp->mtx);
 
@@ -240,7 +248,8 @@ int		l_status = STS$K_SUCCESS;
 
 		if ( l_s->state != VBK$K_ZS_DONE )
 			{
-			if ( !a_wait || ((a_wait == 1) && (a_zp->count < a_zp->nslot)) )
+			/* 3: until one more is written - room for the octets of the next one */
+			if ( !a_wait || ((a_wait == 1) && (a_zp->count < a_zp->nslot)) || ((a_wait == 3) && l_written) )
 				break;
 
 			pthread_cond_wait(&a_zp->cvdone, &a_zp->mtx);
@@ -251,6 +260,10 @@ int		l_status = STS$K_SUCCESS;
 		l_status = s_vbk$zwrite(a_zp, l_s);
 		pthread_mutex_lock(&a_zp->mtx);
 
+		if ( l_s->kind == VBK$K_ZK_DATA )
+			a_zp->inuse -= l_s->len;
+
+		l_written	= 1;
 		l_s->state	= VBK$K_ZS_FREE;
 		a_zp->head	= (a_zp->head + 1) % a_zp->nslot;
 		a_zp->count--;
@@ -268,9 +281,30 @@ int		l_status = STS$K_SUCCESS;
 /*
 **  The next free slot at the tail - written out what must be first
 */
+static	int	s_vbk$zgrow	(
+		uint8_t **	a_buf,
+		uint32_t *	a_size,
+		uint32_t	a_need
+			)
+{
+uint8_t *	l_p;
+
+	if ( a_need <= *a_size )
+		return	1;
+
+	if ( !(l_p = realloc(*a_buf, a_need)) )
+		return	0;
+
+	*a_buf	= l_p;
+	*a_size	= a_need;
+
+	return	1;
+}
+
 static	VBK$ZSLOT *	s_vbk$ztail	(
 		VBK$ZP *	a_zp,
-		uint32_t	a_need
+		uint32_t	a_need,
+		int		a_data
 			)
 {
 VBK$ZSLOT *	l_s;
@@ -278,22 +312,22 @@ VBK$ZSLOT *	l_s;
 	if ( !(1 & s_vbk$zdrain(a_zp, 0)) || !(1 & s_vbk$zdrain(a_zp, 1)) )
 		return	NULL;
 
+	/* The octets of data in the ring within the budget: what is at the head written first */
+	while ( a_data && a_zp->count && ((a_zp->inuse + a_need) > a_zp->budget) )
+		if ( !(1 & s_vbk$zdrain(a_zp, 3)) )
+			return	NULL;
+
 	l_s	= &a_zp->slot [(a_zp->head + a_zp->count) % a_zp->nslot];
 
-	if ( a_need > l_s->bufsz )
+	/* The buffers of a slot by what it is to hold: a small file takes little */
+	if ( !s_vbk$zgrow(&l_s->buf, &l_s->bufsz, a_need ? a_need : 1)
+		|| (a_data && (!s_vbk$zgrow(&l_s->zbuf, &l_s->zbufsz, VBK$K_DATAZHDR + VBK$LZ4_BOUND(a_need))
+			|| !s_vbk$zgrow(&l_s->check, &l_s->checksz, a_need ? a_need : 1))) )
 		{
-		uint8_t *	l_p = realloc(l_s->buf, a_need);
+		a_zp->failed = 1;
+		errno	= ENOMEM;
 
-		if ( !l_p )
-			{
-			a_zp->failed = 1;
-			errno	= ENOMEM;
-
-			return	NULL;
-			}
-
-		l_s->buf	= l_p;
-		l_s->bufsz	= a_need;
+		return	NULL;
 		}
 
 	return	l_s;
@@ -359,7 +393,13 @@ long		l_n = sysconf(_SC_NPROCESSORS_ONLN);
 
 	l_zp->wctx	= a_wctx;
 	l_zp->level	= a_level;
-	l_zp->nslot	= 2 * (uint32_t) l_n + 2;
+	/*
+	**  Many slots - a small file takes three or four: its FILE, its data,
+	**  its FEND, its catalog entry - and their buffers grown by need; the
+	**  octets of data in the ring kept within 2n + 2 records of 1 MB
+	*/
+	l_zp->nslot	= ((16 * (uint32_t) l_n) < VBK$K_ZPMAXSLOT) ? (16 * (uint32_t) l_n) : VBK$K_ZPMAXSLOT;
+	l_zp->budget	= (2 * (uint64_t) l_n + 2) * VBK$K_MAXDATA;
 
 	if ( !(l_zp->slot = calloc(l_zp->nslot, sizeof(VBK$ZSLOT))) )
 		{
@@ -367,24 +407,6 @@ long		l_n = sysconf(_SC_NPROCESSORS_ONLN);
 
 		return	NULL;
 		}
-
-	for ( uint32_t i = 0; i < l_zp->nslot; i++ )
-		if ( !(l_zp->slot [i].buf = malloc(VBK$K_MAXDATA)) || !(l_zp->slot [i].zbuf = malloc(VBK$K_DATAZHDR + VBK$LZ4_BOUND(VBK$K_MAXDATA)))
-			|| !(l_zp->slot [i].check = malloc(VBK$K_MAXDATA)) )
-			{
-			for ( uint32_t j = 0; j <= i; j++ )
-				{
-				free(l_zp->slot [j].buf);
-				free(l_zp->slot [j].zbuf);
-				free(l_zp->slot [j].check);
-				}
-
-			free(l_zp->slot);
-			free(l_zp);
-
-			return	NULL;
-			}
-		else	l_zp->slot [i].bufsz = VBK$K_MAXDATA;
 
 	pthread_mutex_init(&l_zp->mtx, NULL);
 	pthread_cond_init(&l_zp->cvwork, NULL);
@@ -418,8 +440,12 @@ int	vbk$zp_data	(
 {
 VBK$ZSLOT *	l_s;
 
-	if ( !(l_s = s_vbk$ztail(a_zp, a_n)) )
+	if ( !(l_s = s_vbk$ztail(a_zp, a_n, 1)) )
 		return	STS$K_ERROR;
+
+	pthread_mutex_lock(&a_zp->mtx);
+	a_zp->inuse	+= a_n;
+	pthread_mutex_unlock(&a_zp->mtx);
 
 	l_s->kind	= VBK$K_ZK_DATA;
 	l_s->fileno	= a_fileno;
@@ -447,7 +473,7 @@ int	vbk$zp_record	(
 {
 VBK$ZSLOT *	l_s;
 
-	if ( !(l_s = s_vbk$ztail(a_zp, a_len ? a_len : 1)) )
+	if ( !(l_s = s_vbk$ztail(a_zp, a_len ? a_len : 1, 0)) )
 		return	STS$K_ERROR;
 
 	l_s->kind	= VBK$K_ZK_RECORD;
@@ -473,7 +499,7 @@ int	vbk$zp_call	(
 {
 VBK$ZSLOT *	l_s;
 
-	if ( !(l_s = s_vbk$ztail(a_zp, 1)) )
+	if ( !(l_s = s_vbk$ztail(a_zp, 1, 0)) )
 		return	STS$K_ERROR;
 
 	l_s->kind	= VBK$K_ZK_CALL;

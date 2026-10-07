@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKDFL"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-20"
+#define	__REV__		"1.20.0"
 
 /*
 **++
@@ -38,6 +38,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-20		 6-OCT-2026	RRL
+**		The hash table by the length of the record: a record of a few KB no
+**		longer sets up 128 KB of it.
+**
 **	X01-19		 6-OCT-2026	RRL
 **		Initial version.
 **
@@ -52,7 +56,7 @@
 
 #define	VBK$K_DFLWSIZE	32768			/* The window				*/
 #define	VBK$K_DFLWMASK	(VBK$K_DFLWSIZE - 1)
-#define	VBK$K_DFLHSIZE	32768			/* Entries of the hash table		*/
+#define	VBK$K_DFLHBITS	15			/* Bits of the hash table at most	*/
 #define	VBK$K_DFLMIN	3			/* Shortest match			*/
 #define	VBK$K_DFLMAX	258			/* Longest match			*/
 #define	VBK$K_DFLBLOCK	16384			/* Symbols of a block			*/
@@ -545,19 +549,21 @@ const uint16_t *l_uc, *l_udc;
 **  The hash of the three octets at <a_p>
 */
 static	uint32_t	s_vbk$hash	(
-	const	uint8_t *	a_p
+	const	uint8_t *	a_p,
+		uint32_t	a_bits
 			)
 {
-	return	(((uint32_t) a_p [0] << 10) ^ ((uint32_t) a_p [1] << 5) ^ a_p [2]) & (VBK$K_DFLHSIZE - 1);
+	return	(((uint32_t) a_p [0] | ((uint32_t) a_p [1] << 8) | ((uint32_t) a_p [2] << 16)) * 2654435761U) >> (32 - a_bits);
 }
 
 typedef struct vbk_dflmf_t
 {
 	const uint8_t *	src;
 	uint32_t	len;
-	int32_t *	head;			/* VBK$K_DFLHSIZE: the last position of a hash	*/
+	int32_t *	head;			/* 1 << HBITS: the last position of a hash	*/
 	int32_t *	prev;			/* VBK$K_DFLWSIZE: the one before, in the window */
 	uint32_t	chain, nice;
+	uint32_t	hbits;			/* Of the hash table: by the length of the input */
 } VBK$DFLMF;
 
 static	void	s_vbk$insert	(
@@ -570,7 +576,7 @@ uint32_t	l_h;
 	if ( (a_i + 2) >= a_m->len )
 		return;
 
-	l_h	= s_vbk$hash(a_m->src + a_i);
+	l_h	= s_vbk$hash(a_m->src + a_i, a_m->hbits);
 	a_m->prev [a_i & VBK$K_DFLWMASK] = a_m->head [l_h];
 	a_m->head [l_h] = (int32_t) a_i;
 }
@@ -596,7 +602,7 @@ int32_t		l_c;
 	if ( l_max < VBK$K_DFLMIN )
 		return	0;
 
-	l_c	= a_m->head [s_vbk$hash(l_s + a_i)];
+	l_c	= a_m->head [s_vbk$hash(l_s + a_i, a_m->hbits)];
 
 	while ( (l_c >= 0) && ((a_i - (uint32_t) l_c) <= VBK$K_DFLWSIZE) && l_chain-- )
 		{
@@ -672,13 +678,17 @@ void *		l_mem;
 	l_m.nice  = s_effort [a_effort - 1].nice;
 	l_lazy	  = s_effort [a_effort - 1].lazy;
 
-	if ( !(l_mem = malloc((VBK$K_DFLHSIZE + VBK$K_DFLWSIZE) * sizeof(int32_t) + (VBK$K_DFLBLOCK + 1) * sizeof(uint32_t))) )
+	/* The hash table by the length: a record of a few KB gets a small one - setting it up costs as much as the record */
+	for ( l_m.hbits = 8; (l_m.hbits < VBK$K_DFLHBITS) && ((1U << l_m.hbits) < (2 * a_len)); l_m.hbits++ )
+		;
+
+	if ( !(l_mem = malloc(((1U << l_m.hbits) + VBK$K_DFLWSIZE) * sizeof(int32_t) + (VBK$K_DFLBLOCK + 1) * sizeof(uint32_t))) )
 		return	STS$K_FATAL;
 
 	l_m.head = (int32_t *) l_mem;
-	l_m.prev = l_m.head + VBK$K_DFLHSIZE;
+	l_m.prev = l_m.head + (1U << l_m.hbits);
 	l_tok	 = (uint32_t *) (l_m.prev + VBK$K_DFLWSIZE);
-	memset(l_m.head, 0xFF, VBK$K_DFLHSIZE * sizeof(int32_t));
+	memset(l_m.head, 0xFF, (1U << l_m.hbits) * sizeof(int32_t));
 
 	/* A block is closed when it is full; <l_beg> is the first octet it covers */
 #define	$DFL_EMIT(t, adv)	do { l_tok [l_ntok++] = (t); if ( l_ntok == VBK$K_DFLBLOCK ) { s_vbk$block(&l_o, a_src, l_beg, (adv), l_tok, l_ntok, 0); \

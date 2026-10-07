@@ -523,11 +523,16 @@ distance(len): slot = posSlot[min(len-2, 3)][6 bits]; slot < 4: slot;
   else base + (direct bits (footer - 4) << 4) + reverse align (4 bits)
 ```
 
-VBACKUP's writer: hash chains of three bytes and the last position of
-every two; the "fast" choice of the reference encoder - a repeated
-distance when it is as good, the longest match unless it is short and
-far, a short rep, a literal; a match put off when the next byte has a
-better one; deeper chains from /LEVEL=6 to 9.
+VBACKUP's writer: at /LEVEL=6 and 7 hash chains of three bytes and the
+last position of every two, and the "fast" choice of the reference
+encoder - a repeated distance when it is as good, the longest match
+unless it is short and far, a short rep, a literal; a match put off when
+the next byte has a better one.  At /LEVEL=8 and 9 the optimal parse:
+binary trees (the BT match finder of the LZMA SDK) give every match of
+every position, and the cheapest way over a window of up to 2048 bytes -
+by the prices of the model, in 1/16 of a bit - is chosen among literals,
+short reps, repeated matches and every length of every match.  The
+decoder sees no difference: the stream is the same LZMA1.
 
 ### 6.8 A device, block by block (/PHYSICAL)
 
