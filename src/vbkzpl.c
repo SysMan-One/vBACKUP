@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKZPL"
-#define	__IDENT__	"X01-20"
-#define	__REV__		"1.20.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -40,6 +40,11 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-21		 7-OCT-2026	RRL
+**		VBK$ZP_SOLID: the records of a group of small files packed by a worker
+**		as one, written by the routine of the save in its turn - a SOLID record,
+**		or the records as they are when they do not shrink.
+**
 **	X01-20		 6-OCT-2026	RRL
 **		More slots - 16 a thread - their buffers by need, and a budget of
 **		octets in the ring as before (2n + 2 records of 1 MB): a small file takes
@@ -77,7 +82,8 @@ enum	{					/* A slot					*/
 enum	{
 	VBK$K_ZK_DATA = 0,
 	VBK$K_ZK_RECORD,
-	VBK$K_ZK_CALL
+	VBK$K_ZK_CALL,
+	VBK$K_ZK_SOLID				/* The records of a group, packed as one	*/
 	};
 
 typedef struct vbk_zslot_t
@@ -91,6 +97,8 @@ typedef struct vbk_zslot_t
 	uint8_t *	check;			/* The record decompressed again, the check	*/
 	uint32_t	zlen;			/* 0 - stored as DATA				*/
 	int		zcheck;			/* It did not come back the same: ZCHECK	*/
+	uint32_t	codec;			/* SOLID: the codec it was packed by		*/
+	void		(*sfn) (void *a_arg, const uint8_t *a_z, uint32_t a_zlen, uint32_t a_codec);
 	uint16_t	type;			/* RECORD					*/
 	VBK$LOC *	loc;			/* RECORD: where it lands, NULL - not wanted	*/
 	void		(*fn) (void *a_arg);	/* CALL						*/
@@ -147,6 +155,21 @@ int		l_rc;
 
 		l_s->zlen	= 0;
 		l_s->zcheck	= 0;
+
+		/* A group: packed whole, the SOLID made by the save when it is written */
+		if ( l_s->kind == VBK$K_ZK_SOLID )
+			{
+			l_rc	= vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf, l_s->zbufsz, &l_zlen, &l_codec, l_s->check);
+			l_s->zcheck = (l_rc == STS$K_ERROR);
+			l_s->zlen   = (l_rc == STS$K_SUCCESS) ? l_zlen : 0;
+			l_s->codec  = l_codec;
+
+			pthread_mutex_lock(&l_zp->mtx);
+			l_s->state	= VBK$K_ZS_DONE;
+			pthread_cond_broadcast(&l_zp->cvdone);
+			continue;
+			}
+
 		l_rc		= vbk$data_pack(l_zp->level, l_s->buf, l_s->len, l_s->zbuf + VBK$K_DATAZHDR, l_s->zbufsz - VBK$K_DATAZHDR,
 						&l_zlen, &l_codec, l_s->check);
 
@@ -217,6 +240,15 @@ int	l_status = STS$K_SUCCESS;
 			l_status = vbk$wrt_record(a_zp->wctx, a_s->type, a_s->buf, a_s->len, a_s->loc);
 			break;
 
+		case	VBK$K_ZK_SOLID:
+			if ( a_s->zcheck )
+				$VBKMSG(VBACKUP$_ZCHECK, 0);
+
+			a_zp->nin  += a_s->len;
+			a_zp->nout += a_s->zlen ? (VBK$K_SOLIDHDR + a_s->zlen) : a_s->len;
+			a_s->sfn(a_s->arg, a_s->zlen ? a_s->zbuf : NULL, a_s->zlen, a_s->codec);
+			break;
+
 		default:
 			a_s->fn(a_s->arg);
 		}
@@ -260,7 +292,7 @@ int		l_status = STS$K_SUCCESS, l_written = 0;
 		l_status = s_vbk$zwrite(a_zp, l_s);
 		pthread_mutex_lock(&a_zp->mtx);
 
-		if ( l_s->kind == VBK$K_ZK_DATA )
+		if ( (l_s->kind == VBK$K_ZK_DATA) || (l_s->kind == VBK$K_ZK_SOLID) )
 			a_zp->inuse -= l_s->len;
 
 		l_written	= 1;
@@ -483,6 +515,40 @@ VBK$ZSLOT *	l_s;
 	memcpy(l_s->buf, a_body, a_len);
 
 	s_vbk$zpush(a_zp, l_s, VBK$K_ZS_DONE);
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  The records of a group of small files, to be packed by a worker as one;
+**  <a_fn> writes them in their turn - a SOLID of the packed octets, or the
+**  records as they are (<a_z> NULL) - and what follows them
+*/
+int	vbk$zp_solid	(
+	struct	vbk_zp_t *	a_zp,
+	const	uint8_t *	a_raw,
+		uint32_t	a_len,
+		void		(*a_fn) (void *a_arg, const uint8_t *a_z, uint32_t a_zlen, uint32_t a_codec),
+		void *		a_arg
+			)
+{
+VBK$ZSLOT *	l_s;
+
+	if ( !(l_s = s_vbk$ztail(a_zp, a_len, 1)) )
+		return	STS$K_ERROR;
+
+	pthread_mutex_lock(&a_zp->mtx);
+	a_zp->inuse	+= a_len;
+	pthread_mutex_unlock(&a_zp->mtx);
+
+	l_s->kind	= VBK$K_ZK_SOLID;
+	l_s->len	= a_len;
+	l_s->sfn	= a_fn;
+	l_s->arg	= a_arg;
+	memcpy(l_s->buf, a_raw, a_len);
+
+	s_vbk$zpush(a_zp, l_s, VBK$K_ZS_READY);
 
 	return	STS$K_SUCCESS;
 }

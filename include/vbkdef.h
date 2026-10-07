@@ -6,11 +6,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-19"
+#define	__IDENT__	"X01-21"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.19.0"
+#define	__REV__		"1.21.0"
 #endif
 
 /*
@@ -30,6 +30,9 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		SOLID of the options.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		VBK$OPTS: ZLEVEL (/LEVEL); ZCHECK; VBK$ZP_START takes the level.
@@ -455,6 +458,7 @@ typedef struct vbk_opts_t
 	int		nopipe;			/* VBACKUP_PIPELINE=0: no writer thread		*/
 	int		compress;		/* /DATA_FORMAT=COMPRESSED			*/
 	int		zlevel;			/* /LEVEL: 1 LZ4, 2 .. 5 Deflate, 6 .. 9 LZMA	*/
+	int		solid;			/* /SOLID: small files in SOLID records		*/
 	int		physical;		/* /PHYSICAL: a device, block by block		*/
 	uint64_t	physsize;		/* ... its size, its sector			*/
 	uint32_t	physsector;
@@ -683,6 +687,8 @@ struct vbk_zp_t *	vbk$zp_start	(VBK$WCTX *a_wctx, int a_level);
 int	vbk$zp_data	(struct vbk_zp_t *a_zp, uint32_t a_fileno, uint64_t a_off, const uint8_t *a_data, uint32_t a_n);
 int	vbk$zp_record	(struct vbk_zp_t *a_zp, uint16_t a_type, const void *a_body, uint32_t a_len, VBK$LOC *a_loc);
 int	vbk$zp_call	(struct vbk_zp_t *a_zp, void (*a_fn) (void *), void *a_arg);
+int	vbk$zp_solid	(struct vbk_zp_t *a_zp, const uint8_t *a_raw, uint32_t a_len,
+			 void (*a_fn) (void *a_arg, const uint8_t *a_z, uint32_t a_zlen, uint32_t a_codec), void *a_arg);
 int	vbk$zp_flush	(struct vbk_zp_t *a_zp);
 void	vbk$zp_stop	(struct vbk_zp_t *a_zp, uint64_t *a_nin, uint64_t *a_nout);
 

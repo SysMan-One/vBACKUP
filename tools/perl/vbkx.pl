@@ -78,6 +78,18 @@
 #		short or left over, an unknown codec, make it a bad record,
 #		and its file is named incomplete.
 #
+#  SOLID:	a saveset of version 3 (vbackup /LEVEL or /DATA_FORMAT=COMPRESSED,
+#		unless /NOSOLID; format.md 6.12) may hold SOLID records: the
+#		FILE, DATA and FEND records of several small files compressed
+#		together, by one of the three codecs above.  One is opened
+#		and its records are taken as if they stood in the stream; in
+#		version 1 and 2 a record of its type is unknown and skipped.
+#		One that does not open (an unknown codec, a length out of
+#		bounds, a stream that is not right) or holds a record that is
+#		not FILE, DATA, FEND or does not end inside it is a gap, as
+#		lost blocks are: its files are named from the catalog ("not
+#		extracted"), or incomplete - never wrong octets.
+#
 #  ENCRYPTED:	a saveset of vbackup /ENCRYPT (format.md 6.10) is read with
 #		its passphrase: the first line of the file of -k (without its
 #		LF or CR LF; a file only its owner may read and write - else
@@ -104,12 +116,13 @@
 #
 #  DAMAGE:	every block is checked (CRC-32); one bad block in a group is
 #		rebuilt from the group's XOR block - any m of them in a saveset
-#		of version 2 made /PARITY=m (format.md 4.1), from its XOR and
+#		of version 2 or 3 made /PARITY=m (format.md 4.1), from its XOR and
 #		PARITY blocks by Reed-Solomon; after a loss the stream
 #		is picked up at the next good block (in an encrypted saveset
 #		the TAG judges a block as much as its CRC does).  A file that lost data
 #		is kept as far as it got and named: "File: <name> - is
-#		incomplete".  A file whose records were lost entirely is named
+#		incomplete".  A block lost in a SOLID takes all the files of
+#		that SOLID.  A file whose records were lost entirely is named
 #		from the catalog: "File: <name> - not extracted"; without a
 #		readable catalog that is said once ("Saveset: <saveset> - files
 #		missing from the output cannot all be named").  A
@@ -136,6 +149,14 @@
 #  CREATION DATE:  4-OCT-2026
 #
 #  MODIFICATION HISTORY:
+#
+#	X01-21		 7-OCT-2026	RRL
+#		Version 3 (format.md 3, 6.12): its blocks taken as those of
+#		version 2, its groups those of version 1 without PARITY 2 or
+#		more in the SUMMARY; the SOLID record opened by any of the
+#		three codecs, its FILE, DATA and FEND records returned as if
+#		in the stream; one that does not open, or a record in it that
+#		makes no sense, is a gap: its files named lost.
 #
 #	X01-19		 6-OCT-2026	RRL
 #		DATAZ codecs 2 (raw Deflate: Compress::Raw::Zlib, else the
@@ -192,13 +213,16 @@ use constant {
 
 	BT_DATA	=> 1, BT_XOR => 2, BT_VHDR => 3, BT_TRAILER => 4,
 	BT_EDATA => 5, BT_ETRAILER => 6,	# DATA and TRAILER of an encrypted saveset: format.md 6.10
-	BT_PARITY => 7,			# a parity row >= 1, version 2 only: format.md 4.1
+	BT_PARITY => 7,			# a parity row >= 1, version 2 and 3 only: format.md 4.1
 	MAXPAR	=> 8,			# parity blocks of a group at most
 	TAGSZ	=> 32,			# the TAG at the end of their payload area
 	KDFMIN	=> 1000,		# the fewest PBKDF2 iterations taken
 	PASSMAX	=> 1024,		# the longest passphrase
 	RT_SUMMARY => 1, RT_FILE => 2, RT_DATA => 3, RT_FEND => 4, RT_CATALOG => 5, RT_END => 6,
 	RT_DATAZ => 7,			# DATA, compressed: format.md 6.7
+	RT_SOLID => 8,			# the records of several files compressed together, version 3: format.md 6.12
+	SOLIDHDR => 12,			# codec, rawlen, count
+	MAXSOLID => 1048576 + 65536,	# the most octets its records take, decompressed
 	MAXDATA => 1048576,		# the most octets a DATA or DATAZ record holds
 	CODEC_LZ4 => 1, CODEC_DEFLATE => 2, CODEC_LZMA => 3,
 	FT_REG => 1, FT_DIR => 2, FT_SYMLINK => 3, FT_HARDLINK => 4, FT_FIFO => 7,
@@ -429,7 +453,7 @@ sub check
 {
 	my ($b, $bsize, $uuid) = @_;
 	return undef unless length($$b) == $bsize && $bsize >= HDRSZ;
-	return undef unless substr($$b, 0, 4) eq 'VBKB' && u16($b, 4) == HDRSZ && (u16($b, 6) == 1 || u16($b, 6) == 2);
+	return undef unless substr($$b, 0, 4) eq 'VBKB' && u16($b, 4) == HDRSZ && u16($b, 6) >= 1 && u16($b, 6) <= 3;
 	my %h = (
 		version	  => u16($b, 6),
 		bsize	  => u32($b, 8),
@@ -446,9 +470,9 @@ sub check
 	);
 	my $psize = $bsize - HDRSZ;
 	return undef if $h{bsize} != $bsize || (defined($uuid) && $h{uuid} ne $uuid);
-	return undef if $h{typ} < BT_DATA || $h{typ} > BT_PARITY || ($h{typ} == BT_PARITY && $h{version} != 2);
-	# The parity blocks of version 2 carry the header parity in RECOFF and PAYLEN (4.1)
-	if ($h{version} == 1 || ($h{typ} != BT_XOR && $h{typ} != BT_PARITY))
+	return undef if $h{typ} < BT_DATA || $h{typ} > BT_PARITY || ($h{typ} == BT_PARITY && $h{version} < 2);
+	# The parity blocks of version 2 and 3 carry the header parity in RECOFF and PAYLEN (4.1)
+	if ($h{version} < 2 || ($h{typ} != BT_XOR && $h{typ} != BT_PARITY))
 	{
 		return undef if $h{paylen} > $psize;
 		return undef if $h{recoff} != NONE && $h{recoff} >= $psize;
@@ -532,7 +556,7 @@ my %R = (
 	spec	=> '',
 	bsize	=> 0,
 	grpsz	=> 0,
-	parity	=> 1,		# parity blocks of a group: 1 (version 1), 2 .. 8 (version 2, 4.1)
+	parity	=> 1,		# parity blocks of a group: 1 (version 1; 3 without PARITY 2 or more), 2 .. 8 (version 2 and 3, 4.1)
 	version	=> 1,		# of every block: that of the VHDR of volume 1
 	uuid	=> '',
 	vols	=> [],		# [ { fh, firstblk, nblk } or undef - missing ], index volno - 1
@@ -566,6 +590,11 @@ my %R = (
 	payblk	=> 0,
 	payvol	=> 0,
 	resync	=> 0,		# the record returned follows a loss
+
+	sol	=> undef,	# the records of the SOLID open (6.12), decompressed
+	solpos	=> 0,		# ... the next one in it
+	solblk	=> 0,		# ... where its header is
+	solvol	=> 0,
 );
 
 #
@@ -712,8 +741,8 @@ sub guess
 				if ($x && $x->{typ} == BT_XOR && ($x->{gindex} & 0xFF) == $p - 1 && ($x->{gindex} >> 8) == 0)
 				{
 					$R{grpsz} = $x->{gindex} & 0xFF;
-					# Version 2: the parity blocks are the XOR block and the PARITY blocks after it
-					if ($R{version} == 2 && !$R{gotpar})
+					# Version 2 and 3: the parity blocks are the XOR block and the PARITY blocks after it
+					if ($R{version} >= 2 && !$R{gotpar})
 					{
 						my $m = 1;
 						while ($m < MAXPAR)
@@ -765,15 +794,16 @@ sub open_saveset
 		close($fh);
 		return "File: $spec - is not a saveset";
 	}
-	# Version 2: as many parity blocks a group as the SUMMARY says (4.1); version 1: the XOR block
-	if ($R{version} == 1)
+	# Version 2: as many parity blocks a group as the SUMMARY says (4.1); version 1: the XOR block;
+	# version 3: either - the XOR block alone without PARITY 2 or more (section 3)
+	if ($R{version} == 1 || ($R{version} == 3 && $R{parity} < 2))
 	{
 		$R{parity} = 1;
 	}
 	elsif ($R{parity} < 2 || $R{parity} > MAXPAR || !$R{grpsz})
 	{
 		close($fh);
-		return "File: $spec - is not a saveset: version 2 without a parity count it can use";
+		return "File: $spec - is not a saveset: version $R{version} without a parity count it can use";
 	}
 	push @{ $R{vols} }, { fh => $fh, firstblk => 0, nblk => blocks_in($fh, $R{bsize}) };
 
@@ -1240,14 +1270,69 @@ sub next_pay
 }
 
 #
+#  A SOLID record (6.12) opened: codec, rawlen, count, the compressed
+#  octets; its records, decompressed, kept to be returned one by one.
+#  0 - it does not open: an unknown codec, rawlen out of bounds, a stream
+#  that is not right.
+#
+sub sol_open
+{
+	my ($body) = @_;
+	$R{sol} = undef;
+	return 0 if length($body) < SOLIDHDR;
+	my ($codec, $raw) = (u32(\$body, 0), u32(\$body, 4));
+	return 0 if $raw < 8 || $raw > MAXSOLID;
+	my $d = unpack_data($codec, substr($body, SOLIDHDR), $raw);
+	return 0 unless defined($d);
+	@R{qw(sol solpos)} = ($d, 0);
+	return 1;
+}
+
+#
+#  The next record of the open SOLID: FILE, DATA or FEND only, wholly in
+#  it; () - anything else, and the rest of it is dropped.  The last ends
+#  exactly at its end: then the SOLID is closed.
+#
+sub sol_next
+{
+	my $left = length($R{sol}) - $R{solpos};
+	my ($typ, $len) = (u16(\$R{sol}, $R{solpos}), u32(\$R{sol}, $R{solpos} + 4));
+	if ($left < 8 || ($typ != RT_FILE && $typ != RT_DATA && $typ != RT_FEND) || $len > $left - 8)
+	{
+		$R{sol} = undef;
+		return ();
+	}
+	my $body = substr($R{sol}, $R{solpos} + 8, $len);
+	$R{solpos} += 8 + $len;
+	$R{sol} = undef if $R{solpos} >= length($R{sol});
+	return ($typ, $body);
+}
+
+#
 #  The next record of the stream (section 5): (type, body), or () - the
-#  end.  $R{resync}: blocks were lost before it.
+#  end.  $R{resync}: blocks were lost before it.  Version 3: the records
+#  of a SOLID are returned as if they stood in the stream; a SOLID that
+#  does not open, or a record in it that makes no sense, is a gap - the
+#  blocks are all there, only what it held is lost (6.12).
 #
 sub next_record
 {
 	my $resync = 0;
 	for (;;)
 	{
+		if (defined($R{sol}))
+		{
+			my ($typ, $body) = sol_next();
+			if (defined($typ))
+			{
+				$R{resync} = $resync;
+				return ($typ, $body);
+			}
+			msg('Block: %d, Volume: %d - a SOLID record that makes no sense: the rest of it is lost', $R{solblk}, $R{solvol});
+			$bad = 1;
+			$resync = 1;
+		}
+
 		while (!defined($R{pay}) || $R{payoff} >= length($R{pay}))
 		{
 			my $st = next_pay();
@@ -1274,6 +1359,7 @@ sub next_record
 			$R{pay} = undef;
 			next;
 		}
+		my ($hblk, $hvol) = @R{qw(payblk payvol)};
 		$R{payoff} += 8;
 
 		my ($body, $st) = ('', 0);
@@ -1302,6 +1388,16 @@ sub next_record
 			$bad = 1;
 			$R{resync} = 1;
 			return ();
+		}
+		if ($typ == RT_SOLID && $R{version} == 3)
+		{
+			@R{qw(solblk solvol)} = ($hblk, $hvol);
+			next if sol_open($body);
+			# It does not open: its files are named lost from the catalog
+			msg('Block: %d, Volume: %d - a SOLID record that does not open: the files in it are lost', $hblk, $hvol);
+			$bad = 1;
+			$resync = 1;
+			next;
 		}
 		$R{resync} = $resync;
 		return ($typ, $body);
@@ -1945,6 +2041,15 @@ sub lzma_decompress
 	return undef;
 }
 
+# unpack_data: exactly $raw octets out of $src by the codec of a DATAZ or SOLID record, or undef
+sub unpack_data
+{
+	my ($codec, $src, $raw) = @_;
+	return ($codec == CODEC_LZ4) ? lz4_decompress($src, $raw)
+	     : ($codec == CODEC_DEFLATE) ? inflate($src, $raw)
+	     : ($codec == CODEC_LZMA) ? lzma_decompress($src, $raw) : undef;
+}
+
 # data_view: the file, the offset and the octets of a DATA or DATAZ record; () - a bad record
 sub data_view
 {
@@ -1957,9 +2062,7 @@ sub data_view
 	return () if length($body) < 20 || u32(\$body, 16) > MAXDATA;
 	my ($codec, $raw) = (u32(\$body, 4), u32(\$body, 16));
 	# An unknown codec: a bad record, its file named incomplete - never wrong octets
-	my $d = ($codec == CODEC_LZ4) ? lz4_decompress(substr($body, 20), $raw)
-	      : ($codec == CODEC_DEFLATE) ? inflate(substr($body, 20), $raw)
-	      : ($codec == CODEC_LZMA) ? lzma_decompress(substr($body, 20), $raw) : undef;
+	my $d = unpack_data($codec, substr($body, 20), $raw);
 	return () unless defined($d);
 	return (u32(\$body, 0), u64(\$body, 8), $d);
 }
@@ -2361,7 +2464,7 @@ sub selftest
 
 sub usage
 {
-	print STDERR "vbkx-pl X01-19 - the extractor of last resort for VBACKUP savesets\n\n",
+	print STDERR "vbkx-pl X01-21 - the extractor of last resort for VBACKUP savesets\n\n",
 		"  perl vbkx.pl l saveset [-k file]           list the files (times in UTC)\n",
 		"  perl vbkx.pl x saveset [-C dir] [-k file]  extract them all\n",
 		"  perl vbkx.pl t saveset [-k file]           read it all, check the checksums\n",

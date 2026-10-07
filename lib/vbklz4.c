@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKLZ4"
-#define	__IDENT__	"X01-19"
-#define	__REV__		"1.19.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -30,6 +30,9 @@
 **  CREATION DATE:  4-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		VBK$DATA_UNPACK, exported.
 **
 **	X01-19		 6-OCT-2026	RRL
 **		VBK$DATA_PACK, VBK$DATA_CODEC: the codec of /LEVEL, the probe, and the
@@ -275,6 +278,21 @@ static	int	s_vbk$unpack	(
 
 	return	STS$K_ERROR;
 }
+
+/*
+**  The same, for the readers of a SOLID record
+*/
+int	vbk$data_unpack	(
+		uint32_t	a_codec,
+	const	uint8_t *	a_src,
+		uint32_t	a_len,
+		uint8_t *	a_dst,
+		uint32_t	a_rawlen
+			)
+{
+	return	s_vbk$unpack(a_codec, a_src, a_len, a_dst, a_rawlen);
+}
+
 
 /*
 **  The codec of a /LEVEL

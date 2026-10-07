@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKRST"
-#define	__IDENT__	"X01-17"
-#define	__REV__		"1.17.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -32,6 +32,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		/EXTRACT: a file whose place is a SOLID found in there, past the files
+**		before it.
 **
 **	X01-17		 6-OCT-2026	RRL
 **		Windows: a name Windows cannot hold is said so, not "leads out"; /REPLACE
@@ -1684,7 +1688,8 @@ int		l_fd = -1, l_tostd = !a_opts->output [0] || !strcmp(a_opts->output, "-"), l
 
 			if ( (l_attr.pathlen != strlen(a_opts->extract)) || memcmp(l_attr.path, a_opts->extract, l_attr.pathlen) )
 				{
-				if ( l_found == 2 )
+				/* No catalog, or the place is a SOLID: the files before it in there are passed */
+				if ( (l_found == 2) || l_rctx.insolid )
 					continue;
 
 				break;

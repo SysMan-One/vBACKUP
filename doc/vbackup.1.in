@@ -13,6 +13,9 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		 7-OCT-2026	RRL	X-21 : /[NO]SOLID: the small files of a compressed save
+.\"					in SOLID records, format version 3.
+.\"
 .\"		 6-OCT-2026	RRL	X-19 : /LEVEL: LZ4, Deflate, LZMA; ZCHECK.
 .\"
 .\"		 6-OCT-2026	RRL	X-18 : WINDOWS: attributes, ACL, streams, sparse files, ssh.exe; XATTRSKIP.
@@ -154,6 +157,17 @@ Deflate, 6 .. 9 LZMA (the smallest, the slowest save; a restore stays fast).
 Every record is decompressed and compared before it is written (ZCHECK
 when one does not come back the same: stored plain).
 Readers before X01-19 report levels 2 .. 9 as damaged, never wrong.
+.TP
+.B /SOLID\fR, \fP/NOSOLID
+With compression the default is /SOLID: the small files (256 KB or
+less each) are packed together, groups of up to 1 MB each compressed as
+one SOLID record, and a tree of small files gets much smaller
+(/usr/include at /LEVEL=9: 32 MB, 53 MB with /NOSOLID).  /SOLID alone does not compress; /NOSOLID writes every
+file in records of its own, as before X01-21.  Blocks lost beyond
+repair take every file of the SOLID they touch (FILLOST for each):
+give /PARITY=2 or more, or /NOSOLID, for savesets that must live
+through heavy damage.  Such a saveset is of format version 3: readers
+before X01-21 refuse it (NOTSAVESET), never misread it.
 .TP
 .B /TRANSFER
 A saveset to a saveset, block for block: the volumes into a pipe, a

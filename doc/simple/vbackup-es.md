@@ -467,6 +467,25 @@ con 1, casi 4 con 5 y casi 5 con 9.
 empaquetarlo y lo compara con tu archivo. Solo se guarda empaquetado el
 trozo que vuelve igual.
 
+**Muchos archivos pequeños.** Cuando VBACKUP empaqueta, junta los archivos
+pequeños (cartas, notas, programas pequeños) en paquetes de hasta 1 MB y
+empaqueta cada paquete de una vez. Los archivos parecidos comparten lo que
+tienen en común, y la caja queda mucho más pequeña: una carpeta de 22 444
+archivos pequeños con `/LEVEL=9` ocupaba 53 MB, y ahora ocupa 32 MB. Esto funciona solo:
+no tienes que escribir nada.
+
+**Lo que cuesta.** Si la memoria USB se rompe mucho y un trozo de la caja no
+se puede reparar, se pierde todo el paquete: no un archivo, sino hasta unas
+decenas de archivos pequeños. VBACKUP te dice el nombre de cada uno
+(`FILLOST`). Un trozo roto se sigue reparando solo, como siempre. Si la caja
+tiene que aguantar un disco muy roto, añade `/PARITY=2` (mira la sección 1),
+o apaga los paquetes con `/NOSOLID`:
+
+```
+vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6 /PARITY=2
+vbackup /home/ivan /mnt/usb/ivan.bck /LEVEL=6 /NOSOLID
+```
+
 **Cuidado:** un VBACKUP antiguo (antes de X01-04) no entiende una caja
 pequeña. Dice que los archivos están dañados:
 
@@ -476,6 +495,16 @@ pequeña. Dice que los archivos están dañados:
 ```
 
 Los archivos de la caja están bien. Solo instala el VBACKUP nuevo.
+
+**Cuidado también:** un VBACKUP anterior a X01-21 no abre en absoluto una
+caja pequeña hecha por un VBACKUP nuevo. Dice:
+
+```
+%VBACKUP-E-NOTSAVESET, File: /mnt/usb/ivan.bck - is not a saveset
+```
+
+La caja está bien: ábrela con el VBACKUP nuevo. Si tienes que dar la caja a
+alguien con un VBACKUP antiguo, hazla con `/NOSOLID`.
 
 ---
 
@@ -838,6 +867,11 @@ vbackup /home/ivan /mnt/usb/ivan.bck /REPLACE
 ls /mnt/usb
 ```
 
+**O bien:** un VBACKUP nuevo hizo la caja más pequeña (sección 8), y tú la
+abres con uno antiguo (antes de X01-21). La caja está bien: ábrela con el
+VBACKUP nuevo. Para alguien con un VBACKUP antiguo, haz la caja con
+`/NOSOLID`.
+
 ### OPENIN … errno: 2 (No such file or directory)
 
 **Qué ves:**
@@ -971,6 +1005,13 @@ La próxima vez haz dos cajas en dos memorias USB distintas.
 ```
 vbackup /mnt/usb/old.bck /LIST
 ```
+
+**¿Muchos `FILLOST` a la vez?** Un solo sitio roto, y una lista larga de
+archivos perdidos: la caja se hizo más pequeña (sección 8), y en ese sitio
+había un paquete entero de archivos pequeños. Cada archivo perdido tiene su
+nombre; todos los demás están bien. Sácalos de otra caja. La próxima vez,
+para una caja importante, añade `/PARITY=2`, o `/NOSOLID` para que los
+archivos pequeños no se junten en paquetes.
 
 ### UNNAMED
 

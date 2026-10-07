@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBKWRT"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-21"
+#define	__REV__		"1.21.0"
 
 /*
 **++
@@ -47,6 +47,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-21		 7-OCT-2026	RRL
+**		Version 3 when the caller says SOLID; the layout of the blocks that of
+**		version 1 or 2 by the parity, as before.
 **
 **	X01-14		 5-OCT-2026	RRL
 **		PARITY: m - 1 PARITY blocks after the XOR block of a group, and
@@ -858,7 +862,7 @@ int	l_status;
 	a_ctx->cap	= a_ctx->keys ? (a_ctx->psize - VBK$K_TAGSZ) : a_ctx->psize;
 	a_ctx->grpsz	= a_grpsz;
 	a_ctx->parity	= (a_grpsz && (a_ctx->parity > 1)) ? ((a_ctx->parity > VBK$K_MAXPAR) ? VBK$K_MAXPAR : a_ctx->parity) : 1;
-	a_ctx->version	= (a_ctx->parity > 1) ? VBK$K_VERSION2 : VBK$K_VERSION;
+	a_ctx->version	= a_ctx->solid ? VBK$K_VERSION3 : (a_ctx->parity > 1) ? VBK$K_VERSION2 : VBK$K_VERSION;
 	a_ctx->maxvolblk = a_volsize / a_bsize;
 
 	vbk$rs_init();

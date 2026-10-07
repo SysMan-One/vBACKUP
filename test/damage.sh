@@ -40,6 +40,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 7-OCT-2026	RRL	X-20 : SOLID (format.md 6.12): the Deflate and LZMA rounds damage
+#						savesets of SOLID records, the LZ4 ones /NOSOLID.
+#
 #		 6-OCT-2026	RRL	X-19 : /LEVEL: the compressed rounds alternate LZ4, Deflate
 #						(/LEVEL=4) and LZMA (/LEVEL=7).
 #
@@ -267,7 +270,7 @@ $VB src/tree base/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ > 
 [ $? = 0 ] && [ -e base/x.bck.003 ] || bail "the saveset could not be made: $(cat save.log)"
 
 #	The same tree compressed: every other round damages this one - garbage inside a DATAZ body is the new case
-$VB src/tree basez/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED > savez.log 2>&1
+$VB src/tree basez/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /DATA_FORMAT=COMPRESSED /NOSOLID > savez.log 2>&1
 [ $? = 0 ] && [ -e basez/x.bck.002 ] || bail "the compressed saveset could not be made: $(cat savez.log)"
 mkdir -p basezd basezl
 $VB src/tree basezd/x.bck /BLOCK_SIZE=$BSZ /GROUP_SIZE=$GRP /VOLUME_SIZE=$VOLSZ /LEVEL=4 > savezd.log 2>&1
