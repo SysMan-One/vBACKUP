@@ -29,6 +29,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 7-OCT-2026	RRL	X-21 : SOLID smaller than /NOSOLID: the small files alone, 8 KB
+#						blocks - with a big random file next to them the gain
+#						could round away to the same number of blocks.
+#
 #		 7-OCT-2026	RRL	X-20 : SOLID (format.md 6.12): version 3, the tree back, members
 #						by the catalog, /NOSOLID; a SOLID lost - its
 #						members said, the rest whole.
@@ -897,7 +901,10 @@ $VB sol/t solu.bck /SOLID > /dev/null 2>&1
 check '[ "$(od -An -tu2 -j6 -N2 soln.bck | tr -d " ")" = 1 ] && [ "$(od -An -tu2 -j6 -N2 solu.bck | tr -d " ")" = 1 ]' "/NOSOLID, or /SOLID uncompressed: not version 1"
 $VB sol/t solp.bck /LEVEL=1 /PARITY=2 > /dev/null 2>&1
 check '[ "$(od -An -tu2 -j6 -N2 solp.bck | tr -d " ")" = 3 ]' "/LEVEL=1 /PARITY=2: not version 3"
-check '[ $(stat -c %s sol6.bck) -lt $(stat -c %s soln.bck) ]' "SOLID not smaller than /NOSOLID: $(stat -c %s sol6.bck soln.bck | tr '\n' ' ')"
+#	The small files alone, small blocks: the gain is not lost in the rounding of a big random file to blocks
+$VB sol/t/a solsa.bck /LEVEL=6 /BLOCK_SIZE=8192 > /dev/null 2>&1
+$VB sol/t/a solna.bck /LEVEL=6 /BLOCK_SIZE=8192 /NOSOLID > /dev/null 2>&1
+check '[ $(stat -c %s solsa.bck) -lt $(stat -c %s solna.bck) ]' "SOLID not smaller than /NOSOLID: $(stat -c %s solsa.bck solna.bck | tr '\n' ' ')"
 for B in sol6 solp; do
 	rm -rf $B.r; $VB $B.bck $B.r > $B.r.log 2>&1
 	check '[ $? = 0 ] && same_tree sol/t $B.r/t && [ "$(stat -c %i $B.r/t/a/f2.txt)" = "$(stat -c %i $B.r/t/b/hard)" ] && [ "$(readlink $B.r/t/link)" = a/f1.txt ]' \
