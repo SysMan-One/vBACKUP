@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-23"
-#define	__REV__		"1.23.0"
+#define	__IDENT__	"X01-24"
+#define	__REV__		"1.24.0"
 
 /*
 **++
@@ -40,6 +40,10 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-24		 8-OCT-2026	RRL
+**		Stage 20: vbackup.exe tested on a real Windows (GitHub Actions,
+**		test/winreal.sh); built by the MinGW of MSYS2 too.
 **
 **	X01-23		 7-OCT-2026	RRL
 **		Stage 19: restore and compare decompress on all the threads.

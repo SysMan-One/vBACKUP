@@ -152,6 +152,7 @@ jobs:
       - name: winreal.sh check
         run: |
           chmod +x img/vbackup
+          chmod 600 lin/key
           VBACKUP=img/vbackup IN=win LIN=lin SCRATCH="$RUNNER_TEMP/check" sh test/winreal.sh check
 
   native:

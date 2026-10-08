@@ -44,6 +44,7 @@
 #---
 
 PHASE=${1:?"the phase: make, run or check"}
+SKIPS=0
 S=${SCRATCH:?"SCRATCH must name a scratch directory"}
 
 #	The bash of MSYS2 makes "/LIST" a path for a program of Windows: none of that
@@ -195,7 +196,7 @@ run)
 	alloc () { fsutil sparse queryrange "$(wp "$1")" | tr -d '\r' | gawk '/Length/ { s += strtonum($NF) } END { print int(s / 1024) }'; }
 
 	#	Only on a real Windows: what wine has not
-	ntfs ()	{ [ -n "$REAL" ] || { echo "SKIP: $1 (not a real Windows)"; return 1; }; }
+	ntfs ()	{ [ -n "$REAL" ] || { echo "SKIP: $1 (not a real Windows)"; SKIPS=$((SKIPS + 1)); return 1; }; }
 
 	#	All relative: a path of MSYS2 (/d/a/...) means nothing to vbackup.exe
 	cd "$S" || exit 1
@@ -423,5 +424,8 @@ check)
 	bail "the phase: make, run or check, not $PHASE"
 	;;
 esac
+
+#	What ran, seen without the log
+[ -z "${GITHUB_ACTIONS:-}" ] || echo "::notice title=winreal.sh $PHASE::$CHECKS checks, $FAILS failures, $SKIPS parts skipped"
 
 tap_end
