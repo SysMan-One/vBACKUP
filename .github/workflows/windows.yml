@@ -42,9 +42,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: ${{ env.STARLET_REPO }}
           ref: ${{ env.STARLET_REF }}
@@ -96,7 +96,7 @@ jobs:
         shell: msys2 {0}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -104,6 +104,7 @@ jobs:
           update: false
           path-type: inherit
           install: diffutils
+          suppress-deprecation-warnings: msystem-mingw64
 
       - uses: actions/download-artifact@v4
         with:
@@ -131,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
@@ -162,9 +163,9 @@ jobs:
         shell: msys2 {0}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: ${{ env.STARLET_REPO }}
           ref: ${{ env.STARLET_REF }}
@@ -175,11 +176,17 @@ jobs:
           msystem: MINGW64
           update: false
           install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+          suppress-deprecation-warnings: msystem-mingw64
 
+      #	The errors are annotations too: seen without the log
       - name: Build
         run: |
-          cmake -G Ninja -S . -B build-native -DCMAKE_BUILD_TYPE=Release -DVBACKUP_STARLET_SRC="$(pwd)/starlet"
-          cmake --build build-native
+          set -o pipefail
+          cmake -G Ninja -S . -B build-native -DCMAKE_BUILD_TYPE=Release -DVBACKUP_STARLET_SRC="$(pwd)/starlet" 2>&1 | tee build.log &&
+            cmake --build build-native -- -k 0 2>&1 | tee -a build.log || {
+            grep -E 'error|Error|undefined reference' build.log | head -10 | sed 's/^/::error title=native build::/'
+            exit 1
+          }
 
       - name: units.exe, and a saveset made and listed
         env:

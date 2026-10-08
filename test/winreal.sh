@@ -99,7 +99,7 @@ case $PHASE in
 #	Linux: the savesets Windows reads, the lists of what is in them
 #
 make)
-	VB=${VBACKUP:?"VBACKUP must name the image"}
+	VB=$(absfile "${VBACKUP:?"VBACKUP must name the image"}")
 	O=$(absdir "${OUT:?"OUT must name the output directory"}") || exit 1
 	cd "$S" || exit 1
 
@@ -386,7 +386,7 @@ run)
 #	Linux: what Windows made
 #
 check)
-	VB=${VBACKUP:?"VBACKUP must name the image"}
+	VB=$(absfile "${VBACKUP:?"VBACKUP must name the image"}")
 	I=$(absdir "${IN:?"IN must name the savesets of run"}") || exit 1
 	L=$(absdir "${LIN:?"LIN must name the savesets of make"}") || exit 1
 	cd "$S" || exit 1
