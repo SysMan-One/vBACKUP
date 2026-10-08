@@ -1,0 +1,12 @@
+VBACKUP - OpenVMS BACKUP-style saveset utility
+Copyright 2026 Ruslan R. Laishev (AKA: BadAss SysMan) and StarLet Squad
+
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+The images for Windows (vbackup.exe, units.exe) have StarLet compiled in,
+https://github.com/SysMan-One/utility_routines - Apache License 2.0, the
+same author.
+
+LZ4 block, Deflate (RFC 1951) and LZMA are implementations of their own,
+written from the published descriptions of the formats; no code of the
+reference implementations is included.

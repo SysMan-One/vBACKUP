@@ -1,0 +1,192 @@
+#+++
+#
+#	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+#
+#	MODULE:		.github/workflows/windows.yml
+#
+#	ABSTRACT:	vbackup.exe on a real Windows (stage 20): Linux builds
+#			the images for both and makes the savesets, Windows
+#			reads them and saves a tree of NTFS, Linux reads what
+#			Windows made - test/winreal.sh, phases make, run,
+#			check.  Beside them vbackup.exe built by the MinGW of
+#			Windows itself (MSYS2), and its units.exe run.
+#
+#	DESCRIPTION:	StarLet - the kit of STARLET_REF from STARLET_REPO:
+#			installed for the Linux image, its sources compiled
+#			into the images for Windows (VBACKUP_STARLET_SRC).
+#
+#	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#	CREATION DATE:	 8-OCT-2026
+#
+#	MODIFICATION HISTORY:
+#
+#		 8-OCT-2026	RRL	X-01 : Initial version.
+#
+#---
+
+name: Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  STARLET_REPO: SysMan-One/utility_routines
+  STARLET_REF: v1.6.8
+
+jobs:
+  linux:
+    name: Linux - the images and the savesets
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STARLET_REPO }}
+          ref: ${{ env.STARLET_REF }}
+          path: starlet
+
+      - name: MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: StarLet for Linux
+        run: |
+          cmake -S starlet -B starlet-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/starlet"
+          cmake --build starlet-build -j 4
+          cmake --install starlet-build
+
+      - name: vbackup, and vbackup.exe, units.exe, vbkx.exe by MinGW-w64
+        run: |
+          cmake -S . -B build -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/starlet" -DVBACKUP_STARLET_SRC="$GITHUB_WORKSPACE/starlet" \
+            '-DVBACKUP$M_GEEKS=OFF' '-DVBACKUP$M_PLUGINS=OFF' '-DVBACKUP$M_HELPLIB=OFF'
+          cmake --build build -j 4
+
+      - name: The tests of Linux
+        run: ctest --test-dir build -R '^(units|smoke|vms)$' --output-on-failure
+
+      - name: winreal.sh make
+        run: VBACKUP=build/vbackup SCRATCH="$RUNNER_TEMP/make" OUT="$RUNNER_TEMP/lin" sh test/winreal.sh make
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: savesets-linux
+          path: ${{ runner.temp }}/lin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images
+          path: |
+            build/vbackup
+            build/winexe/vbackup.exe
+            build/winexe/units.exe
+            build/winexe/fakessh.exe
+            build/win/vbkx.exe
+
+  windows:
+    name: Windows - the savesets of Linux, a tree of NTFS
+    needs: linux
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          path-type: inherit
+          install: diffutils
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: savesets-linux
+          path: lin
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: images
+          path: img
+
+      - name: winreal.sh run
+        run: |
+          VBACKUPEXE=img/winexe/vbackup.exe UNITSEXE=img/winexe/units.exe FAKESSHEXE=img/winexe/fakessh.exe \
+            VBKXEXE=img/win/vbkx.exe IN=lin OUT=win SCRATCH=../run sh test/winreal.sh run
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: savesets-windows
+          path: win
+
+  back:
+    name: Linux - the savesets of Windows
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: images
+          path: img
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: savesets-linux
+          path: lin
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: savesets-windows
+          path: win
+
+      - name: winreal.sh check
+        run: |
+          chmod +x img/vbackup
+          VBACKUP=img/vbackup IN=win LIN=lin SCRATCH="$RUNNER_TEMP/check" sh test/winreal.sh check
+
+  native:
+    name: Windows - vbackup.exe by the MinGW of MSYS2
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STARLET_REPO }}
+          ref: ${{ env.STARLET_REF }}
+          path: starlet
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+
+      - name: Build
+        run: |
+          cmake -G Ninja -S . -B build-native -DCMAKE_BUILD_TYPE=Release -DVBACKUP_STARLET_SRC="$(pwd)/starlet"
+          cmake --build build-native
+
+      - name: units.exe, and a saveset made and listed
+        env:
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          mkdir -p units.d
+          build-native/units.exe units.d | tee units.log
+          grep -q ' 0 failures' units.log
+          build-native/vbackup.exe test t.bck /VERIFY
+          build-native/vbackup.exe t.bck /LIST | tail -3
