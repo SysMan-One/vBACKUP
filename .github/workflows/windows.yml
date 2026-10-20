@@ -21,6 +21,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		20-OCT-2026	RRL	X-03 : StarLet v1.6.9: builds with the GCC 14 of MSYS2.
+#
 #		20-OCT-2026	RRL	X-02 : LICENSE, NOTICE and COPYING.MinGW-w64 in the
 #					artifact of the images: winpthreads is in them.
 #
@@ -37,7 +39,7 @@ on:
 
 env:
   STARLET_REPO: SysMan-One/utility_routines
-  STARLET_REF: v1.6.8
+  STARLET_REF: v1.6.9
 
 jobs:
   linux:
