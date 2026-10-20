@@ -1,0 +1,4 @@
+#	VBACKUP - the tree byte for byte on every platform: no line ends
+#	changed on a checkout of Windows (the scripts of test/ run under the
+#	bash of MSYS2 there; the references of test/vms are compared as bytes)
+*		-text

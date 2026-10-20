@@ -308,6 +308,13 @@ Linux.  Имя, которое Windows не может хранить, не во
 отличающихся только регистром (там это один файл), никогда не
 затирают друг друга.  Остальное -- `vbackup /HELP WINDOWS`.
 
+На настоящей Windows его проверяет GitHub Actions
+(`.github/workflows/windows.yml`, `test/winreal.sh`): saveset-ы Linux
+восстанавливаются там, дерево NTFS -- потоки, дыры, жёсткие и
+символьные ссылки, junction-ы, атрибуты, владелец, DACL и SACL --
+сохраняется и возвращается, а сделанное в Windows снова
+восстанавливается в Linux; там же vbackup.exe собирается MinGW из MSYS2.
+
 ## Файловые менеджеры
 
 Saveset открывается как папка в перечисленных ниже файловых менеджерах:
@@ -369,3 +376,7 @@ git через git archive от HEAD, так что в него попадает
 ## Автор
 
 StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
+
+## Лицензия
+
+Apache License 2.0 -- `LICENSE`, `NOTICE`.

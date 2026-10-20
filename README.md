@@ -288,6 +288,13 @@ name Windows cannot hold is not restored, and said;
 two names that differ in case only - one file there - are never
 written over each other.  `vbackup /HELP WINDOWS` tells the rest.
 
+On a real Windows it is tested by GitHub Actions
+(`.github/workflows/windows.yml`, `test/winreal.sh`): the savesets of
+Linux restored there, a tree of NTFS - streams, holes, hard and
+symbolic links, junctions, attributes, owner, DACL and SACL - saved and
+put back, and what Windows made restored on Linux again; vbackup.exe is
+built by the MinGW of MSYS2 there too.
+
 ## File managers
 
 A saveset opens like a folder in the file managers below: list, view,
@@ -347,3 +354,7 @@ the failures:
 ## Author
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
+
+## License
+
+Apache License 2.0 - `LICENSE`, `NOTICE`.

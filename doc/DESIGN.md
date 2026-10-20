@@ -180,6 +180,8 @@ ORIGINAL, у остальных DEFAULT), `/[NO]XATTRS`, `/INCREMENTAL` (эта�
 | `test/smoke.sh` | цикл сохранение -> восстановление -> сравнение на наборе: обычные, пустые, разреженные, жёсткие и символические ссылки, fifo, устройства, длинные и UTF-8 имена, xattr и ACL, chattr-флаги |
 | `test/damage.sh` | порча байтов, блоков, потеря тома (этап 3) |
 | `test/units.c` | разбор и кодирование TLV, BHDR, XOR на синтетических данных |
+| `test/winreal.sh` | vbackup.exe на настоящей Windows, фазы make/run/check (этап 20) |
+| `.github/workflows/windows.yml` | GitHub Actions: Linux -> Windows -> Linux и родная сборка MSYS2 (этап 20) |
 | `CMakeLists.txt` | как у SEARCH: ident из головного модуля, проверка `__IDENT__`/`__REV__` всех модулей, `find_package(StarLet)`, `find_package(HELP)`, `HELP_ADD_LIBRARY(... NOFACILITY)`, ctest, uninstall, архив `vbackup-<ident>.tar.gz` |
 
 ### 4.3 Порядок применения атрибутов при восстановлении
