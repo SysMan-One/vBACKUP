@@ -21,6 +21,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		20-OCT-2026	RRL	X-02 : LICENSE, NOTICE and COPYING.MinGW-w64 in the
+#					artifact of the images: winpthreads is in them.
+#
 #		 8-OCT-2026	RRL	X-01 : Initial version.
 #
 #---
@@ -76,6 +79,10 @@ jobs:
           name: savesets-linux
           path: ${{ runner.temp }}/lin
 
+      #	The images carry winpthreads of MinGW-w64: its notice goes with them
+      - name: The licenses beside the images
+        run: cp LICENSE NOTICE win/COPYING.MinGW-w64 build/
+
       - uses: actions/upload-artifact@v4
         with:
           name: images
@@ -85,6 +92,9 @@ jobs:
             build/winexe/units.exe
             build/winexe/fakessh.exe
             build/win/vbkx.exe
+            build/LICENSE
+            build/NOTICE
+            build/COPYING.MinGW-w64
 
   windows:
     name: Windows - the savesets of Linux, a tree of NTFS

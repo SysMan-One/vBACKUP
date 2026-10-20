@@ -14,6 +14,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		20-OCT-2026	RRL	X-21 : LICENSE and NOTICE installed with the documents;
+#						on Windows with win/COPYING.MinGW-w64 - winpthreads
+#						is linked into vbackup.exe.
+#
 #		 6-OCT-2026	RRL	X-20 : Stage 16: the optimal parse of LZMA; test memcheck
 #						(valgrind) with VBACKUP$M_MEMCHECK=ON.
 #
@@ -249,6 +253,10 @@ if ( WIN32 )
 	endif()
 
 	install(TARGETS vbackup RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+	#	winpthreads of MinGW-w64 is linked in (-static -pthread): its notice goes with the image
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/NOTICE
+		${CMAKE_CURRENT_SOURCE_DIR}/win/COPYING.MinGW-w64 DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 	#	test/units.c on Windows: the core, the parity by the vector code, the cipher - run under wine by test/winutil.sh
 	add_executable(units test/units.c src/vbkosw.c src/vbkmsg.c ${VBACKUP_WINLIB})
@@ -570,7 +578,7 @@ endif()
 #		<prefix>/bin/vbackup
 #		<prefix>/share/man/man1/vbackup.1
 #		<prefix>/share/help/vbackup.hlb, ru/vbackup_ru.hlb
-#		<prefix>/share/doc/vbackup/README.md, format.md, vmsbackup.md, vbackuplib[_ru].md
+#		<prefix>/share/doc/vbackup/README.md, LICENSE, NOTICE, format.md, vmsbackup.md, vbackuplib[_ru].md
 #
 option(VBACKUP$M_INSTALL_DOC "Install the manual page and the documents" ON)
 
@@ -584,6 +592,8 @@ if ( VBACKUP$M_INSTALL_DOC )
 
 	install(FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/README.md
+		${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+		${CMAKE_CURRENT_SOURCE_DIR}/NOTICE
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/format.md
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/vmsbackup.md
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/vbackuplib.md
