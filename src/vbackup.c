@@ -1,6 +1,6 @@
 #define	__MODULE__	"VBACKUP"
-#define	__IDENT__	"X01-24"
-#define	__REV__		"1.24.0"
+#define	__IDENT__	"X01-25"
+#define	__REV__		"1.25.0"
 
 /*
 **++
@@ -40,6 +40,11 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-25		20-OCT-2026	RRL
+**		Stage 21: the releases by GitHub Actions - .github/workflows/
+**		release.yml with the GITHUB_TOKEN of the run, tools/mkrelease.sh
+**		makes the files of a tag.
 **
 **	X01-24		 8-OCT-2026	RRL
 **		Stage 20: vbackup.exe tested on a real Windows (GitHub Actions,
