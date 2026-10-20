@@ -1,0 +1,126 @@
+#+++
+#
+#	FACILITY:	VBACKUP - OpenVMS BACKUP-style saveset utility for Linux
+#
+#	MODULE:		.github/workflows/release.yml
+#
+#	ABSTRACT:	The release of a tag on GitHub, by the GITHUB_TOKEN of the
+#			run - no personal token: the files of tools/mkrelease.sh
+#			(the sources, the images for Windows with their licenses,
+#			SHA256SUMS) and its NOTES.md as the text.
+#
+#	DESCRIPTION:	A tag X* pushed - its release.  A push to main - the
+#			newest tag X*, if it has no release yet (a tag made before
+#			this file was in the tree: GitHub runs the workflow of the
+#			tagged commit, so its own push did nothing).  By hand
+#			(Run workflow) - the tag named.  Any other push builds the
+#			files of the newest tag and keeps them as an artifact only:
+#			mkrelease.sh tried before it matters.  A release already
+#			there is never touched.
+#
+#	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#	CREATION DATE:	20-OCT-2026
+#
+#	MODIFICATION HISTORY:
+#
+#		20-OCT-2026	RRL	X-01 : Initial version.
+#
+#---
+
+name: Release
+
+on:
+  push:
+    tags: ['X*']
+    branches: ['**']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag to release (X01-24 and so on)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  STARLET_REPO: SysMan-One/utility_routines
+  STARLET_REF: v1.6.9
+
+jobs:
+  release:
+    name: The release of a tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ env.STARLET_REPO }}
+          ref: ${{ env.STARLET_REF }}
+          path: starlet
+
+      #	Which tag, and whether it is published or only built
+      - name: The tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          git fetch -q --tags --force
+          case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+          workflow_dispatch:*)	TAG=$INPUT_TAG;			PUBLISH=1 ;;
+          push:refs/tags/*)	TAG=$GITHUB_REF_NAME;		PUBLISH=1 ;;
+          push:refs/heads/main)	TAG=$(git tag -l 'X*' --sort=-v:refname | head -1); PUBLISH=1 ;;
+          *)			TAG=$(git tag -l 'X*' --sort=-v:refname | head -1); PUBLISH=0 ;;
+          esac
+          [ -n "$TAG" ] || { echo "::error title=release::no tag X* in the repository"; exit 1; }
+          if [ $PUBLISH = 1 ] && gh release view "$TAG" > /dev/null 2>&1
+          then
+            echo "::notice title=release::$TAG - released already, not touched"
+            PUBLISH=0
+            SKIP=1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "skip=${SKIP:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: MinGW-w64 and zip
+        if: steps.tag.outputs.skip == '0'
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 zip
+
+      - name: StarLet for Linux
+        if: steps.tag.outputs.skip == '0'
+        run: |
+          cmake -S starlet -B starlet-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/starlet" -DBUILD_TESTING=OFF
+          cmake --build starlet-build -j 4
+          cmake --install starlet-build
+
+      - name: The files of the release
+        if: steps.tag.outputs.skip == '0'
+        env:
+          CMAKE_PREFIX_PATH: ${{ runner.temp }}/starlet
+        run: sh tools/mkrelease.sh "${{ steps.tag.outputs.tag }}" starlet "$RUNNER_TEMP/rel"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.tag.outputs.skip == '0'
+        with:
+          name: release-${{ steps.tag.outputs.tag }}
+          path: |
+            ${{ runner.temp }}/rel/*.tar.gz
+            ${{ runner.temp }}/rel/*.zip
+            ${{ runner.temp }}/rel/SHA256SUMS
+            ${{ runner.temp }}/rel/NOTES.md
+
+      - name: Publish
+        if: steps.tag.outputs.publish == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          R="$RUNNER_TEMP/rel"
+          gh release create "$TAG" --verify-tag --title "VBACKUP $TAG" --notes-file "$R/NOTES.md" \
+            "$R/vbackup-$TAG.tar.gz" "$R/vbackup-$TAG-win64.zip" "$R/SHA256SUMS"
