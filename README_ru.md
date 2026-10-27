@@ -51,8 +51,10 @@ saveset, восстановить их, получить листинг и ср�
 - никаких зависимостей, кроме libc, StarLet и HELP.
 
 Формат описан в [doc/format.md](doc/format.md) (на английском);
-устройство -- в [doc/DESIGN.md](doc/DESIGN.md).  Руководство
-пользователя -- это библиотека справки: `vbackup /HELP`, исходные тексты
+устройство -- в [doc/DESIGN.md](doc/DESIGN.md).  Руководство --
+[doc/vbackup_users_guide_ru.md](doc/vbackup_users_guide_ru.md)
+([PDF](doc/vbackup_users_guide_ru.pdf)); у терминала -- библиотека
+справки: `vbackup /HELP`, исходные тексты
 в [doc/vbackuplib_ru.md](doc/vbackuplib_ru.md) и
 [doc/vbackuplib.md](doc/vbackuplib.md) (на английском).
 
@@ -125,8 +127,9 @@ XOR-группам, как это сделал бы BACKUP.  `vbkx` и `vbkx.exe
 
 **Команды OpenVMS BACKUP.**  `/SAVE_SET`, `/SINCE=BACKUP`, `/RECORD`,
 `/INCREMENTAL`, `/IMAGE`, `/PHYSICAL`, `/VERIFY`, `/LIST`, `/SELECT`,
-`/EXCLUDE` -- со справкой HELP, сообщениями в форме VMS и справочным
-руководством в манере DEC ([doc/ref](doc/ref/vbackup_ref_ru.md)).
+`/EXCLUDE` -- со справкой HELP, сообщениями в форме VMS и руководством
+пользователя в манере DEC ([doc/vbackup_users_guide_ru.md](doc/vbackup_users_guide_ru.md),
+[PDF](doc/vbackup_users_guide_ru.pdf)).
 
 **Расписание и ротация оставлены пакетной очереди.**  BATCH (подсистема
 пакетных заданий) запускает сохранение каждую ночь так, как это делается
@@ -375,8 +378,28 @@ git через git archive от HEAD, так что в него попадает
 
 ## Автор
 
-StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
+StarLet Squad и Ruslan R. Laishev.
 
 ## Лицензия
 
-Apache License 2.0 -- `LICENSE`, `NOTICE`.
+Apache License 2.0 -- `LICENSE`, `NOTICE`.  Образы для Windows содержат
+StarLet (Apache License 2.0) и winpthreads из MinGW-w64 (expat и BSD из
+3 пунктов -- `win/COPYING.MinGW-w64`).  Сжатие и криптография --
+собственные реализации; кода других проектов нет.
+
+## Товарные знаки
+
+OpenVMS, VMS, Alpha, Integrity, Digital и DEC -- товарные знаки Hewlett
+Packard Enterprise Development LP или VMS Software, Inc. Linux --
+зарегистрированный товарный знак Линуса Торвальдса в США и других
+странах. Microsoft и Windows -- товарные знаки группы компаний Microsoft.
+Total Commander -- товарный знак Кристиана Гислера. Far Manager, Double
+Commander, Midnight Commander, far2l и Perl -- названия их проектов. Go --
+товарный знак Google LLC, Rust -- Rust Foundation. Arm и Cortex -- товарные
+знаки Arm Limited. Claude -- товарный знак Anthropic, PBC. Все прочие
+названия продуктов и компаний -- товарные знаки их владельцев.
+
+VBACKUP -- независимая реализация. В нём нет кода OpenVMS, и он никак не
+связан с этими владельцами, не одобрен и не поддерживается ими. Он не
+имеет отношения ни к пакету Debian `vbackup`, ни к программе VBackup для
+Windows -- это другие продукты с тем же названием.

@@ -14,6 +14,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		27-OCT-2026	CLD	X-22 : The User's Guide, EN and RU, in place of the reference
+#						manual (doc/ref): installed with the documents, its
+#						PDF beside it; VBACKUP$M_PDF renders the PDF.
+#
 #		20-OCT-2026	RRL	X-21 : LICENSE and NOTICE installed with the documents;
 #						on Windows with win/COPYING.MinGW-w64 - winpthreads
 #						is linked into vbackup.exe.
@@ -578,7 +582,8 @@ endif()
 #		<prefix>/bin/vbackup
 #		<prefix>/share/man/man1/vbackup.1
 #		<prefix>/share/help/vbackup.hlb, ru/vbackup_ru.hlb
-#		<prefix>/share/doc/vbackup/README.md, LICENSE, NOTICE, format.md, vmsbackup.md, vbackuplib[_ru].md
+#		<prefix>/share/doc/vbackup/README.md, LICENSE, NOTICE, format.md, vmsbackup.md, vbackuplib[_ru].md,
+#			vbackup_users_guide[_ru].md and .pdf
 #
 option(VBACKUP$M_INSTALL_DOC "Install the manual page and the documents" ON)
 
@@ -599,6 +604,51 @@ if ( VBACKUP$M_INSTALL_DOC )
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/vbackuplib.md
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/vbackuplib_ru.md
 		DESTINATION ${CMAKE_INSTALL_DOCDIR})
+endif()
+
+#
+#	The User's Guide.  The markdown is the source and is always installed;
+#	the PDF beside it is installed when it is there.  It is rendered on
+#	request (VBACKUP$M_PDF): that costs pandoc and a TeX installation, which
+#	a host that only saves and restores does not need.  The rendered guides
+#	are kept in the repository with their sources, so the kit carries them
+#	and the reader needs no TeX to read them.
+#
+set(VBACKUP$K_MANUALS vbackup_users_guide vbackup_users_guide_ru)
+
+option(VBACKUP$M_PDF "Render the User's Guide as PDF from the markdown" OFF)
+
+if ( VBACKUP$M_PDF )
+	find_package(Python3 COMPONENTS Interpreter REQUIRED)
+	find_program(VBACKUP_PANDOC	pandoc	REQUIRED)
+	find_program(VBACKUP_XELATEX	xelatex	REQUIRED)
+endif()
+
+set(VBACKUP_PDFS)
+
+foreach ( L_MAN ${VBACKUP$K_MANUALS} )
+	if ( VBACKUP$M_INSTALL_DOC )
+		install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+	endif()
+
+	if ( VBACKUP$M_PDF )
+		add_custom_command(
+			OUTPUT	${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.pdf
+			COMMAND	${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/doc/mkpdf.py
+				${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.md:${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.pdf
+			DEPENDS	${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.md ${CMAKE_CURRENT_SOURCE_DIR}/doc/mkpdf.py
+			COMMENT	"Rendering doc/${L_MAN}.pdf")
+
+		list(APPEND VBACKUP_PDFS ${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.pdf)
+	endif()
+
+	if ( VBACKUP$M_INSTALL_DOC AND (VBACKUP$M_PDF OR EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.pdf) )
+		install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/doc/${L_MAN}.pdf DESTINATION ${CMAKE_INSTALL_DOCDIR})
+	endif()
+endforeach()
+
+if ( VBACKUP$M_PDF )
+	add_custom_target(doc_pdf ALL DEPENDS ${VBACKUP_PDFS})
 endif()
 
 #
