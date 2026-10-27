@@ -47,9 +47,10 @@ What a saveset gives you:
 - no dependency beyond libc, StarLet and HELP.
 
 The format is described in [doc/format.md](doc/format.md); the
-design in [doc/DESIGN.md](doc/DESIGN.md) (Russian).  The user manual
-is the help library: `vbackup /HELP`, sources in
-[doc/vbackuplib.md](doc/vbackuplib.md) and
+design in [doc/DESIGN.md](doc/DESIGN.md) (Russian).  The manual is the
+User's Guide, [doc/vbackup_users_guide.md](doc/vbackup_users_guide.md)
+([PDF](doc/vbackup_users_guide.pdf)); at the terminal, the help library:
+`vbackup /HELP`, sources in [doc/vbackuplib.md](doc/vbackuplib.md) and
 [doc/vbackuplib_ru.md](doc/vbackuplib_ru.md).
 
 New to all this?  The simple guides, task by task, with commands to
@@ -104,8 +105,9 @@ deletes what was deleted; a copy disk to disk; savesets through ssh.
 
 **The commands of OpenVMS BACKUP.**  `/SAVE_SET`, `/SINCE=BACKUP`,
 `/RECORD`, `/INCREMENTAL`, `/IMAGE`, `/PHYSICAL`, `/VERIFY`, `/LIST`,
-`/SELECT`, `/EXCLUDE` - with HELP, messages of the VMS form and a reference
-manual in the manner of DEC ([doc/ref](doc/ref/vbackup_ref.md)).
+`/SELECT`, `/EXCLUDE` - with HELP, messages of the VMS form and a User's
+Guide in the manner of DEC ([doc/vbackup_users_guide.md](doc/vbackup_users_guide.md),
+[PDF](doc/vbackup_users_guide.pdf)).
 
 **A bridge from OpenVMS.**  A saveset written by OpenVMS BACKUP - off an
 old disk, a tape copied into a file, an archive of a VAX or an Alpha - is
@@ -357,4 +359,27 @@ StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 
 ## License
 
-Apache License 2.0 - `LICENSE`, `NOTICE`.
+Apache License 2.0 - `LICENSE`, `NOTICE`.  The images for Windows carry
+StarLet (Apache License 2.0) and winpthreads of MinGW-w64 (expat and
+BSD 3-clause - `win/COPYING.MinGW-w64`).  The compressors and the
+cryptography are implementations of their own; no code of other
+projects is included.
+
+## Trademarks
+
+OpenVMS, VMS, Alpha, Integrity, Digital and DEC are trademarks of Hewlett
+Packard Enterprise Development LP or of VMS Software, Inc. Linux is the
+registered trademark of Linus Torvalds in the U.S. and other countries.
+Microsoft and Windows are trademarks of the Microsoft group of companies.
+Total Commander is a trademark of Christian Ghisler. Far Manager, Double
+Commander, Midnight Commander, far2l and Perl are the names of their
+projects. Go is a trademark of Google LLC, Rust of the Rust Foundation.
+Arm and
+Cortex are trademarks of Arm Limited. Claude is a trademark of Anthropic,
+PBC. All other names of products and companies are trademarks of their
+respective owners.
+
+VBACKUP is an independent implementation. It contains no code of OpenVMS
+and is not affiliated with, endorsed or supported by any of these owners.
+It is not related to the Debian package `vbackup` nor to the VBackup
+program for Windows, which are other products of the same name.

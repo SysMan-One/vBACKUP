@@ -1,96 +1,136 @@
-# VBACKUP Utility Reference Manual
+# VBACKUP Saveset Utility for Linux
 
-**Order Number:** AA-VBK01-TE
+## User's Guide
 
-**October 2026**
+    Order Number:       VBACKUP-UG-0125
+    Software Version:   VBACKUP Version X01-25
+    Operating System:   Linux (x86_64, aarch64); Windows (x86_64) for vbackup.exe, vbkx.exe and the WCX plugin
+    Revision/Update:    This manual supersedes the VBACKUP Utility Reference Manual of Version X01-23.
+    Date:               27-OCT-2026
 
-This manual describes the VBACKUP utility, an OpenVMS BACKUP-style
-saveset utility for Linux. It describes the VBACKUP command, its
-parameters and qualifiers, the saveset and the journal, the stand-alone
-extractor vbkx, the extractors of last resort and the file manager
-plugins, and lists every message the utility signals.
+    Copyright (C) 2026 StarLet Squad and Ruslan R. Laishev.
 
-**Revision/Update Information:** This manual supersedes the edition for
-VBACKUP X01-22.
+    VBACKUP is licensed under the Apache License, Version 2.0 (the "License"); you may not use it
+    except in compliance with the License. A copy of the License is in the file LICENSE of the kit,
+    and at http://www.apache.org/licenses/LICENSE-2.0.
 
-**Software Version:** VBACKUP X01-23
-
-**Operating System:** Linux (x86_64, aarch64); Windows (x86_64) for
-vbackup.exe, vbkx.exe and the WCX plugin
-
----
-
-StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
-
-The information in this document reflects VBACKUP X01-23 as built from
-its sources. The saveset format is defined by `doc/format.md`; where this
-manual and that document differ on the bytes of the medium, `format.md`
-prevails.
+    Unless required by applicable law or agreed to in writing, VBACKUP is distributed under the
+    License on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+    implied. See the License for the specific language governing permissions and limitations under
+    the License.
 
 ---
 
-## Contents
+# Preface
 
-- [Preface](#preface)
-- [Chapter 1 VBACKUP Description](#chapter-1-vbackup-description)
-- [Chapter 2 VBACKUP Usage Summary](#chapter-2-vbackup-usage-summary)
-- [Chapter 3 VBACKUP Qualifiers](#chapter-3-vbackup-qualifiers)
-- [Chapter 4 VBACKUP Examples](#chapter-4-vbackup-examples)
-- [Appendix A VBACKUP Messages](#appendix-a-vbackup-messages)
-- [Appendix B Saveset Format Summary](#appendix-b-saveset-format-summary)
-- [Appendix C The Stand-Alone Extractor vbkx](#appendix-c-the-stand-alone-extractor-vbkx)
-- [Appendix D File Manager Plugins](#appendix-d-file-manager-plugins)
+## Intended Audience
 
----
+This manual is for the system manager and the operator who save and restore the files of Linux
+systems. It assumes a working knowledge of Linux file systems, block devices, file ownership and
+permissions, and of the shell. Familiarity with the BACKUP utility of OpenVMS is helpful but not
+required.
 
-## Preface
+The reader who wants to know what the bytes of a saveset are wants `doc/format.md` instead; this
+manual gives only a summary of them (Appendix B).
 
-### Intended Audience
+## Why VBACKUP Exists
 
-This manual is intended for system administrators and operators who
-are responsible for saving and restoring the files of Linux systems. It
-assumes a working knowledge of Linux file systems, block devices, file
-ownership and permissions, and of the shell. Familiarity with the
-OpenVMS BACKUP utility is helpful but not required.
+For forty years the BACKUP utility of OpenVMS has shown how a backup should be made: one command,
+two parameters, a qualifier for every choice, a checksum on every block, a group of blocks that
+repairs a bad one, a message for every condition. A tape written by it in one decade was read in the
+next. The machines it ran on are leaving the machine rooms; that way of working should not leave
+with them.
 
-### Document Structure
+VBACKUP brings it to Linux. Its savesets are its own - made for the disks, the file systems and the
+attributes of Linux - but its command is that of BACKUP, its messages have the OpenVMS form and
+severities, it has a HELP library, its versions are IDENTs, and this manual is laid out like the
+manuals of OpenVMS. It also reads the savesets of OpenVMS BACKUP, so that what was saved on OpenVMS
+can be taken back on Linux.
 
-This manual consists of the following chapters and appendixes:
+## Document Structure
 
-- Chapter 1 describes the saveset, the operations of VBACKUP and the
-  mechanisms behind them: the structure of a saveset, file
-  specifications, incremental backup and the journal, `/PHYSICAL` and
-  `/IMAGE` operations, compression, encryption, pipes, savesets on other
-  nodes, the page cache, threads, the extractors and the plugins.
-- Chapter 2 gives the format of the VBACKUP command, its parameters,
-  how the operation is determined, the exit status and the
-  restrictions.
-- Chapter 3 describes every qualifier, in alphabetical order, and the
-  environment variables.
-- Chapter 4 contains examples of VBACKUP operations.
-- Appendix A lists the messages of the VBACKUP facility.
-- Appendix B summarizes the saveset format.
-- Appendix C describes the stand-alone extractor vbkx and the
-  extractors of last resort vbkx-go, vbkx-rs and vbkx-pl.
-- Appendix D describes the file manager plugins.
+This manual contains the following chapters and appendixes:
 
-### Related Documents
+| Part | Contents |
+|---|---|
+| Chapter 1 | Introduces VBACKUP: what it does, what a saveset gives, what it does not do, the programs of the kit |
+| Chapter 2 | Installing VBACKUP on Linux and on Windows |
+| Chapter 3 | Describes the saveset and the mechanisms of VBACKUP: the structure of a saveset, file specifications, incremental backup and the journal, `/PHYSICAL` and `/IMAGE`, compression, encryption, pipes, savesets on other nodes, the page cache, threads, the extractors, the plugins, scheduling, the savesets of OpenVMS BACKUP, VBACKUP on Windows |
+| Chapter 4 | Contains examples of VBACKUP operations |
+| Chapter 5 | Contains the command dictionary: the `vbackup` command, its parameters, how the operation is determined, the exit status, the restrictions, and every qualifier |
+| Chapter 6 | Describes the format of a message and lists every message with what to do about it |
+| Chapter 7 | Troubleshooting: a symptom, what to look at, and what to do |
+| Appendix A | Lists the files installed and used |
+| Appendix B | Summarizes the saveset format |
+| Appendix C | Describes the stand-alone extractor vbkx and the extractors of last resort |
+| Appendix D | Describes the file manager plugins |
 
-- *vBACKUP saveset format, version 1* (`doc/format.md`) -- the
-  authoritative definition of the bytes of a saveset and of the
-  journal.
-- *vBACKUP design document* (`doc/DESIGN.md`, in Russian) -- the reasons
-  behind the format and the program.
-- The VBACKUP help library: `vbackup /HELP [topic ...]`; its sources are
-  `doc/vbackuplib.md` (English) and `doc/vbackuplib_ru.md` (Russian).
-- The manual pages vbackup(1) and vbkx(1).
-- The simple guides, task by task: `doc/simple/vbackup-en.md`,
-  `doc/simple/vbackup-ru.md`, `doc/simple/vbackup-es.md`.
-- The heads of the sources `tools/go/main.go`, `tools/rust/src/main.rs`,
-  `tools/perl/vbkx.pl` and `plugins/wcx/vbkwcx.c`, which are the manuals
-  of those programs.
+The reader who installs VBACKUP for the first time wants Chapters 1, 2 and 4, in that order. The
+reader who holds a message wants Chapter 6, and the one who holds a symptom, Chapter 7.
 
-### Conventions
+## Related Documents
+
+* *vBACKUP saveset format, version 1* (`doc/format.md`) - the authoritative definition of the bytes
+  of a saveset and of the journal. Where this manual and that document differ on the bytes of the
+  medium, `format.md` prevails.
+* *OpenVMS BACKUP savesets, as VBACKUP reads them* (`doc/vmsbackup.md`).
+* *vBACKUP design document* (`doc/DESIGN.md`, in Russian) - the reasons behind the format and the
+  program.
+* The VBACKUP help library: `vbackup /HELP [topic ...]`; its sources are `doc/vbackuplib.md`
+  (English) and `doc/vbackuplib_ru.md` (Russian).
+* The manual pages `vbackup(1)` and `vbkx(1)`.
+* The simple guides, task by task: `doc/simple/vbackup-en.md`, `doc/simple/vbackup-ru.md`,
+  `doc/simple/vbackup-es.md`.
+* The heads of the sources `tools/go/main.go`, `tools/rust/src/main.rs`, `tools/perl/vbkx.pl` and
+  `plugins/wcx/vbkwcx.c`, which are the manuals of those programs.
+* *OpenVMS System Management Utilities Reference Manual*, the chapter on BACKUP - the utility VBACKUP
+  follows.
+
+## Acknowledgments
+
+The authors thank Claude, the AI model of Anthropic, which went through the format, the code, the
+tests, the measurements and these manuals together with them.
+
+The authors thank their comrades-in-arms of the NaPi Lab community, who paid for the subscription to
+Claude, so that an engineer of almost pensionable age could carry on this work.
+
+## License
+
+VBACKUP is free software under the Apache License, Version 2.0: it may be used, copied, changed and
+given to others, also as part of other software and for money, provided that a copy of the License
+and the file `NOTICE` go with it, and that a changed file says that it was changed. The terms are in the file `LICENSE`, the notices in the file `NOTICE`; both are installed with
+the documents (Appendix A).
+
+The images for Windows (`vbackup.exe`, `vbkx.exe`, the WCX plugin) carry, besides VBACKUP:
+
+| Part | License |
+|---|---|
+| StarLet (`utility_routines`), compiled into `vbackup.exe` | Apache License 2.0 |
+| winpthreads of MinGW-w64, linked statically | the expat license (mingw-w64 project) and the BSD 3-clause license (Lockless Inc.) |
+
+The texts of these licenses are in `win/COPYING.MinGW-w64`, given with every copy of the images.
+The compressors (LZ4 block, Deflate, LZMA) and the cryptography (ChaCha20, HMAC-SHA256, PBKDF2) are
+implementations of their own, written from the published descriptions; no code of other projects is
+included.
+
+## Trademarks
+
+OpenVMS, VMS, Alpha, Integrity, Digital and DEC are trademarks of Hewlett Packard Enterprise
+Development LP or of VMS Software, Inc. Linux is the registered trademark of Linus Torvalds in the
+U.S. and other countries. Microsoft and Windows are trademarks of the Microsoft group of companies.
+Total Commander is a trademark of Christian Ghisler. Far Manager, Double Commander, Midnight
+Commander, far2l and Perl are the names of their projects. Go is a trademark of Google LLC. Rust is
+a trademark of the Rust Foundation. Arm and Cortex are trademarks of Arm Limited. Debian is a registered trademark of
+Software in the Public Interest, Inc. GitHub is a trademark of GitHub, Inc. NaPi is the name of the
+boards of the NaPi Lab team. Claude is a trademark of Anthropic, PBC. All other names of products and
+companies are trademarks of their respective owners.
+
+VBACKUP is an independent implementation. It contains no code of OpenVMS and is not affiliated with,
+endorsed or supported by any of the owners named here; their names are used only to say what VBACKUP
+works with or follows. VBACKUP is not related to the Debian package `vbackup` nor to the VBackup
+program for Windows, which are other products of the same name.
+
+## Conventions
 
 The following conventions are used in this manual:
 
@@ -107,24 +147,179 @@ The following conventions are used in this manual:
 | Ctrl/*x* | Hold down the Ctrl key and press the key *x*. |
 | `%VBACKUP-s-IDENT` | A message of the VBACKUP facility; *s* is its severity (S, I, W, E, F). |
 
-Every message the utility writes begins with the date, the time and the
-process number:
+Every message the utility writes begins with the date, the time and the process number:
 
 ```
 05-10-2026 14:19:25.787 2214682 %VBACKUP-I-STARTED, Operation: save, Input: /home/rrl, Output: rrl.bck - started
 ```
 
-In the examples of this manual the date, time and process number are
-omitted, and long directory names of the system on which the examples
-were made are shortened to names such as `/home`, `/backup` and
-`/mnt/usb`. Numbers and texts are as VBACKUP X01-11 prints them.
+**Note**
 
-Numbers are decimal unless otherwise stated. Sizes with the suffixes K,
-M, G and T are binary: 1K is 1024 bytes.
+> In the examples of this manual the date, time and process number are omitted, and long directory
+> names of the system on which the examples were made are shortened to names such as `/home`,
+> `/backup` and `/mnt/usb`. Numbers and texts are as VBACKUP X01-11 and later print them.
+
+Numbers are decimal unless otherwise stated. Sizes with the suffixes K, M, G and T are binary: 1K is
+1024 bytes.
 
 ---
 
-## Chapter 1 VBACKUP Description
+# Chapter 1
+# Introduction
+
+## 1.1 What VBACKUP Does
+
+VBACKUP saves the files and directories of Linux file systems into a *saveset*, restores them from
+it, lists it and compares it with the disk. It also copies files from disk to disk, copies a whole
+block device block by block, saves and makes again a whole file system, and keeps a journal for
+incremental backup. It follows the BACKUP utility of OpenVMS: one command, two parameters, and the
+operation is determined by what the parameters are.
+
+```
+$ vbackup /home/rrl /backup/rrl.bck /VERIFY
+$ vbackup /backup/rrl.bck /LIST
+$ vbackup /backup/rrl.bck /tmp/restore
+```
+
+The first command saves the directory `/home/rrl` and checks the saveset against the disk; the second
+lists it; the third restores it into `/tmp/restore`.
+
+## 1.2 What a Saveset Gives
+
+* The files with their owners, permissions, times to the nanosecond, extended attributes, POSIX
+  ACLs, capabilities and chattr flags; hard links, symbolic links, sparse files, FIFOs and devices.
+* A checksum of every block and of every file: damage is always found.
+* XOR blocks (`/GROUP_SIZE`): one bad block in a group is rebuilt; with `/PARITY=`*m* (Reed-Solomon)
+  any *m* of them. After a loss the reader picks the stream up again at the next good block, and
+  only the files that lay in the lost blocks are hurt.
+* Volumes (`/VOLUME_SIZE=4G`), each of which identifies itself - on disk, through a pipe, or
+  straight onto another node (`vbackup /home host::/backup/home.bck`).
+* A catalog at the end: `/LIST` and `/EXTRACT` are instant.
+* Incremental saves: `/RECORD` keeps a journal, `/SINCE=BACKUP` saves what changed since, and a chain
+  restored `/INCREMENTAL` comes back with the deleted files gone.
+* Compression on all cores: LZ4, Deflate or LZMA, small files packed together (SOLID), every record
+  checked before it is written.
+* Encryption (`/ENCRYPT`): ChaCha20 and HMAC-SHA256 per block, keys by PBKDF2; the names of the files
+  are hidden too, and damage is still repaired without the passphrase.
+* A saveset that can be read where VBACKUP is not installed: by `vbkx`, linked statically, and by
+  three extractors of last resort in Go, Rust and Perl.
+
+## 1.3 What VBACKUP Does Not Do
+
+* It does not schedule and does not rotate savesets. That is the work of a batch queue - BATCH or
+  cron - which runs a command procedure that runs VBACKUP (Section 3.15).
+* It never changes a saveset in place: nothing is added to an existing saveset or deleted from it.
+* It reads the savesets of OpenVMS BACKUP but does not write them, and does not read those encrypted
+  by BACKUP (DES) nor their `/IMAGE` data as a volume (Section 3.16).
+* It is not a store of deduplicated chunks: every saveset holds all its data, and can be read
+  alone.
+* It does not freeze a file system. A file that changes while it is saved is reported (FILCHANGED);
+  for a consistent copy of a busy system save a snapshot of it.
+
+## 1.4 The Programs of the Kit
+
+| Program | What it is |
+|---|---|
+| `vbackup` | The utility: every operation of this manual |
+| `vbkx` | The stand-alone extractor: lists, extracts and tests a saveset; linked statically (Appendix C) |
+| `vbkx-go`, `vbkx-rs`, `vbkx-pl` | The extractors of last resort, in Go, Rust and Perl, built from the sources in `tools/` (Appendix C.9) |
+| `vbackup.exe`, `vbkx.exe` | The utility and the extractor on Windows (Section 3.17) |
+| Plugins | Midnight Commander, far2l and Far Manager, Total Commander and Double Commander open a saveset as an archive (Appendix D) |
+
+---
+
+# Chapter 2
+# Installation
+
+## 2.1 Requirements
+
+| Item | Requirement |
+|---|---|
+| Operating system | Linux, x86_64 or aarch64 |
+| Compiler | A C11 compiler (GCC) |
+| Build | CMake 3.16 or later, make |
+| Libraries | StarLet 1.6 or later (required); HELP 1.0 or later (optional: `/HELP` and the help libraries) |
+| Optional | Go and Rust for `vbkx-go` and `vbkx-rs`; MinGW-w64 and wine for `vbkx.exe` and `vbackup.exe`; Midnight Commander or far2l for their plugins |
+
+Nothing else is needed at run time beyond the C library: VBACKUP links no compression nor crypto
+library.
+
+## 2.2 Building and Installing
+
+Install StarLet (and HELP) first, from their kits. Then:
+
+```
+# tar xzf vbackup-X01-25.tar.gz
+# cd vbackup-X01-25
+# cmake -S . -B build
+# cmake --build build -j
+# (cd build && ctest)
+# cmake --install build
+```
+
+Every test must pass; a test that fails is a reason not to install. The tests speak TAP when `TAP=1`
+is set, for prove and the CI systems.
+
+`make kit` in the build tree makes `vbackup-`*ident*`.tar.gz`; in a git tree it is made by git
+archive of HEAD, so only what is committed goes into it.
+
+The options of the build:
+
+| Option | Default | Effect |
+|---|---|---|
+| `VBACKUP$M_HELPAPI` | ON | Answer `/HELP` out of the help library when HELP is found |
+| `VBACKUP$M_HELPLIB` | ON | Translate and install the help libraries |
+| `VBACKUP$M_INSTALL_DOC` | ON | Install the manual pages and the documents |
+| `VBACKUP$M_PLUGINS` | ON | Install the plugins where Midnight Commander and far2l are found |
+| `VBACKUP$M_VBKXSTATIC` | ON | Link vbkx statically when the system allows it |
+| `VBACKUP$M_GEEKS` | ON | Build vbkx-go and vbkx-rs when Go and Rust are found |
+| `VBACKUP$M_WINVBKX` | ON | Build vbkx.exe with MinGW-w64 and test it under wine, when they are found |
+| `VBACKUP$M_PDF` | OFF | Render this manual as PDF (needs pandoc and XeLaTeX) |
+| `VBACKUP$M_STRICT` | OFF | Treat the compilation diagnostics as errors |
+
+## 2.3 Installing on Windows
+
+The images for Windows are made by GitHub Actions from every tag and published with the release:
+`vbackup-`*tag*`-win64.zip` holds `vbackup.exe`, `vbkx.exe`, the Total Commander plugin
+(`vbackup.wcx64`, `vbackup.wcx`, `pluginst.inf`), `LICENSE`, `NOTICE` and `COPYING.MinGW-w64`, and
+`SHA256SUMS` lists the checksums. Unpack the archive into a directory on the PATH; nothing else is
+installed. `tools/mkrelease.sh` makes the same files by hand.
+
+## 2.4 Installing in Another Place
+
+The default prefix is `/usr/local`. Another is given to CMake:
+
+```
+# cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/opt/vbackup
+```
+
+## 2.5 Verifying the Installation
+
+```
+$ vbackup /HELP
+$ vbackup /usr/local/share/doc/vbackup /tmp/doc.bck /VERIFY
+$ vbkx t /tmp/doc.bck
+```
+
+The first command shows the topics of the help library; built without HELP, VBACKUP shows the summary built into the image instead.
+The second saves the installed documents and compares the saveset with the disk: it must end with
+`%VBACKUP-I-COMPLETED` and the exit status 0. The third tests the same saveset with the stand-alone
+extractor.
+
+## 2.6 Removal
+
+```
+# cmake --build build --target uninstall
+```
+
+removes every file the installation put in place, and takes the sections of the plugins out of the
+files of Midnight Commander and far2l exactly, between their markers. Savesets and journals are
+never touched.
+
+---
+
+# Chapter 3
+# Concepts
 
 The VBACKUP utility (VBACKUP) saves files and directories of Linux file
 systems into a *saveset*, restores them from it, lists it and compares it
@@ -138,7 +333,7 @@ VBACKUP needs nothing on the system beyond the C library; savesets can be
 read without VBACKUP by the stand-alone extractor vbkx and by the
 extractors of last resort (Appendix C).
 
-### 1.1 Savesets
+## 3.1 Savesets
 
 A saveset is a file, or a set of files called *volumes*, that holds
 copies of files together with everything needed to give them back:
@@ -163,24 +358,24 @@ VBACKUP recognizes a saveset on the input side by its contents, never by
 its name. On the output side of a save, a saveset is recognized by its
 name (it ends in `.bck` or `.sav`), by the `/SAVE_SET` qualifier, or by
 the name `-` (the standard output). A saveset on another node,
-*node*`::`*file*, is a saveset on either side (Section 1.10).
+*node*`::`*file*, is a saveset on either side (Section 3.10).
 
-### 1.2 Operations
+## 3.2 Operations
 
 The operation is determined by the parameters and by a few qualifiers
-(see Chapter 2, Usage Summary):
+(see Section 5.1):
 
 | Input | Output | Operation |
 |---|---|---|
 | files | saveset | **Save**: the files are written into a new saveset. |
 | saveset[,...] | directory | **Restore**: the files of the saveset are created in the directory. |
-| saveset | -- (with `/ORIGINAL`) | **Restore** of every file into the directory it was saved from. |
-| saveset | -- (with `/LIST`) | **List**: the summary and the files of the saveset are displayed. |
+| saveset | - (with `/ORIGINAL`) | **Restore** of every file into the directory it was saved from. |
+| saveset | - (with `/LIST`) | **List**: the summary and the files of the saveset are displayed. |
 | saveset | [directory] (with `/COMPARE`) | **Compare**: every file of the saveset is compared with the disk. |
 | saveset | [file] (with `/EXTRACT`) | **Extract**: one file is written to a file or to the standard output. |
 | files | directory (no saveset) | **Copy**: the files are copied from disk to disk. |
-| saveset[,...] | -- (with `/RECORD`) | **Journal rebuild**: the journal is made again from the catalogs. |
-| -- | -- (with `/JOURNAL /LIST`) | **Journal listing**: the savesets and files the journal knows. |
+| saveset[,...] | - (with `/RECORD`) | **Journal rebuild**: the journal is made again from the catalogs. |
+| - | - (with `/JOURNAL /LIST`) | **Journal listing**: the savesets and files the journal knows. |
 | saveset | saveset | **Copy of a saveset**: the blocks are copied as they are, volume for volume (`/TRANSFER`). |
 
 A save may also verify the new saveset (`/VERIFY`), list it (`/LIST`),
@@ -188,12 +383,12 @@ record it in the journal (`/RECORD`) and delete the files it saved and
 verified (`/DELETE`).
 
 The saveset of a save, a restore, a listing, a compare, an extraction or
-a copy of a saveset may also be `-`, a pipe (Section 1.9), or
-*node*`::`*file*, a saveset on another node (Section 1.10).
+a copy of a saveset may also be `-`, a pipe (Section 3.9), or
+*node*`::`*file*, a saveset on another node (Section 3.10).
 
-### 1.3 Saveset Structure
+## 3.3 Saveset Structure
 
-#### Blocks
+### Blocks
 
 A saveset is a sequence of blocks of one fixed size, the *block size*
 (`/BLOCK_SIZE`, 8192 to 1048576 bytes, a multiple of 512; default 65536).
@@ -211,7 +406,7 @@ records: a SUMMARY record, then for every file a FILE record, its DATA
 CRC of the data and the status of the file; then the CATALOG records and
 an END record. A record may cross block and volume boundaries.
 
-#### CRC
+### CRC
 
 Every block carries a CRC-32 (IEEE) of its header and payload; every file
 carries a CRC-32 of its data in its FEND record and catalog entry. A
@@ -219,7 +414,7 @@ damaged block is always detected when the saveset is read; a file whose
 data does not match its CRC is reported (CRCERR), never silently
 restored as good.
 
-#### XOR Groups and Repair
+### XOR Groups and Repair
 
 After every *n* data blocks (*n* is the *group size*, `/GROUP_SIZE`,
 0 to 100, default 10) VBACKUP writes one XOR block: the byte-wise XOR of
@@ -233,7 +428,7 @@ lost blocks are affected (FILDAMAGED, FILLOST). `/GROUP_SIZE=0` writes no
 XOR blocks, and nothing can be repaired. The XOR blocks of the default
 group size make the saveset about 10% larger.
 
-#### Volumes and Their Naming
+### Volumes and Their Naming
 
 `/VOLUME_SIZE` cuts the saveset into volumes of a fixed size. Volume 1
 has the name given in the command; volume *k* (*k* >= 2) has that name
@@ -253,10 +448,10 @@ ignored (WRONGVOL).
 
 A saveset written to a pipe carries its volumes back to back, each
 beginning with its VHDR, the block numbers running on through them
-(Section 1.9); a copy of the saveset into files splits it into volume
+(Section 3.9); a copy of the saveset into files splits it into volume
 files of the names above.
 
-#### The Catalog
+### The Catalog
 
 At the end of the stream VBACKUP writes a catalog: one entry for every
 file, with its name, type, owner, mode, size, times, link target, CRC,
@@ -265,26 +460,26 @@ begins. `/LIST` reads the catalog only, so even a very large saveset is
 listed at once; `/EXTRACT` reaches one file through its place in the
 catalog without reading anything else. The catalog of an incremental
 saveset lists also the files that it covers but did not save, with the
-status PRESENT (see Section 1.5).
+status PRESENT (see Section 3.5).
 
 **Nothing left out without a word.** Since X01-22 a restore, `/COMPARE`,
 `/VERIFY` and vbkx `x` and `t` always set the catalog against the FILE
-records they met -- not only after lost blocks. A file of the catalog
+records they met - not only after lost blocks. A file of the catalog
 whose records never came is named: FILLOST when blocks were lost,
 NOTINSTREAM when none was (a record the reader does not know, a saveset
 made wrong); `/COMPARE` and `/VERIFY` count it as a difference
 (COMPARERR). From a pipe the catalog records are taken as they come.
 
-#### The TRAILER
+### The TRAILER
 
 The last block of the saveset is the TRAILER. It holds the totals of the
 save (files, bytes, errors, blocks, volumes, catalog entries) and the
-place where the catalog begins. A saveset without a TRAILER -- the save
+place where the catalog begins. A saveset without a TRAILER - the save
 was interrupted, the disk became full, or the last volume is missing --
 can still be read sequentially up to its last good block; VBACKUP
 reports NOTRAILER, and `/LIST` reads the whole saveset (NOCATALOG).
 
-### 1.4 File Specifications and Wildcards
+## 3.4 File Specifications and Wildcards
 
 An input specification of a save or a copy is a file or directory name,
 optionally with wildcards. VBACKUP expands the wildcards itself; put
@@ -299,7 +494,7 @@ them in quotes so that the shell does not:
 The *base* of a specification is the part before the first component
 that holds a wildcard or `...`; without wildcards, the base is the
 directory that contains the named file or directory. The names stored
-in the saveset -- the *stored names* -- are relative to the base. A
+in the saveset - the *stored names* - are relative to the base. A
 directory named in a specification is therefore stored with its own name
 in front:
 
@@ -325,18 +520,18 @@ A word of the command that begins with a slash is a qualifier only when
 it names one; `/etc` and `/home` are file names. A specification that
 contains a wildcard is never taken for a saveset.
 
-### 1.5 Incremental Backup and the Journal
+## 3.5 Incremental Backup and the Journal
 
 VBACKUP distinguishes two sets of files in a saveset (`format.md`,
 6.6):
 
 - the *covered* set: every entry selected by the input specifications
-  and the name filters -- `/SELECT`, `/EXCLUDE`, the nodump flag,
-  `/NOCROSS_DEVICE` -- and by `/BY_OWNER`;
+  and the name filters - `/SELECT`, `/EXCLUDE`, the nodump flag,
+  `/NOCROSS_DEVICE` - and by `/BY_OWNER`;
 - the *saved* set: the part of the covered set whose data is in the
   saveset. In a *full* saveset it is the covered set itself. In an
-  *incremental* saveset the time filters -- `/SINCE`, `/BEFORE`,
-  `/SINCE=BACKUP` -- choose it.
+  *incremental* saveset the time filters - `/SINCE`, `/BEFORE`,
+  `/SINCE=BACKUP` - choose it.
 
 Any time filter makes the saveset incremental. Its catalog lists the
 whole covered set: the saved files with their status, the others as
@@ -361,17 +556,17 @@ It is rewritten whole under an exclusive lock (`journal.lock`), through
 of the savesets (`saveset[,...] /RECORD`); the journal is a convenience,
 never the only copy of anything.
 
-A chain -- the full saveset, then the incremental ones in the order they
-were made -- is restored with `/INCREMENTAL`. Note that OpenVMS BACKUP
+A chain - the full saveset, then the incremental ones in the order they
+were made - is restored with `/INCREMENTAL`. Note that OpenVMS BACKUP
 restores an incremental chain newest first; VBACKUP takes it oldest
 first.
 
-### 1.6 Physical and Image Operations
+## 3.6 Physical and Image Operations
 
-#### /PHYSICAL
+### /PHYSICAL
 
-A save `/PHYSICAL` copies every block of one block device -- a partition
-or a whole disk -- or of an image file, whatever it holds: any file
+A save `/PHYSICAL` copies every block of one block device - a partition
+or a whole disk - or of an image file, whatever it holds: any file
 system, an encrypted volume, boot areas. The saveset holds one regular
 file, the image of the device, named after the device node; pieces of
 65536 bytes that are all zeros are not written. VBACKUP refuses a device
@@ -390,10 +585,10 @@ time.
 A `/PHYSICAL` saveset restored without `/PHYSICAL` is a sparse image file
 in the output directory; every extractor restores it so.
 
-#### /IMAGE
+### /IMAGE
 
-A save `/IMAGE` saves every file of one mounted file system -- nothing of
-the file systems mounted below it, nodump flags ignored -- under names
+A save `/IMAGE` saves every file of one mounted file system - nothing of
+the file systems mounted below it, nodump flags ignored - under names
 relative to its root, and records what makes the volume that volume: its
 type, label, UUID, space in use, mount options and the owner, mode,
 times and ACLs of its root directory. The input is the mount point, or
@@ -412,7 +607,7 @@ inode numbers; for those use `/PHYSICAL` of the whole disk.
 An `/IMAGE` saveset restored without `/IMAGE` is an ordinary tree of
 files.
 
-### 1.7 Compression
+## 3.7 Compression
 
 `/DATA_FORMAT=COMPRESSED` stores the data of files in DATAZ records;
 `/LEVEL=n` says how hard, and compresses by itself:
@@ -427,19 +622,19 @@ files.
 The ratios were measured on this host on 1 MB records of the vBACKUP
 source tree and of program binaries; the speeds are those of one core,
 the check of every record included - the compression runs on several
-threads (Section 1.12), and the saveset does not depend on their number.
+threads (Section 3.12), and the saveset does not depend on their number.
 A restore is fast at every level: faster than most disks for LZ4 and
 Deflate, tens of MB/s for LZMA. Levels 8 and 9 choose the cheapest coding
 of every stretch of data by the prices of the model (the optimal parse
 of xz) and compress as `xz -6` does on a record of 1 MB; they are slow to
 save, as xz is, and as fast to restore as 6 and 7.
 
-#### Small Files: SOLID Records
+### Small Files: SOLID Records
 
 Small files compress badly one by one: each starts with an empty
 dictionary, and its FILE and FEND records are not compressed at all.
 Since X01-21 a compressed save therefore gathers the small regular files
--- each of at most 256 KB, not a further name of a hard link -- into
+-- each of at most 256 KB, not a further name of a hard link - into
 groups of up to 256 KB (1 MB in X01-21), in the order of the walk, and
 compresses each group as one SOLID record (format.md 6.12): the FILE,
 DATA and FEND records of its files together, so the dictionary is
@@ -468,8 +663,8 @@ is a few per cent bigger, and far less is lost on a bad day (below).
 
 **What it costs on the day of the restore.** With the default parity
 nothing changes: one bad block of a group is still rebuilt (any *m* with
-`/PARITY=m`). But blocks lost beyond repair -- more than *m* bad blocks
-in one group -- take more than the file they were in: the files of the
+`/PARITY=m`). But blocks lost beyond repair - more than *m* bad blocks
+in one group - take more than the file they were in: the files of the
 SOLID they cut from the damage on, and every file of a SOLID that begins
 in them. The part of a SOLID before the cut is not lost (since X01-22):
 it is decompressed as far as it is exactly right, and the files wholly
@@ -488,7 +683,7 @@ damaged beyond repair, measured on `/usr/lib/python3/dist-packages`:
 So a handful to a couple of dozen small files, not one. The salvage is
 the reader's: VBACKUP X01-22 does it for savesets of X01-21 too. For a
 saveset that must live through heavy damage, give `/PARITY=2` or more
-(see `/PARITY` in Chapter 3), or `/NOSOLID`.
+(see `/PARITY` in Section 5.2), or `/NOSOLID`.
 
 A SOLID that does not decompress at all, or holds a record that makes no
 sense, is treated like lost blocks (BADREC, then FILLOST for its files)
@@ -496,7 +691,7 @@ sense, is treated like lost blocks (BADREC, then FILLOST for its files)
 it before it is written; a group that does not come back the same
 (ZCHECK) or does not shrink is written as ordinary records.
 
-#### Records and Checks
+### Records and Checks
 
 Every DATA record of a big file is compressed on its own (format.md 6.7):
 a bad block costs that record alone, and the XOR and parity repair works as for
@@ -520,14 +715,14 @@ VBACKUP and vbkx before X01-04 cannot read compressed data, before X01-19
 not levels 2 to 9; they report the files as damaged (CRCERR, FILDAMAGED,
 BADREC) and never write wrong data silently. A compressed saveset of
 X01-21 or later, unless saved with `/NOSOLID`, has format version 3 in
-every block -- even when every group happened to be written as ordinary
+every block - even when every group happened to be written as ordinary
 records; VBACKUP, vbkx and the plugins before X01-21 refuse it as a whole
 (NOTSAVESET) and never misread it. Read it with X01-21 or later, or save
 with `/NOSOLID` for older readers. The smaller groups of X01-22 are the
 same version 3: X01-21 reads them, and X01-22 reads the savesets of
 X01-21.
 
-### 1.8 Encryption
+## 3.8 Encryption
 
 `/ENCRYPT` makes an encrypted saveset (`format.md`, 6.10). The payloads of
 the data blocks and of the TRAILER are encrypted with ChaCha20 and
@@ -537,7 +732,7 @@ default, with a random 32-byte salt taken anew for every saveset. No
 cryptographic library is used: vbkx and the extractors of last resort
 read encrypted savesets with nothing else.
 
-#### Keys and KEYCHECK
+### Keys and KEYCHECK
 
 From the passphrase and the salt VBACKUP derives a master key and from it
 three keys: one for encryption, one for authentication, and a check
@@ -546,7 +741,7 @@ reader derives the keys and compares the check value before it reads
 anything else: a mismatch means a wrong passphrase (WRONGKEY), not a
 damaged saveset.
 
-#### What Is Visible
+### What Is Visible
 
 Block headers, CRCs and XOR blocks are computed over the ciphertext, so a
 damaged encrypted saveset is checked and repaired without the
@@ -559,9 +754,9 @@ command and the totals of the TRAILER.
 
 A block whose CRC is right but whose tag is wrong was changed on purpose
 (or by a very odd medium): it is reported (BLKFORGED) and treated as a
-bad block -- repaired from its group when possible, otherwise lost.
+bad block - repaired from its group when possible, otherwise lost.
 
-#### Passphrase Handling
+### Passphrase Handling
 
 The passphrase is never taken from the command line: the command is
 stored in the saveset and is visible to other users through `ps`. It is
@@ -581,7 +776,7 @@ the savesets that follow (the verification of a save, the chain of an
 `/INCREMENTAL` restore); it is wiped from memory at exit and on Ctrl/C,
 which also restores the terminal echo.
 
-#### Key Files
+### Key Files
 
 The passphrase is the first line of the key file, without its line end
 (LF or CR LF), taken byte for byte; it may be at most 1024 bytes and must
@@ -589,7 +784,7 @@ not be empty. The key file must be a regular file readable and writable
 by its owner only (mode 600); otherwise it is refused (KEYFILE).
 
 The passphrase *is* the key: a saveset whose passphrase is lost cannot be
-opened by anybody. Use a long passphrase -- five or more random words.
+opened by anybody. Use a long passphrase - five or more random words.
 The journal is not encrypted; it is a file of the saving system.
 
 Opening an encrypted saveset costs the PBKDF2 computation: about 0.5 s on
@@ -599,7 +794,7 @@ without. That cost is deliberate; every guess of an attacker pays it too.
 VBACKUP and vbkx before X01-06 cannot read an encrypted saveset; they
 report all blocks lost and write nothing.
 
-### 1.9 Pipes
+## 3.9 Pipes
 
 The name `-` is the standard output as the output of a save or of a
 copy of a saveset, and the standard input as the input of a restore,
@@ -610,7 +805,7 @@ $ vbackup /home - | ssh host 'vbackup - /backup/home.bck'
 $ ssh host 'vbackup /home -' | vbackup - /restore
 ```
 
-#### Streams of Several Volumes
+### Streams of Several Volumes
 
 Since X01-11 a saveset written to `-` may have several volumes
 (`/VOLUME_SIZE`): they go to the standard output back to back, each
@@ -631,7 +826,7 @@ end is of no use there: `/LIST` lists the FILE records as they come,
 are repaired as from a file. A pipe that ends before the TRAILER gives
 NOTRAILER.
 
-#### The Receiver
+### The Receiver
 
 When the input is a saveset and the output is a saveset too, VBACKUP
 copies the saveset block for block (`/TRANSFER`). With `-` on one side
@@ -643,7 +838,7 @@ $ ... | vbackup - home.bck         the stream into home.bck, home.bck.002, ...
 ```
 
 The receiver, `vbackup - `*saveset*, splits the stream into volume files
-at each VHDR, with the names of Section 1.3: the saveset on its disk is
+at each VHDR, with the names of Section 3.3: the saveset on its disk is
 the one that was sent, volume for volume and byte for byte. It checks
 every block as it arrives. A bad block is copied as it is and reported
 (BLKCOPIED), to be repaired from its group by a restore; a stream that
@@ -651,7 +846,7 @@ ends before its TRAILER is reported (NOTRAILER). The records are never
 decoded, so an encrypted saveset passes without its passphrase. XFRSUMM
 gives the totals.
 
-### 1.10 Savesets on Other Nodes
+## 3.10 Savesets on Other Nodes
 
 A saveset may lie on another node, named as DECnet named a file there:
 *node*`::`*file*. *node* is what ssh takes (`host` or `user@host`) and
@@ -663,12 +858,12 @@ $ vbackup backup-host::/backup/home.bck /restore
 $ vbackup backup-host::/backup/home.bck /LIST
 ```
 
-#### Mechanism
+### Mechanism
 
-VBACKUP starts VBACKUP on the other node through ssh -- or through the
-command named by the environment variable `VBACKUP_RSH` -- and joins it
+VBACKUP starts VBACKUP on the other node through ssh - or through the
+command named by the environment variable `VBACKUP_RSH` - and joins it
 to this one by a pipe; the saveset goes through the pipe as a stream
-(Section 1.9). What is given to the other node is always a copy of a
+(Section 3.9). What is given to the other node is always a copy of a
 saveset:
 
 | This node | The other node |
@@ -682,19 +877,19 @@ messages of the other side come to the standard error here as they are,
 among those of this side and with its own process number: its STARTED,
 CREATED, XFRSUMM and COMPLETED, and whatever went wrong there.
 
-#### /VERIFY
+### /VERIFY
 
 A save to another node with `/VERIFY` is verified once the other side
 has completed: the saveset is read back from there (a second ssh,
 `vbackup `*file*` - /TRANSFER`) and every file is compared with the disk
-here (VERIFYING, CMPSUMM). The saveset as it arrived -- the CRC of every
-block, the TRAILER -- is checked by the receiver there. `/DELETE` and
+here (VERIFYING, CMPSUMM). The saveset as it arrived - the CRC of every
+block, the TRAILER - is checked by the receiver there. `/DELETE` and
 `/LIST` are not taken with a saveset made on another node (QUALUSE: `not
 with a saveset made on another node`); list it by a second command, which
 reads it back. With `/RECORD` the journal records such a saveset as
 *node*`::`*file*.
 
-#### Completion Codes
+### Completion Codes
 
 The completion code of the other side joins that of this one. 0 adds
 nothing; 1 (warnings) makes the exit status at least 1; any other code,
@@ -703,12 +898,12 @@ REMOTEERR, and the exit status is 2. Code 127 most often means that the
 command of `VBACKUP_RSH` cannot be run here, or `vbackup` cannot be found
 there; 255 is ssh itself failing. When the other side stops while this
 one writes, this side finds the pipe broken: WRITERR (errno 32), FATALSAVE
-and REMOTEERR follow one another -- one fault, told by the messages of the
+and REMOTEERR follow one another - one fault, told by the messages of the
 other side above them. An `/EXTRACT` stops reading once it has its file;
 the broken pipe the other side meets then is no error. REMOTE reports that
 the pipe or the process for ssh cannot be made at all.
 
-#### Requirements
+### Requirements
 
 - VBACKUP X01-11 or later on the other node, in the PATH of a
   non-interactive ssh session: `ssh `*node*` vbackup` must start it.
@@ -718,7 +913,7 @@ the pipe or the process for ssh cannot be made at all.
 - The user on the other node must be able to create, or read, the
   saveset there.
 
-#### Why /TRANSFER
+### Why /TRANSFER
 
 The commands given to the other node carry `/TRANSFER`. A VBACKUP before
 X01-11 does not know that qualifier and refuses the command; without it,
@@ -726,7 +921,7 @@ it would take `vbackup - /backup/home.bck` for a restore of the stream
 into a directory named `/backup/home.bck`. An old VBACKUP on the other
 node thus fails plainly (REMOTEERR) rather than does the wrong thing.
 
-### 1.11 The Page Cache
+## 3.11 The Page Cache
 
 VBACKUP takes care not to evict the working data of the system from the
 page cache:
@@ -744,37 +939,37 @@ page cache:
 The pages of the saveset and of "cold" files are therefore not in the
 cache after a save; that is intended.
 
-### 1.12 Threads
+## 3.12 Threads
 
 | Thread(s) | Work | Number |
 |---|---|---|
 | Writer | Writes the blocks of the saveset, while the main thread reads files and builds blocks. | 1; `VBACKUP_PIPELINE=0` writes without it. |
-| Read-ahead | Opens and reads the first megabyte of the next files of the walk, so that the save or copy finds them in the cache; at most 128 files and 64 MB ahead. | 8 by default; `VBACKUP_PREFETCH=n`, at most 64, 0 -- none. |
-| Compression | Compresses the data of a save `/DATA_FORMAT=COMPRESSED`; the main thread writes the records in order. | The number of processors, at most 8; `VBACKUP_ZTHREADS=n`, 1 -- none. |
-| Decompression | Restore, `/COMPARE` and `/VERIFY` (since X01-23): the records are read ahead, up to 4 a thread and 64 MB, the DATAZ and SOLID among them decompressed side by side, then handed out in their order. | The threads of the encryption: `VBACKUP_CTHREADS=n`, 1 -- one record at a time. |
-| Encryption | Writing: the encrypted data blocks waiting for the writer sealed (ChaCha20 and tag) side by side, each whole, while the writer thread computes the XOR blocks and the CRCs in order; without the writer thread, the key stream of a block in stripes. Reading: the tags of the blocks of a group checked and the blocks decrypted side by side. | The number of processors, at most 8; `VBACKUP_CTHREADS=n`, 1 -- none. |
+| Read-ahead | Opens and reads the first megabyte of the next files of the walk, so that the save or copy finds them in the cache; at most 128 files and 64 MB ahead. | 8 by default; `VBACKUP_PREFETCH=n`, at most 64, 0 - none. |
+| Compression | Compresses the data of a save `/DATA_FORMAT=COMPRESSED`; the main thread writes the records in order. | The number of processors, at most 8; `VBACKUP_ZTHREADS=n`, 1 - none. |
+| Decompression | Restore, `/COMPARE` and `/VERIFY` (since X01-23): the records are read ahead, up to 4 a thread and 64 MB, the DATAZ and SOLID among them decompressed side by side, then handed out in their order. | The threads of the encryption: `VBACKUP_CTHREADS=n`, 1 - one record at a time. |
+| Encryption | Writing: the encrypted data blocks waiting for the writer sealed (ChaCha20 and tag) side by side, each whole, while the writer thread computes the XOR blocks and the CRCs in order; without the writer thread, the key stream of a block in stripes. Reading: the tags of the blocks of a group checked and the blocks decrypted side by side. | The number of processors, at most 8; `VBACKUP_CTHREADS=n`, 1 - none. |
 
 No thread changes the saveset: with any number of threads the same input
 gives the same saveset.
 
-### 1.13 The Stand-Alone Extractor and the Extractors of Last Resort
+## 3.13 The Stand-Alone Extractor and the Extractors of Last Resort
 
 vbkx is a small, statically linked program that lists, extracts, prints
-and tests savesets on a machine where VBACKUP is not installed -- a
+and tests savesets on a machine where VBACKUP is not installed - a
 rescue system, another distribution. It needs no help library and no
 message facility. It restores data, holes, modes, times, symbolic and
 hard links and FIFOs, and as root the owners (by number) and device
 files; it does not restore ACLs, extended attributes or chattr flags.
 `vbkx.exe` is the same program for Windows.
 
-Three more extractors -- vbkx-go (Go), vbkx-rs (Rust) and vbkx-pl (Perl)
+Three more extractors - vbkx-go (Go), vbkx-rs (Rust) and vbkx-pl (Perl)
 -- are written for the day everything else is dead: one source file
 each, the standard library only, plain so that they can be read and
 corrected against `format.md`. They read compressed and encrypted
 savesets, repair one bad block per group, and name every damaged or
 missing file. See Appendix C.
 
-### 1.14 File Manager Plugins
+## 3.14 File Manager Plugins
 
 Savesets can be browsed like folders in Midnight Commander (extfs script
 `uvbk`), far2l and Far Manager 3 (MultiArc, over vbkx), and Total
@@ -786,7 +981,7 @@ plugins never ask for a passphrase. See Appendix D.
 
 ---
 
-### 1.15 Scheduling and Rotation
+## 3.15 Scheduling and Rotation
 
 VBACKUP does not schedule itself nor delete old savesets: that is the
 business of a batch queue, and BATCH (the batch job subsystem, `batch
@@ -816,7 +1011,7 @@ A job that fails stays in the queue with its log (`batch show`), the
 messages of VBACKUP and its completion code in it; nothing is lost
 silently, as with cron.
 
-### 1.16 OpenVMS BACKUP Savesets
+## 3.16 OpenVMS BACKUP Savesets
 
 A saveset written by OpenVMS BACKUP is accepted as input. It is known by
 the header of its first block (there is no magic string) and read from its
@@ -857,7 +1052,7 @@ and `/PHYSICAL` savesets, are not read. `/COMPARE`, `/INCREMENTAL`,
 a saveset. The stand-alone extractor `vbkx` reads it the same way. The
 format, as VBACKUP reads it, is described in `doc/vmsbackup.md`.
 
-### 1.17 VBACKUP on Windows
+## 3.17 VBACKUP on Windows
 
 `vbackup.exe` is VBACKUP built for Windows with MinGW-w64: the same
 command, the same qualifiers, the same savesets. A saveset made on Linux
@@ -884,7 +1079,7 @@ C:\> vbackup D:\docs.bck C:\restore
 C:\> vbackup C:\data D:\data.bck /ENCRYPT /KEY_FILE=C:\Users\ivan\backup.key
 ```
 
-#### What Is Saved and Restored
+### What Is Saved and Restored
 
 Names are Unicode - UTF-8 in the saveset, as on Linux - and paths may be
 of any length (the `\\?\` form is used where needed). `\` and `/` both
@@ -915,7 +1110,7 @@ On Linux a saveset made on Windows restores as any other: the streams
 become `user.` attributes, the attributes of NTFS and the descriptor are
 left aside; every extractor reads it.
 
-#### Privileges and the Owner
+### Privileges and the Owner
 
 Run as an administrator (elevated), `vbackup.exe` enables the privileges
 of a backup operator - SeBackupPrivilege, SeRestorePrivilege,
@@ -935,7 +1130,7 @@ saveset is checked before use - every SID and ACL in it must lie inside
 the item - and a forged one is refused (ATTRERR ... the descriptor in the
 saveset is not valid).
 
-#### Names Windows Cannot Hold
+### Names Windows Cannot Hold
 
 A Linux saveset may hold names that Windows does not allow or reads as
 something else: a `:` (a stream of another file), `< > " | ? * \`, a
@@ -951,7 +1146,7 @@ socket or a device is not made (UNSUPP). Of the extended attributes of a
 Linux saveset only the `user.` ones become streams; the others
 (`security.`, `trusted.`, `system.`) are skipped.
 
-#### Differences from Linux
+### Differences from Linux
 
 - A saveset on another node (`node::file`) goes through `ssh.exe`, the
   OpenSSH client of Windows 10 and 11; `VBACKUP_RSH` names another one.
@@ -966,7 +1161,282 @@ Linux saveset only the `user.` ones become streams; the others
 - The passphrase is read from the console without echo, in UTF-8: a
   saveset encrypted on Linux opens on Windows with the same passphrase.
 
-## Chapter 2 VBACKUP Usage Summary
+---
+
+# Chapter 4
+# Examples
+
+1. ```
+   $ vbackup /home/rrl /backup/rrl.bck /VERIFY
+   %VBACKUP-I-STARTED, Operation: save, Input: /home/rrl, Output: /backup/rrl.bck - started
+   %VBACKUP-I-SAVESUMM, Files: 6, Bytes: 108902, Blocks: 5, Volumes: 1 - saved
+   %VBACKUP-I-VERIFYING, Saveset: /backup/rrl.bck - verifying
+   %VBACKUP-I-CMPSUMM, Files: 6, Differences: 0 - compared
+   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.00 - completed
+   ```
+
+   A full save of the directory `/home/rrl` into the saveset `rrl.bck`.
+   The saveset is recognized by its name. `/VERIFY` reads the new saveset
+   back and compares every file with the disk; no difference was found,
+   and the exit status is 0. The stored names begin with `rrl/`: the base
+   is `/home`.
+
+2. ```
+   $ vbackup /home full.bck /RECORD /JOURNAL=/backup/home.jnl
+   %VBACKUP-I-STARTED, Operation: save, Input: /home, Output: full.bck - started
+   %VBACKUP-I-SAVESUMM, Files: 7, Bytes: 3108910, Blocks: 55, Volumes: 1 - saved
+   %VBACKUP-I-RECORDED, Files: 5, Journal: /backup/home.jnl - recorded
+   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.01 - completed
+   $ vbackup /home mon.bck /SINCE=BACKUP /RECORD /JOURNAL=/backup/home.jnl
+   %VBACKUP-I-STARTED, Operation: save, Input: /home, Output: mon.bck - started
+   %VBACKUP-I-SAVESUMM, Files: 3, Bytes: 4, Blocks: 4, Volumes: 1 - saved
+   %VBACKUP-I-INCRSUMM, Files: 4 - unchanged, listed as present, not saved
+   %VBACKUP-I-RECORDED, Files: 1, Journal: /backup/home.jnl - recorded
+   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.00 - completed
+   $ vbackup full.bck,mon.bck /restore /INCREMENTAL /LOG
+   %VBACKUP-I-STARTED, Operation: restore, Input: full.bck, Output: /restore - started
+   %VBACKUP-I-RESTORED, File: /restore/rrl - restored
+   ...
+   %VBACKUP-I-RESTORED, File: /restore/rrl/new.txt - restored
+   %VBACKUP-I-RESTORED, File: /restore/rrl/sub - restored
+   %VBACKUP-I-DELETED, File: /restore/rrl/sub/c.h - deleted: it is not in the incremental saveset
+   %VBACKUP-I-RESTSUMM, Files: 10, Bytes: 3108914 - restored
+   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.01 - completed
+   ```
+
+   An incremental chain. The full save records its files in the journal
+   of this backup plan. On Monday one file was created and one deleted;
+   `/SINCE=BACKUP` saves the new file and the directories, and the catalog
+   lists the four unchanged files as present. The restore takes the full
+   saveset first, then the incremental one; the file deleted on Monday is
+   deleted from the output. The directories are counted in RESTSUMM each
+   time they are restored.
+
+3. ```
+   $ vbackup /home /mnt/usb/home.bck /VOLUME_SIZE=4G /DATA_FORMAT=COMPRESSED
+   ...
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.003 - created
+   %VBACKUP-I-SAVESUMM, Files: 48211, Bytes: 10737418240, Blocks: 151216, Volumes: 3 - saved
+   ...
+   $ vbackup /mnt/usb/home.bck /restore
+   ```
+
+   The saveset is cut into volumes of 4 GB for a FAT32 disk, and its data
+   is compressed. Volumes after the first are reported as they are
+   created. To restore, give the first volume; the others are found beside
+   it. Had a volume been lost, MISSVOL would name it and the files in the
+   other volumes would still be restored.
+
+4. ```
+   # umask 077; head -c 32 /dev/urandom | base64 > /root/backup.key
+   # vbackup /home /backup/home.bck /ENCRYPT /KEY_FILE=/root/backup.key
+   # crontab -l
+   30 2 * * * VBACKUP_KEY_FILE=/root/backup.key /usr/local/bin/vbackup /home /backup/home-$(date +\%a).bck /ENCRYPT /REPLACE
+   ```
+
+   An encrypted save run by cron. The key file holds the passphrase in its
+   first line and is readable by root only; a key file that others may read
+   is refused with KEYFILE. In the crontab the key file is named by
+   `VBACKUP_KEY_FILE`. Cron has no terminal: without a key file the save
+   would stop with NOKEY instead of waiting. Keep a copy of the key file in
+   a safe place - without it the savesets cannot be opened.
+
+5. ```
+   $ vbackup /etc backup-host::/backup/etc.bck /VOLUME_SIZE=1M /VERIFY
+   %VBACKUP-I-STARTED, Operation: save, Input: /etc, Output: backup-host::/backup/etc.bck - started
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /backup/etc.bck - started
+   %VBACKUP-I-CREATED, Volume: (standard output) - created
+   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.002 - created
+   ...
+   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.005 - created
+   %VBACKUP-I-SAVESUMM, Files: 42, Bytes: 3662512, Blocks: 72, Volumes: 5 - saved
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+   %VBACKUP-I-VERIFYING, Saveset: backup-host::/backup/etc.bck - verifying
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
+   %VBACKUP-I-CMPSUMM, Files: 42, Differences: 0 - compared
+   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.04 - completed
+   ```
+
+   A save to another node, in volumes of 1 MB, verified. VBACKUP on
+   `backup-host`, started through ssh, receives the stream and makes the
+   volume files `/backup/etc.bck`, `/backup/etc.bck.002`, ... there,
+   checking every block; its messages (the copy of a saveset) come here
+   among those of the save. `/VERIFY` reads the saveset back from there and
+   compares it with `/etc`. Had VBACKUP there failed, REMOTEERR would give
+   its completion code, and the exit status would be 2.
+
+6. ```
+   $ vbackup backup-host::/backup/etc.bck /restore/etc
+   %VBACKUP-I-STARTED, Operation: restore, Input: backup-host::/backup/etc.bck, Output: /restore/etc - started
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
+   %VBACKUP-I-RESTSUMM, Files: 42, Bytes: 3662512 - restored
+   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.01 - completed
+   $ vbackup backup-host::/backup/etc.bck /LIST
+   $ vbackup backup-host::/backup/etc.bck /EXTRACT=etc/fstab | less
+   ```
+
+   A restore from another node. VBACKUP there sends the volumes back to
+   back; the restore reads them as a pipe, once, forward only. A listing
+   reads the whole stream (the catalog at its end cannot be reached
+   first); an extraction stops as soon as it has its file.
+
+7. ```
+   $ vbackup /backup/home.bck - > /tmp/home.stream
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/home.bck, Output: (standard output) - started
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.01 - completed
+   $ vbackup - /mnt/usb/home.bck < /tmp/home.stream
+   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /mnt/usb/home.bck - started
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
+   ...
+   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.005 - created
+   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
+   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
+   $ cmp /backup/home.bck.003 /mnt/usb/home.bck.003
+   $ vbackup /backup/secret.bck - | ssh vault 'vbackup - /archive/secret.bck'
+   $ vbackup /backup/secret.bck vault::/archive/secret.bck
+   ```
+
+   A saveset of five volumes is copied into a stream, here kept in a
+   file, and back into volume files: every volume of the copy is byte for
+   byte the original. The last two commands send an encrypted saveset to
+   another machine, through a pipe given by hand and as
+   *node*`::`*file*: the blocks are copied, never decrypted, so no
+   passphrase is asked on either side. Had a block gone bad on the
+   way, the receiver would report it (BLKCOPIED) and copy it as it is; a
+   restore repairs it from its group.
+
+8. ```
+   # umount /dev/sdb1
+   # vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL /DATA_FORMAT=COMPRESSED
+   # vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
+   Everything on /dev/sdc1 (21474836480 bytes) is to be overwritten with the device saved in /mnt/usb/sdb1.bck.
+   Type YES to go on: YES
+   ```
+
+   A partition is copied block by block to another one. It is unmounted
+   first (a device mounted read-write is refused with PHYSMOUNTED). The
+   restore requires `/REPLACE` and, at a terminal, `YES`. The copy carries
+   the labels and UUIDs of the original (PHYSUUID): do not mount both at
+   the same time.
+
+9. ```
+   # vbackup /mnt/data /mnt/usb/data.bck /IMAGE /VERIFY
+   # vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE /LOG
+   ```
+
+   A whole file system is saved from its mount point, with its type, label
+   and UUID. The restore runs the mkfs program of its type on `/dev/sdc1`
+   (IMGCMD shows the command under `/LOG`), restores the files into the new
+   file system and unmounts it (IMGSUMM). `/dev/sdc1` may be smaller than
+   the original device as long as the files fit.
+
+10. ```
+    # vbackup /mnt/usb/home.bck /ORIGINAL
+    %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/home.bck, Output: (where its files came from) - started
+    %VBACKUP-I-ORIGTARGET, Saveset: /mnt/usb/home.bck, Target: /home - its files go back there
+    %VBACKUP-W-FILEEXISTS, File: /home/rrl/a.txt - already exists, not restored
+    ...
+    ```
+
+    Every file goes back to the directory it was saved from. Files that are
+    there are kept and reported; add `/REPLACE` to overwrite them.
+
+11. ```
+    $ vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
+    ...
+    %VBACKUP-I-CMPSUMM, Files: 213, Differences: 0 - compared
+    %VBACKUP-W-SRCKEPT, File: /home/ivan/old/log.txt - not deleted: it changed after it was saved
+    %VBACKUP-I-DELSUMM, Deleted: 197, Kept: 1
+    ```
+
+    The files are archived and then deleted from the disk. A file that was
+    written to after it was saved is kept. Directories are kept.
+
+12. ```
+    $ vbackup /backup/rrl.bck /COMPARE
+    $ vbackup /backup/rrl.bck /tmp/restore /COMPARE
+    ```
+
+    The first command compares the saveset with the places its files were
+    saved from; the second with a directory into which it was restored.
+    Every difference is reported with COMPARERR; the exit status is 2 when
+    there is one.
+
+13. ```
+    $ vbackup /backup/rrl.bck /EXTRACT=rrl/notes.txt | less
+    $ vbackup /backup/rrl.bck /tmp/notes.txt /EXTRACT=rrl/notes.txt
+    ```
+
+    One file is extracted to the standard output, then to a file. The name
+    is the stored name, as `/LIST` shows it.
+
+14. ```
+    $ vbackup /backup/rrl.bck /LIST
+    $ vbackup /backup/rrl.bck /LIST /FULL
+    $ vbackup /backup/rrl.bck /LIST=/tmp/rrl.lis /FORMAT=LS
+    ```
+
+    The three forms of a listing: brief (the default), full, and one line
+    per file in the form of `ls -l`, here written to a file.
+
+15. ```
+    $ vbackup /JOURNAL=/backup/home.jnl /LIST /FULL '/SELECT=*/notes.txt'
+    $ rm /backup/home.jnl
+    $ vbackup /backup/full.bck,/backup/mon.bck /RECORD /JOURNAL=/backup/home.jnl
+    ```
+
+    The journal is listed with the files it knows whose names end in
+    `/notes.txt` and the saveset that holds the last copy of each. Then the
+    journal is rebuilt from the catalogs of the savesets, oldest first.
+
+16. ```
+    # vbkx t /mnt/usb/home.bck
+    /mnt/usb/home.bck: all files read, all checksums match
+    # vbkx l /mnt/usb/home.bck | less
+    # vbkx x /mnt/usb/home.bck -C /mnt/root/home rrl/projects
+    ```
+
+    On a rescue system without VBACKUP, the statically linked vbkx tests
+    the saveset, lists it and extracts one directory into the disk being
+    repaired.
+
+17. ```
+    C:\> set VBACKUP_KEY_FILE=C:\Users\rrl\backup.key
+    C:\> vbkx.exe l E:\home.bck
+    C:\> vbkx.exe x E:\home.bck -C C:\restore rrl/documents
+    ```
+
+    On Windows, vbkx.exe lists an encrypted saveset on a USB disk and
+    extracts a directory. Names that Windows cannot hold are not extracted,
+    and said.
+
+18. ```
+    $ vbackup USERS.BCK /LIST /FULL
+    $ vbackup USERS.BCK /restore/vms /SELECT=SMITH/*
+    $ vbkx p USERS.BCK "[SMITH]LOGIN.COM;3"
+    ```
+
+    A saveset of OpenVMS BACKUP, copied in binary mode from an Alpha, is
+    listed as `BACKUP/LIST/FULL` lists it, the files of one user restored
+    with Linux names, and one older version of a file displayed by vbkx.
+
+---
+
+# Chapter 5
+# Command Dictionary
+
+This chapter describes the `vbackup` command: its format and parameters, how the operation
+is determined, its exit status and restrictions (Section 5.1), and each of its qualifiers in
+alphabetical order (Section 5.2).
+
+## 5.1 The VBACKUP Command
 
 The VBACKUP utility saves files into savesets, restores, lists,
 compares, extracts and copies them, here or on another node, copies
@@ -996,7 +1466,7 @@ specifications are separated by commas, without spaces. An element in
 double quotes is taken as it stands.
 
 - **Save, copy:** the files and directories to be saved or copied, with
-  optional wildcards (see Section 1.4). A directory is taken with
+  optional wildcards (see Section 3.4). A directory is taken with
   everything in it. At most 64 specifications.
 - **Save /PHYSICAL:** one block device or image file.
 - **Save /IMAGE:** one mount point, or one mounted block device.
@@ -1010,7 +1480,7 @@ double quotes is taken as it stands.
   volume.
 - **`-`:** a saveset read from the standard input (restore, `/LIST`,
   `/COMPARE`, `/EXTRACT`, copy of a saveset).
-- **`node::file`:** a saveset on another node (Section 1.10), read
+- **`node::file`:** a saveset on another node (Section 3.10), read
   through a pipe as `-` is; it must be the only input. *node* is a host
   name or `user@host`, without a slash.
 
@@ -1083,8 +1553,8 @@ VBACKUP examines the parameters in this order:
    `/LIST`: copy of a saveset, block for block. So `vbackup x.bck y.bck`
    copies the saveset; to restore, give a directory whose name is not a
    saveset name.
-4. Every input is a saveset: `/LIST` without an output -- list;
-   `/RECORD` without an output -- journal rebuild; otherwise -- restore.
+4. Every input is a saveset: `/LIST` without an output - list;
+   `/RECORD` without an output - journal rebuild; otherwise - restore.
 5. The output is a saveset name (`.bck`, `.sav`, `/SAVE_SET` or `-`):
    save.
 6. An output is given and the inputs exist: copy.
@@ -1116,7 +1586,7 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 
 The standard output carries only what the operation produces: a listing,
 the data of `/EXTRACT`, a saveset written to `-`, the help text. See
-Appendix A. The messages of VBACKUP on another node (Section 1.10) come
+Chapter 6. The messages of VBACKUP on another node (Section 3.10) come
 to the standard error too, with the process number of that side.
 
 #### Exit Status
@@ -1125,7 +1595,7 @@ to the standard error too, with the process number of that side.
 |---|---|
 | 0 | All was done. No warning or error was signalled. |
 | 1 | All was done, with warnings: at least one message of severity W (for example, a file changed while it was saved, a file exists and was not restored). |
-| 2 | Something was not done: at least one message of severity E or F was signalled (for example, a file could not be read, a difference was found by `/COMPARE` or `/VERIFY`, VBACKUP on another node did not complete -- REMOTEERR), or the command could not be parsed. |
+| 2 | Something was not done: at least one message of severity E or F was signalled (for example, a file could not be read, a difference was found by `/COMPARE` or `/VERIFY`, VBACKUP on another node did not complete - REMOTEERR), or the command could not be parsed. |
 
 Informational and success messages do not affect the exit status.
 
@@ -1187,17 +1657,15 @@ Informational and success messages do not affect the exit status.
 - Savesets are never modified in place; nothing can be added to or
   deleted from an existing saveset.
 
----
+## 5.2 Qualifiers
 
-## Chapter 3 VBACKUP Qualifiers
-
-This chapter describes the qualifiers of the VBACKUP command in
+This section describes the qualifiers of the VBACKUP command in
 alphabetical order, and the environment variables that affect it.
 
 ### Qualifier Summary
 
-In the column *Applies to*: S -- save, R -- restore, L -- list, C --
-compare, X -- extract, P -- copy, J -- journal rebuild and listing, T --
+In the column *Applies to*: S - save, R - restore, L - list, C --
+compare, X - extract, P - copy, J - journal rebuild and listing, T --
 copy of a saveset.
 
 | Qualifier | Class | Applies to | Default |
@@ -1208,7 +1676,7 @@ copy of a saveset.
 | `/BY_OWNER=user` | Input file-selection | S, P | All owners |
 | `/CHANGED` | Input file-selection | S, P | `/MODIFIED` |
 | `/COMMENT="text"` | Output save-set | S | None |
-| `/COMPARE` | Command | C | -- |
+| `/COMPARE` | Command | C | - |
 | `/[NO]CONFIRM` | Command | S, R, P | `/NOCONFIRM` |
 | `/CREATED` | Input file-selection | S, P | `/MODIFIED` |
 | `/[NO]CROSS_DEVICE` | Input file-selection | S, P | `/NOCROSS_DEVICE` |
@@ -1216,24 +1684,24 @@ copy of a saveset.
 | `/DELETE` | Input file | S | Files are kept |
 | `/ENCRYPT` | Output save-set | S | Not encrypted |
 | `/EXCLUDE=(pattern[,...])` | Input file-selection | S, R, C, P | None |
-| `/EXTRACT=stored-name` | Command | X | -- |
+| `/EXTRACT=stored-name` | Command | X | - |
 | `/FORMAT=keyword` | Listing | L | `VMS` |
 | `/FULL` | Listing | L, J | `/BRIEF` |
 | `/GROUP_SIZE=n` | Output save-set | S | 10 |
-| `/HELP [topic ...]` | Command | -- | -- |
+| `/HELP [topic ...]` | Command | - | - |
 | `/IGNORE=NOBACKUP` | Input file-selection | S, P | nodump files left out |
-| `/IMAGE` | Command | S, R | -- |
-| `/INCREMENTAL` | Output file | R | -- |
+| `/IMAGE` | Command | S, R | - |
+| `/INCREMENTAL` | Output file | R | - |
 | `/JOURNAL[=file]` | Command | S, J | See text |
 | `/KEY_FILE=file` | Command | S, R, L, C, X, J | `VBACKUP_KEY_FILE`, else the terminal |
 | `/LEVEL=n` | Output save-set | S | 1 (with `/DATA_FORMAT=COMPRESSED`) |
-| `/LIST[=file]` | Command | L, S | -- |
+| `/LIST[=file]` | Command | L, S | - |
 | `/[NO]LOG` | Command | all | `/NOLOG` |
 | `/MODIFIED` | Input file-selection | S, P | `/MODIFIED` |
-| `/ORIGINAL` | Output file | R | -- |
+| `/ORIGINAL` | Output file | R | - |
 | `/OWNER=option` | Output file | R, P | `ORIGINAL` for root, `DEFAULT` otherwise |
 | `/PARITY=m` | Output save-set | S | 1 |
-| `/PHYSICAL` | Command | S, R | -- |
+| `/PHYSICAL` | Command | S, R | - |
 | `/[NO]RECORD` | Command | S, J | `/NORECORD` |
 | `/[NO]REPLACE` | Output file, Output save-set | S, R, X, T | `/NOREPLACE` |
 | `/SAVE_SET` | Output save-set | S, T | By name |
@@ -1273,7 +1741,7 @@ is accepted):
 | `NOW` | The present moment |
 
 `/BEFORE` makes the saveset incremental: the files it does not choose are
-listed in the catalog as PRESENT (see Section 1.5). An ill-formed time is
+listed in the catalog as PRESENT (see Section 3.5). An ill-formed time is
 reported with IVTIME. `/BEFORE` cannot be combined with `/PHYSICAL` or
 `/DELETE`. In a copy, only the chosen files are copied.
 
@@ -1571,7 +2039,7 @@ The compression runs on several threads (`VBACKUP_ZTHREADS`); the saveset
 does not depend on their number. Readers recognize compressed data by
 themselves. `/DATA_FORMAT` works also with `/PHYSICAL` and `/IMAGE`. The
 small files are compressed in groups, as SOLID records, unless `/NOSOLID`
-is given (see `/SOLID`). See Section 1.7.
+is given (see `/SOLID`). See Section 3.7.
 
 **Example**
 
@@ -1595,7 +2063,7 @@ After a save, deletes from the disk the files that were saved and
 verified. `/VERIFY` is required (otherwise QUALUSE). A file is deleted
 only when the verification found no difference at all in the whole
 saveset, and the file has not changed since it was saved: the same inode
-and device, and -- for other than a further name of a hard link -- the
+and device, and - for other than a further name of a hard link - the
 same size, modification time and change time as its catalog entry.
 Otherwise the file is kept and SRCKEPT tells why. Only regular files,
 symbolic links and hard links with the status OK are deleted; directories
@@ -1631,7 +2099,7 @@ Output save-set qualifier.
 
 **Description**
 
-Makes an encrypted saveset (see Section 1.8). The passphrase is read from
+Makes an encrypted saveset (see Section 3.8). The passphrase is read from
 the key file of `/KEY_FILE` or of `VBACKUP_KEY_FILE`; otherwise it is asked
 twice at the terminal, without echo. Without a key file and a terminal the
 save stops with NOKEY; when the two answers differ, with KEYMATCH. With
@@ -1722,7 +2190,7 @@ Listing qualifier.
 **Description**
 
 `VMS` is the listing described under `/BRIEF` and `/FULL`. `LS` prints, with
-no summary, one line per file like `ls -l` -- mode, link count, owner,
+no summary, one line per file like `ls -l` - mode, link count, owner,
 group, size, date and time (`mm-dd-yyyy hh:mm:ss`), the full stored name
 and, for a symbolic link, `-> target`. It is meant for programs; the
 Midnight Commander plugin reads it.
@@ -1872,7 +2340,7 @@ Command qualifier.
 **Description**
 
 On a save, saves every file of one whole file system and its identity
-(see Section 1.6). The input is one mount point, or one mounted block
+(see Section 3.6). The input is one mount point, or one mounted block
 device; a subdirectory is not a volume (IMGNOTVOL), an unmounted device is
 refused (IMGNOTMNT). When the UUID of the file system cannot be found,
 IMGNOID is reported and the new file system will get a new UUID.
@@ -2012,7 +2480,7 @@ Output save-set qualifier.
 **Description**
 
 How hard the data is compressed: 1 LZ4, 2 to 5 Deflate, 6 to 9 LZMA, at
-growing effort (Section 1.7). It compresses by itself - `/DATA_FORMAT=
+growing effort (Section 3.7). It compresses by itself - `/DATA_FORMAT=
 COMPRESSED` is implied; with `/DATA_FORMAT=UNCOMPRESSED` it is refused
 (CONFQUAL), a value out of 1 .. 9 too (IVQUAL). `/LIST` displays the codec,
 `Data format: compressed (LZ4)`, `(Deflate)` or `(LZMA)`. Every record is
@@ -2038,10 +2506,10 @@ Command qualifier.
 
 **Description**
 
-Displays the summary of the saveset -- the name, the number of volumes,
+Displays the summary of the saveset - the name, the number of volumes,
 the product, node, user, command, date, bases, kind and filter, block,
 group and volume sizes, data format, comment, encryption and, for
-`/PHYSICAL` and `/IMAGE` savesets, the device or file system -- and then
+`/PHYSICAL` and `/IMAGE` savesets, the device or file system - and then
 its files, in the form chosen by `/BRIEF`, `/FULL` or `/FORMAT`. The files are
 read from the catalog; without a catalog (NOTRAILER) the whole saveset is
 read (NOCATALOG). The present entries of an incremental saveset are not
@@ -2050,7 +2518,7 @@ overwritten.
 
 Given to a save, `/LIST` lists the new saveset (refused when it goes to
 the standard output or to another node). A saveset on another node,
-*node*`::`*file*, is listed from the stream it sends (Section 1.10). With
+*node*`::`*file*, is listed from the stream it sends (Section 3.10). With
 `/JOURNAL` and no parameter, it lists the
 journal. `/SELECT` and `/EXCLUDE` restrict a saveset listing as they
 restrict a restore.
@@ -2227,7 +2695,7 @@ Command qualifier.
 **Description**
 
 On a save, copies one block device or image file block by block (see
-Section 1.6). The input must be a block device or a regular file
+Section 3.6). The input must be a block device or a regular file
 (PHYSNOTDEV). A device that is mounted read-write, or a partition of
 which is, is refused (PHYSMOUNTED); so is a device in use (PHYSHELD). If
 the device changes its size while it is read, PHYSSIZE is reported. The
@@ -2398,7 +2866,7 @@ modification time, unless `/CREATED` or `/CHANGED` is given. Directories are
 always saved.
 
 `/SINCE=BACKUP` selects the files that changed since they were last saved
-with `/RECORD`, as the journal knows (Section 1.5). A file the journal does
+with `/RECORD`, as the journal knows (Section 3.5). A file the journal does
 not know is saved. Without a journal everything is saved, as the first
 time, and NOJOURNAL is reported.
 
@@ -2427,14 +2895,14 @@ Output save-set qualifier.
 **Description**
 
 With `/DATA_FORMAT=COMPRESSED` or `/LEVEL`, the small regular files --
-each of at most 256 KB, not a further name of a hard link -- are gathered
+each of at most 256 KB, not a further name of a hard link - are gathered
 into groups of up to 256 KB (1 MB in X01-21), in the order of the walk,
 and each group is compressed as one SOLID record: the FILE, DATA and
 FEND records of its files together (format.md 6.12). The dictionary is
 shared and the metadata is compressed too, so a tree of small files gets
 much smaller:
 `/usr/include` at `/LEVEL=6` 55.6 MB with `/NOSOLID`, 37 MB with
-`/SOLID` (Section 1.7). Big files, directories and links are written as
+`/SOLID` (Section 3.7). Big files, directories and links are written as
 before; each of them closes the open group first.
 
 `/SOLID` is the default whenever the save compresses; `/SOLID` alone does
@@ -2452,11 +2920,11 @@ block, unchanged. A restore, `/LIST`, `/COMPARE`, `/EXTRACT`, `/SELECT`,
 records by themselves; a single file is reached through the catalog by
 its SOLID, which is decompressed, the files before it passed.
 
-The cost: blocks lost beyond repair -- more than *m* bad blocks in one
-group, *m* being the `/PARITY` -- take the files of the SOLID they cut
+The cost: blocks lost beyond repair - more than *m* bad blocks in one
+group, *m* being the `/PARITY` - take the files of the SOLID they cut
 from the damage on, and every file of a SOLID that begins in them, not
 only the file they were in: a handful to a couple of dozen small files
-(Section 1.7). The files of the SOLID before the cut are restored, each
+(Section 3.7). The files of the SOLID before the cut are restored, each
 checked by its FEND CRC (since X01-22, for savesets of X01-21 too); the
 file at the cut is named with FILDAMAGED, the files after it with
 FILLOST. With the default parity one bad block per group is still
@@ -2489,7 +2957,7 @@ Command qualifier.
 **Description**
 
 Copies a saveset to a saveset, block for block. The blocks are copied as
-they are -- never the records: the copy is byte for byte the original,
+they are - never the records: the copy is byte for byte the original,
 volume for volume, and an encrypted saveset is copied without its
 passphrase. The input is one saveset, given by its first volume, or `-`;
 the output is a saveset name, or `-`:
@@ -2510,7 +2978,7 @@ the volumes of the input are kept. XFRSUMM gives the totals; `/LOG`
 reports volume 1 too (CREATED); `/REPLACE` overwrites volumes that exist.
 
 A saveset input and a saveset output name mean this copy without the
-qualifier (Chapter 2). `/TRANSFER` asks for it whatever the names would
+qualifier (Section 5.1). `/TRANSFER` asks for it whatever the names would
 mean: `vbackup x.bck dir /TRANSFER` writes the saveset `dir`, `dir.002`,
 ..., and restores nothing. With any other input or output it is refused
 (QUALUSE: `the input must be one saveset (or -), and there must be an
@@ -2549,7 +3017,7 @@ Command qualifier.
 On a save, after the saveset has been written, reads it back and compares
 every file with the disk (VERIFYING, then COMPARERR for a difference and
 CMPSUMM for the totals). A file of the catalog that the stream did not
-give -- lost in bad blocks, or never there -- counts as a difference
+give - lost in bad blocks, or never there - counts as a difference
 (since X01-22), so `/VERIFY` never says `Differences: 0` over a missing
 file. With a saveset written to the standard output it is
 refused (QUALUSE). A saveset on another node is read back from there once
@@ -2588,13 +3056,13 @@ Cuts the saveset into volumes of the size given, in bytes, optionally
 followed by K, M, G or T (binary multiples) and an optional B. The size is
 rounded down to a multiple of the block size and must be at least
 (group size + 3) x block size: 851968 bytes with the defaults. The volumes
-are named *name*, *name*`.002`, *name*`.003` and so on (Section 1.3); each
+are named *name*, *name*`.002`, *name*`.003` and so on (Section 3.3); each
 volume after the first is reported (CREATED). Keep them together in one
 directory.
 
 With the standard output as the saveset the volumes go into it back to
-back, each beginning with its VHDR (Section 1.9); a receiver
-(`vbackup - `*saveset*) or VBACKUP on another node (Section 1.10) splits
+back, each beginning with its VHDR (Section 3.9); a receiver
+(`vbackup - `*saveset*) or VBACKUP on another node (Section 3.10) splits
 them into volume files again. A copy of a saveset keeps the volumes of its input,
 whatever `/VOLUME_SIZE` says.
 
@@ -2642,288 +3110,24 @@ vbkx-rs and vbkx-pl.
 | Variable | Meaning |
 |---|---|
 | `VBACKUP_KEY_FILE` | The key file of an encrypted saveset when `/KEY_FILE` is not given (*vbkx*, *extractors*, plugins). |
-| `VBACKUP_NOPROMPT` | `1` -- never ask for a passphrase at the terminal; without a key file the result is NOKEY. Set by the file manager plugins (*vbkx*). |
-| `VBACKUP_KDFITER` | The PBKDF2 iteration count of a save `/ENCRYPT`, at least 1000; values below are ignored. For tests only -- do not lower it for real savesets. The count is stored in the saveset. |
-| `VBACKUP_NOSIMD` | `1` -- compute the parity of `/PARITY` by the portable code even where the processor has vector instructions for it (AVX2, SSSE3 on x86; NEON on aarch64); for trouble-shooting. |
-| `VBACKUP_NOHWCRYPTO` | `1` -- compute SHA-256 by the portable code even where the processor has instructions for it (aarch64); for trouble-shooting. |
-| `VBACKUP_CTHREADS` | The threads of the encryption and of the decompression of a restore, `/COMPARE`, `/VERIFY` (X01-23), the caller included: the number of processors by default, at most 8; `1` -- none. |
-| `VBACKUP_ZTHREADS` | The threads that compress a save `/DATA_FORMAT=COMPRESSED`: the number of processors by default, at most 8; `1` or less -- none. |
-| `VBACKUP_PIPELINE` | `0` -- the saveset is written without the writer thread, for trouble-shooting. The hints to the page cache stay; the saveset is the same. |
-| `VBACKUP_PREFETCH` | The threads that read the next files ahead in a save or a copy: 8 by default, at most 64; `0` -- none. More may help on NFS or a slow network disk, fewer on a single slow hard disk. |
-| `VBACKUP_RSH` | The command that starts VBACKUP on another node for *node*`::`*file* (Section 1.10), in place of `ssh`. It is run as *command* *node* *remote-command*, the way ssh is. |
+| `VBACKUP_NOPROMPT` | `1` - never ask for a passphrase at the terminal; without a key file the result is NOKEY. Set by the file manager plugins (*vbkx*). |
+| `VBACKUP_KDFITER` | The PBKDF2 iteration count of a save `/ENCRYPT`, at least 1000; values below are ignored. For tests only - do not lower it for real savesets. The count is stored in the saveset. |
+| `VBACKUP_NOSIMD` | `1` - compute the parity of `/PARITY` by the portable code even where the processor has vector instructions for it (AVX2, SSSE3 on x86; NEON on aarch64); for trouble-shooting. |
+| `VBACKUP_NOHWCRYPTO` | `1` - compute SHA-256 by the portable code even where the processor has instructions for it (aarch64); for trouble-shooting. |
+| `VBACKUP_CTHREADS` | The threads of the encryption and of the decompression of a restore, `/COMPARE`, `/VERIFY` (X01-23), the caller included: the number of processors by default, at most 8; `1` - none. |
+| `VBACKUP_ZTHREADS` | The threads that compress a save `/DATA_FORMAT=COMPRESSED`: the number of processors by default, at most 8; `1` or less - none. |
+| `VBACKUP_PIPELINE` | `0` - the saveset is written without the writer thread, for trouble-shooting. The hints to the page cache stay; the saveset is the same. |
+| `VBACKUP_PREFETCH` | The threads that read the next files ahead in a save or a copy: 8 by default, at most 64; `0` - none. More may help on NFS or a slow network disk, fewer on a single slow hard disk. |
+| `VBACKUP_RSH` | The command that starts VBACKUP on another node for *node*`::`*file* (Section 3.10), in place of `ssh`. It is run as *command* *node* *remote-command*, the way ssh is. |
 | `VBACKUP_HELPLIB` | The help library used by `/HELP`. |
 | `HOME` | The directory of the default journal of a user other than root. |
 
 ---
 
-## Chapter 4 VBACKUP Examples
+# Chapter 6
+# Messages
 
-1. ```
-   $ vbackup /home/rrl /backup/rrl.bck /VERIFY
-   %VBACKUP-I-STARTED, Operation: save, Input: /home/rrl, Output: /backup/rrl.bck - started
-   %VBACKUP-I-SAVESUMM, Files: 6, Bytes: 108902, Blocks: 5, Volumes: 1 - saved
-   %VBACKUP-I-VERIFYING, Saveset: /backup/rrl.bck - verifying
-   %VBACKUP-I-CMPSUMM, Files: 6, Differences: 0 - compared
-   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.00 - completed
-   ```
-
-   A full save of the directory `/home/rrl` into the saveset `rrl.bck`.
-   The saveset is recognized by its name. `/VERIFY` reads the new saveset
-   back and compares every file with the disk; no difference was found,
-   and the exit status is 0. The stored names begin with `rrl/`: the base
-   is `/home`.
-
-2. ```
-   $ vbackup /home full.bck /RECORD /JOURNAL=/backup/home.jnl
-   %VBACKUP-I-STARTED, Operation: save, Input: /home, Output: full.bck - started
-   %VBACKUP-I-SAVESUMM, Files: 7, Bytes: 3108910, Blocks: 55, Volumes: 1 - saved
-   %VBACKUP-I-RECORDED, Files: 5, Journal: /backup/home.jnl - recorded
-   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.01 - completed
-   $ vbackup /home mon.bck /SINCE=BACKUP /RECORD /JOURNAL=/backup/home.jnl
-   %VBACKUP-I-STARTED, Operation: save, Input: /home, Output: mon.bck - started
-   %VBACKUP-I-SAVESUMM, Files: 3, Bytes: 4, Blocks: 4, Volumes: 1 - saved
-   %VBACKUP-I-INCRSUMM, Files: 4 - unchanged, listed as present, not saved
-   %VBACKUP-I-RECORDED, Files: 1, Journal: /backup/home.jnl - recorded
-   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.00 - completed
-   $ vbackup full.bck,mon.bck /restore /INCREMENTAL /LOG
-   %VBACKUP-I-STARTED, Operation: restore, Input: full.bck, Output: /restore - started
-   %VBACKUP-I-RESTORED, File: /restore/rrl - restored
-   ...
-   %VBACKUP-I-RESTORED, File: /restore/rrl/new.txt - restored
-   %VBACKUP-I-RESTORED, File: /restore/rrl/sub - restored
-   %VBACKUP-I-DELETED, File: /restore/rrl/sub/c.h - deleted: it is not in the incremental saveset
-   %VBACKUP-I-RESTSUMM, Files: 10, Bytes: 3108914 - restored
-   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.01 - completed
-   ```
-
-   An incremental chain. The full save records its files in the journal
-   of this backup plan. On Monday one file was created and one deleted;
-   `/SINCE=BACKUP` saves the new file and the directories, and the catalog
-   lists the four unchanged files as present. The restore takes the full
-   saveset first, then the incremental one; the file deleted on Monday is
-   deleted from the output. The directories are counted in RESTSUMM each
-   time they are restored.
-
-3. ```
-   $ vbackup /home /mnt/usb/home.bck /VOLUME_SIZE=4G /DATA_FORMAT=COMPRESSED
-   ...
-   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
-   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.003 - created
-   %VBACKUP-I-SAVESUMM, Files: 48211, Bytes: 10737418240, Blocks: 151216, Volumes: 3 - saved
-   ...
-   $ vbackup /mnt/usb/home.bck /restore
-   ```
-
-   The saveset is cut into volumes of 4 GB for a FAT32 disk, and its data
-   is compressed. Volumes after the first are reported as they are
-   created. To restore, give the first volume; the others are found beside
-   it. Had a volume been lost, MISSVOL would name it and the files in the
-   other volumes would still be restored.
-
-4. ```
-   # umask 077; head -c 32 /dev/urandom | base64 > /root/backup.key
-   # vbackup /home /backup/home.bck /ENCRYPT /KEY_FILE=/root/backup.key
-   # crontab -l
-   30 2 * * * VBACKUP_KEY_FILE=/root/backup.key /usr/local/bin/vbackup /home /backup/home-$(date +\%a).bck /ENCRYPT /REPLACE
-   ```
-
-   An encrypted save run by cron. The key file holds the passphrase in its
-   first line and is readable by root only; a key file that others may read
-   is refused with KEYFILE. In the crontab the key file is named by
-   `VBACKUP_KEY_FILE`. Cron has no terminal: without a key file the save
-   would stop with NOKEY instead of waiting. Keep a copy of the key file in
-   a safe place -- without it the savesets cannot be opened.
-
-5. ```
-   $ vbackup /etc backup-host::/backup/etc.bck /VOLUME_SIZE=1M /VERIFY
-   %VBACKUP-I-STARTED, Operation: save, Input: /etc, Output: backup-host::/backup/etc.bck - started
-   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /backup/etc.bck - started
-   %VBACKUP-I-CREATED, Volume: (standard output) - created
-   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.002 - created
-   ...
-   %VBACKUP-I-CREATED, Volume: /backup/etc.bck.005 - created
-   %VBACKUP-I-SAVESUMM, Files: 42, Bytes: 3662512, Blocks: 72, Volumes: 5 - saved
-   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
-   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
-   %VBACKUP-I-VERIFYING, Saveset: backup-host::/backup/etc.bck - verifying
-   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
-   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
-   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
-   %VBACKUP-I-CMPSUMM, Files: 42, Differences: 0 - compared
-   %VBACKUP-I-COMPLETED, Operation: save, Seconds: 0.04 - completed
-   ```
-
-   A save to another node, in volumes of 1 MB, verified. VBACKUP on
-   `backup-host`, started through ssh, receives the stream and makes the
-   volume files `/backup/etc.bck`, `/backup/etc.bck.002`, ... there,
-   checking every block; its messages (the copy of a saveset) come here
-   among those of the save. `/VERIFY` reads the saveset back from there and
-   compares it with `/etc`. Had VBACKUP there failed, REMOTEERR would give
-   its completion code, and the exit status would be 2.
-
-6. ```
-   $ vbackup backup-host::/backup/etc.bck /restore/etc
-   %VBACKUP-I-STARTED, Operation: restore, Input: backup-host::/backup/etc.bck, Output: /restore/etc - started
-   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/etc.bck, Output: (standard output) - started
-   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
-   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.00 - completed
-   %VBACKUP-I-RESTSUMM, Files: 42, Bytes: 3662512 - restored
-   %VBACKUP-I-COMPLETED, Operation: restore, Seconds: 0.01 - completed
-   $ vbackup backup-host::/backup/etc.bck /LIST
-   $ vbackup backup-host::/backup/etc.bck /EXTRACT=etc/fstab | less
-   ```
-
-   A restore from another node. VBACKUP there sends the volumes back to
-   back; the restore reads them as a pipe, once, forward only. A listing
-   reads the whole stream (the catalog at its end cannot be reached
-   first); an extraction stops as soon as it has its file.
-
-7. ```
-   $ vbackup /backup/home.bck - > /tmp/home.stream
-   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: /backup/home.bck, Output: (standard output) - started
-   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
-   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.01 - completed
-   $ vbackup - /mnt/usb/home.bck < /tmp/home.stream
-   %VBACKUP-I-STARTED, Operation: copy of a saveset, Input: (standard input), Output: /mnt/usb/home.bck - started
-   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.002 - created
-   ...
-   %VBACKUP-I-CREATED, Volume: /mnt/usb/home.bck.005 - created
-   %VBACKUP-I-XFRSUMM, Blocks: 72, Volumes: 5, Bad: 0 - copied
-   %VBACKUP-I-COMPLETED, Operation: copy of a saveset, Seconds: 0.02 - completed
-   $ cmp /backup/home.bck.003 /mnt/usb/home.bck.003
-   $ vbackup /backup/secret.bck - | ssh vault 'vbackup - /archive/secret.bck'
-   $ vbackup /backup/secret.bck vault::/archive/secret.bck
-   ```
-
-   A saveset of five volumes is copied into a stream, here kept in a
-   file, and back into volume files: every volume of the copy is byte for
-   byte the original. The last two commands send an encrypted saveset to
-   another machine, through a pipe given by hand and as
-   *node*`::`*file*: the blocks are copied, never decrypted, so no
-   passphrase is asked on either side. Had a block gone bad on the
-   way, the receiver would report it (BLKCOPIED) and copy it as it is; a
-   restore repairs it from its group.
-
-8. ```
-   # umount /dev/sdb1
-   # vbackup /dev/sdb1 /mnt/usb/sdb1.bck /PHYSICAL /DATA_FORMAT=COMPRESSED
-   # vbackup /mnt/usb/sdb1.bck /dev/sdc1 /PHYSICAL /REPLACE
-   Everything on /dev/sdc1 (21474836480 bytes) is to be overwritten with the device saved in /mnt/usb/sdb1.bck.
-   Type YES to go on: YES
-   ```
-
-   A partition is copied block by block to another one. It is unmounted
-   first (a device mounted read-write is refused with PHYSMOUNTED). The
-   restore requires `/REPLACE` and, at a terminal, `YES`. The copy carries
-   the labels and UUIDs of the original (PHYSUUID): do not mount both at
-   the same time.
-
-9. ```
-   # vbackup /mnt/data /mnt/usb/data.bck /IMAGE /VERIFY
-   # vbackup /mnt/usb/data.bck /dev/sdc1 /IMAGE /REPLACE /LOG
-   ```
-
-   A whole file system is saved from its mount point, with its type, label
-   and UUID. The restore runs the mkfs program of its type on `/dev/sdc1`
-   (IMGCMD shows the command under `/LOG`), restores the files into the new
-   file system and unmounts it (IMGSUMM). `/dev/sdc1` may be smaller than
-   the original device as long as the files fit.
-
-10. ```
-    # vbackup /mnt/usb/home.bck /ORIGINAL
-    %VBACKUP-I-STARTED, Operation: restore, Input: /mnt/usb/home.bck, Output: (where its files came from) - started
-    %VBACKUP-I-ORIGTARGET, Saveset: /mnt/usb/home.bck, Target: /home - its files go back there
-    %VBACKUP-W-FILEEXISTS, File: /home/rrl/a.txt - already exists, not restored
-    ...
-    ```
-
-    Every file goes back to the directory it was saved from. Files that are
-    there are kept and reported; add `/REPLACE` to overwrite them.
-
-11. ```
-    $ vbackup /home/ivan/old /mnt/usb/old.bck /VERIFY /DELETE
-    ...
-    %VBACKUP-I-CMPSUMM, Files: 213, Differences: 0 - compared
-    %VBACKUP-W-SRCKEPT, File: /home/ivan/old/log.txt - not deleted: it changed after it was saved
-    %VBACKUP-I-DELSUMM, Deleted: 197, Kept: 1
-    ```
-
-    The files are archived and then deleted from the disk. A file that was
-    written to after it was saved is kept. Directories are kept.
-
-12. ```
-    $ vbackup /backup/rrl.bck /COMPARE
-    $ vbackup /backup/rrl.bck /tmp/restore /COMPARE
-    ```
-
-    The first command compares the saveset with the places its files were
-    saved from; the second with a directory into which it was restored.
-    Every difference is reported with COMPARERR; the exit status is 2 when
-    there is one.
-
-13. ```
-    $ vbackup /backup/rrl.bck /EXTRACT=rrl/notes.txt | less
-    $ vbackup /backup/rrl.bck /tmp/notes.txt /EXTRACT=rrl/notes.txt
-    ```
-
-    One file is extracted to the standard output, then to a file. The name
-    is the stored name, as `/LIST` shows it.
-
-14. ```
-    $ vbackup /backup/rrl.bck /LIST
-    $ vbackup /backup/rrl.bck /LIST /FULL
-    $ vbackup /backup/rrl.bck /LIST=/tmp/rrl.lis /FORMAT=LS
-    ```
-
-    The three forms of a listing: brief (the default), full, and one line
-    per file in the form of `ls -l`, here written to a file.
-
-15. ```
-    $ vbackup /JOURNAL=/backup/home.jnl /LIST /FULL '/SELECT=*/notes.txt'
-    $ rm /backup/home.jnl
-    $ vbackup /backup/full.bck,/backup/mon.bck /RECORD /JOURNAL=/backup/home.jnl
-    ```
-
-    The journal is listed with the files it knows whose names end in
-    `/notes.txt` and the saveset that holds the last copy of each. Then the
-    journal is rebuilt from the catalogs of the savesets, oldest first.
-
-16. ```
-    # vbkx t /mnt/usb/home.bck
-    /mnt/usb/home.bck: all files read, all checksums match
-    # vbkx l /mnt/usb/home.bck | less
-    # vbkx x /mnt/usb/home.bck -C /mnt/root/home rrl/projects
-    ```
-
-    On a rescue system without VBACKUP, the statically linked vbkx tests
-    the saveset, lists it and extracts one directory into the disk being
-    repaired.
-
-17. ```
-    C:\> set VBACKUP_KEY_FILE=C:\Users\rrl\backup.key
-    C:\> vbkx.exe l E:\home.bck
-    C:\> vbkx.exe x E:\home.bck -C C:\restore rrl/documents
-    ```
-
-    On Windows, vbkx.exe lists an encrypted saveset on a USB disk and
-    extracts a directory. Names that Windows cannot hold are not extracted,
-    and said.
-
-18. ```
-    $ vbackup USERS.BCK /LIST /FULL
-    $ vbackup USERS.BCK /restore/vms /SELECT=SMITH/*
-    $ vbkx p USERS.BCK "[SMITH]LOGIN.COM;3"
-    ```
-
-    A saveset of OpenVMS BACKUP, copied in binary mode from an Alpha, is
-    listed as `BACKUP/LIST/FULL` lists it, the files of one user restored
-    with Linux names, and one older version of a file displayed by vbkx.
-
----
-
-## Appendix A VBACKUP Messages
-
-### A.1 Message Format
+## 6.1 Message Format
 
 VBACKUP writes its messages to the standard error, one line each:
 
@@ -2941,8 +3145,8 @@ dd-mm-yyyy hh:mm:ss.cc pid %VBACKUP-s-IDENT, text
 | *text* | The message text |
 
 The text has one form throughout: what the message is about first, as
-`Label: value` pairs -- File, Saveset, Device, Volume, Block, Files, Bytes,
-errno -- then a hyphen and the words, so that names and numbers are found
+`Label: value` pairs - File, Saveset, Device, Volume, Block, Files, Bytes,
+errno - then a hyphen and the words, so that names and numbers are found
 at a glance:
 
 ```
@@ -2952,15 +3156,15 @@ at a glance:
 An *errno* value is followed by its text from the C library in
 parentheses.
 
-### A.2 Severities and the Exit Status
+## 6.2 Severities and the Exit Status
 
 | Severity | Meaning | Effect on the exit status |
 |---|---|---|
-| S -- Success | The operation succeeded. | None (0). |
-| I -- Informational | A report; nothing is wrong. | None. |
-| W -- Warning | Something was not as it should be, but the operation was done; the output may need attention. | At least 1. |
-| E -- Error | Something was not done: a file, a block, a comparison, or the command itself. | 2. |
-| F -- Fatal | The operation could not continue. | 2. |
+| S - Success | The operation succeeded. | None (0). |
+| I - Informational | A report; nothing is wrong. | None. |
+| W - Warning | Something was not as it should be, but the operation was done; the output may need attention. | At least 1. |
+| E - Error | Something was not done: a file, a block, a comparison, or the command itself. | 2. |
+| F - Fatal | The operation could not continue. | 2. |
 
 The exit status of VBACKUP is 2 if any E or F message was signalled, else
 1 if any W message was signalled, else 0.
@@ -2981,7 +3185,7 @@ not an error by itself; it usually leads to MAXPARM or IVOP.
 vbkx and the extractors of last resort do not use this message facility;
 their diagnostics are described in Appendix C.
 
-### A.3 Messages
+## 6.3 Messages
 
 **ATTRERR**, File: *file* - *what* not restored, errno: *n* (*reason*)
 
@@ -2990,7 +3194,7 @@ their diagnostics are described in Appendix C.
 **Explanation:** An attribute of a restored or copied file could not be
 set. *what* is `owner`, `protection`, `times`, `flags` (chattr flags),
 `attributes` (of a directory, set at the end of the restore), the name of
-an extended attribute, or `the removal` -- a file that `/INCREMENTAL` was to
+an extended attribute, or `the removal` - a file that `/INCREMENTAL` was to
 delete could not be deleted. The data of the file is restored.
 
 **User Action:** Most often the restore is not run by root. Restore as
@@ -3010,10 +3214,10 @@ blocks around it had correct checksums; the record was written wrong or
 the saveset was not made by VBACKUP. The file the record belongs to is
 reported as damaged if data was lost.
 
-A SOLID record (Section 1.7) that does not decompress, or holds a record
+A SOLID record (Section 3.7) that does not decompress, or holds a record
 that makes no sense, is reported with the block where the SOLID begins.
 All of it is skipped, like lost blocks: none of its files is restored
-from it, and each of them is named with FILLOST -- never restored with
+from it, and each of them is named with FILLOST - never restored with
 wrong data. A SOLID only cut short by lost blocks, or by the end of a
 saveset whose save was interrupted, is not reported here: its part
 before the cut is restored (see FILLOST).
@@ -3095,7 +3299,7 @@ of important savesets.
 **Facility:** VBACKUP. **Severity:** Informational.
 
 **Explanation:** The totals of a comparison (`/COMPARE`, `/VERIFY`): the
-files compared and the files found different -- among them the files of
+files compared and the files found different - among them the files of
 the catalog that the record stream did not give (COMPARERR `not
 compared`). Displayed without `/LOG`.
 After a copy `/VERIFY` it is displayed only when differences were found.
@@ -3300,7 +3504,7 @@ a snapshot (LVM, btrfs).
 (BLKLOST, MISSVOL); the file was restored, compared or extracted as far as
 its data could be read. In a `/PHYSICAL` restore, the device has lost
 parts. Since X01-22 it also names the file at which lost blocks, or the
-end of an interrupted saveset, cut a SOLID record (Section 1.7): the
+end of an interrupted saveset, cut a SOLID record (Section 3.7): the
 files before it in the SOLID are restored whole, it is restored as far
 as it came, the files after it are FILLOST. A saveset with compressed
 data read by VBACKUP before X01-04 gives this message as well.
@@ -3330,10 +3534,10 @@ directory.
 its FILE record was in lost blocks. The file is missing from the output.
 
 Many FILLOST at once after one bad area (BLKLOST, or BADREC) mean that a
-SOLID record was hit (Section 1.7): the small files of a compressed save
+SOLID record was hit (Section 3.7): the small files of a compressed save
 are kept in groups of up to 256 KB (1 MB in X01-21), and lost blocks take
 the files of the group from the damage on, and all the files of a group
-that begins in them -- a handful to a couple of dozen, not only one.
+that begins in them - a handful to a couple of dozen, not only one.
 Since X01-22 the files of a group before the damage are restored, each
 checked by its FEND CRC, for savesets of X01-21 too; the file at the cut
 is named with FILDAMAGED. Every lost one is named here; the other files
@@ -3530,7 +3734,7 @@ keyword.
 **Explanation:** The value of `/SINCE` or `/BEFORE` is not a time VBACKUP
 understands.
 
-**User Action:** Write the time as described under `/BEFORE` in Chapter 3.
+**User Action:** Write the time as described under `/BEFORE` in Section 5.2.
 
 ---
 
@@ -3750,7 +3954,7 @@ by X01-02 and later carry what `/INCREMENTAL` needs.
 
 **Explanation:** After the record stream was read, the catalog was set
 against the FILE records met (since X01-22, always, not only after lost
-blocks), and it names a file whose records never came -- while no block
+blocks), and it names a file whose records never came - while no block
 was lost. The file is missing from the output. It does not happen with a
 saveset VBACKUP wrote right and nobody changed: the stream holds a record
 this reader does not know (for example a record of a newer VBACKUP in a
@@ -3782,7 +3986,7 @@ another saveset, and report it, with the saveset.
 
 **Explanation:** The last block of the saveset is not its TRAILER: the save
 was interrupted (the disk became full, the program was stopped), the
-last volume is missing, or a pipe ended before the saveset did -- with a
+last volume is missing, or a pipe ended before the saveset did - with a
 stream of several volumes, before its last volume came. The files up to
 the break can be restored; the saveset is read sequentially. A journal
 rebuild skips such a saveset. A copy of a saveset reports it after it has
@@ -4105,9 +4309,9 @@ descriptors: look at *reason*, and repeat the operation.
 **Facility:** VBACKUP. **Severity:** Error.
 
 **Explanation:** VBACKUP on the other node, or ssh that runs it, ended
-with the completion code *n* (2 -- VBACKUP there signalled an error; 127 --
+with the completion code *n* (2 - VBACKUP there signalled an error; 127 --
 the command of `VBACKUP_RSH` cannot be run here, or `vbackup` is not on the
-PATH there; 255 -- ssh failed: the node cannot be reached, or does not let
+PATH there; 255 - ssh failed: the node cannot be reached, or does not let
 this one in), or was ended by a signal (*n* = 128 + the signal). A code
 of 1 (warnings) is not reported: it makes the exit status at least 1.
 When the other side stopped during a save, WRITERR (errno 32, Broken pipe)
@@ -4191,7 +4395,7 @@ saved and verified.
 **Facility:** VBACKUP. **Severity:** Warning.
 
 **Explanation:** `/DELETE` kept a file. *reason* is `it changed after it was
-saved`, the reason the deletion failed, or -- with *file* `every file` --
+saved`, the reason the deletion failed, or - with *file* `every file` --
 `the saveset did not verify`.
 
 **User Action:** Save the file again if it changed; delete it by hand if
@@ -4314,7 +4518,7 @@ the save.
 **Facility:** VBACKUP. **Severity:** Informational.
 
 **Explanation:** The input is a saveset written by OpenVMS BACKUP, read as
-Section 1.16 describes.
+Section 3.16 describes.
 
 **User Action:** None.
 
@@ -4395,7 +4599,7 @@ a restore through *node*`::`*file*.
 **Facility:** VBACKUP. **Severity:** Warning.
 
 **Explanation:** Every record VBACKUP compresses is decompressed again at
-once and compared with the data it was made of (Section 1.7). This one did
+once and compared with the data it was made of (Section 3.7). This one did
 not come back the same; it was written uncompressed, as a DATA record. The
 saveset is right and restores; the offset is that of the record in its
 file. For a group of small files (a SOLID record, see `/SOLID`) the
@@ -4408,17 +4612,175 @@ in question.
 
 ---
 
-## Appendix B Saveset Format Summary
+# Chapter 7
+# Troubleshooting
+
+This chapter starts from what is seen - a symptom or a message - and says what to look at and what
+to do. The messages named here are described in full in Chapter 6.
+
+## 7.1 The Verify Fails on Files That Are in Use
+
+**Symptom.** A save `/VERIFY` ends with the exit status 2, and the only errors are COMPARERR, often
+after FILCHANGED.
+
+**Cause.** The files changed between being saved and being compared: a database, a log, the git
+tree of a program at work. The saveset holds what the files were when they were read; it is not at
+fault.
+
+**Action.** Save a snapshot of the file system (LVM, btrfs, ZFS) instead of the live one, or run the
+save when nothing works on those files, or leave them out with `/EXCLUDE`. A command procedure may
+run the save once more when COMPARERR is the only error.
+
+## 7.2 Owners and Attributes Are Not Restored
+
+**Symptom.** ATTRERR for many files; the files are restored and belong to the user who restored
+them.
+
+**Cause.** The restore was not run by root, or the file system of the output cannot hold an
+attribute (for example ACLs on vfat).
+
+**Action.** Restore as root; or give `/OWNER=DEFAULT` to take the files as your own, and `/NOXATTRS` when the extended attributes are not wanted (Section 5.1, Restrictions).
+
+## 7.3 A Saveset Is Damaged
+
+**Symptom.** CRCERR, BLKFIXED, BLKLOST, FILDAMAGED or FILLOST while a saveset is read.
+
+**What to look at.** BLKFIXED alone means a bad block was rebuilt from its group: everything is
+restored. BLKLOST means more blocks of a group were bad than the group can rebuild; the files that
+lay in them are named by FILDAMAGED or FILLOST, and every other file is restored. A file is never
+restored with wrong data without a message.
+
+**Action.**
+
+1. Copy the saveset off the failing medium first, with `dd conv=noerror,sync` if it must be.
+2. Read the copy again: `vbackup copy.bck /LIST`, then restore it.
+3. Try the stand-alone extractor and an extractor of last resort (Appendix C): each reads the blocks
+   on its own.
+4. For the next savesets give a larger `/PARITY` and a smaller `/GROUP_SIZE` (Section 3.3).
+
+## 7.4 A Volume Is Missing or Belongs to Another Saveset
+
+**Symptom.** MISSVOL, WRONGVOL, NOTRAILER.
+
+**Cause.** The volumes of a saveset are looked for beside the first one, by name (Section 3.3). A
+volume was moved, renamed, or copied from another saveset of the same name; or the save did not
+complete.
+
+**Action.** Put all the volumes in one directory under their names as written. The files that lie
+wholly in the volumes present are restored anyway. A saveset whose save did not complete has no
+trailer and no catalog: it is read whole, as a stream (NOCATALOG).
+
+## 7.5 The Passphrase Is Asked for, Refused or Missing
+
+**Symptom.** NOKEY in a batch job; WRONGKEY; KEYMATCH.
+
+**Action.**
+
+* NOKEY: there is no terminal to ask on. Give `/KEY_FILE=`*file* or set `VBACKUP_KEY_FILE`; keep the
+  file readable by its owner alone (`chmod 600`).
+* WRONGKEY: only the first line of a key file counts, and capitals matter. Check that the key file
+  is the one the saveset was made with.
+* KEYMATCH: the two answers at the terminal differed; save again.
+
+A lost passphrase cannot be recovered: there is no other way into an encrypted saveset. Keep the key
+file where the savesets are not.
+
+## 7.6 A Saveset on Another Node Cannot Be Reached
+
+**Symptom.** REMOTE, or REMOTEERR with an exit code.
+
+**What to look at.** The exit code of REMOTEERR: 2 - VBACKUP there signalled an error (its messages
+are shown above); 127 - `vbackup` is not on the PATH there, or the command of `VBACKUP_RSH` cannot
+be run here; 255 - ssh failed: the node cannot be reached, or does not let this one in by its keys.
+
+**Action.** Check `ssh` *node* `vbackup /HELP` by hand: it must run without a password. The other
+node needs VBACKUP X01-11 or later (Section 3.10).
+
+## 7.7 An Incremental Restore Is Refused
+
+**Symptom.** NOTINCR, ORIGNOBASE, MISSING.
+
+**Action.** `/INCREMENTAL` needs a saveset with a catalog, made by X01-02 or later; restore the full
+saveset first and then each incremental one in the order they were made, oldest first - not newest
+first as OpenVMS BACKUP does (Section 3.5). ORIGNOBASE: a saveset made before X01-02 does not say
+where its files came from; give an output directory instead of `/ORIGINAL`. MISSING names
+a file that an earlier saveset of the chain should have given: a saveset of the chain was left out.
+
+## 7.8 A Device Is Refused
+
+**Symptom.** PHYSMOUNTED, PHYSHELD, PHYSSMALL.
+
+**Action.** A `/PHYSICAL` save takes a device that is not mounted or is mounted read-only; save a
+snapshot of a mounted one. A restore never writes to a mounted device or to one held by another
+program: unmount it first. The output device must be at least as large as the one saved
+(Section 3.6).
+
+## 7.9 HELP Shows Only a Summary
+
+**Symptom.** `vbackup /HELP` shows a short summary and no topics.
+
+**Cause.** VBACKUP was built without the HELP product (Section 2.1).
+
+**Action.** Install HELP and build and install VBACKUP again; or read the manual page `vbackup(1)`
+and this manual.
+
+## 7.10 A File Manager Does Not Open a Saveset
+
+**Action.** The plugins are installed into Midnight Commander and far2l only when they are found at
+the time of the installation; install the file manager first, then VBACKUP, or put the files of
+`share/vbackup/plugins` in place by hand (Appendix D). Total Commander takes the plugin from its
+archive (`vbackup_wcx.zip`).
+
+---
+
+# Appendix A
+# Files
+
+## A.1 Files Installed
+
+The paths are under the prefix, `/usr/local` by default.
+
+| File | Contents |
+|---|---|
+| `bin/vbackup` | The utility |
+| `bin/vbkx` | The stand-alone extractor |
+| `share/man/man1/vbackup.1`, `vbkx.1` | The manual pages |
+| `share/help/vbackup.hlb`, `share/help/ru/vbackup_ru.hlb` | The help libraries, English and Russian (with HELP) |
+| `share/doc/vbackup/` | `README.md`, `LICENSE`, `NOTICE`, `format.md`, `vmsbackup.md`, `vbackuplib.md`, `vbackuplib_ru.md`, this manual (`vbackup_users_guide.md`, `vbackup_users_guide_ru.md` and their PDF) |
+| `share/vbackup/plugins/mc/` | `uvbk` and `mc.ext.ini.vbackup` - Midnight Commander |
+| `share/vbackup/plugins/far/vbackup.ini` | far2l and Far Manager (MultiArc) |
+| `share/vbackup/plugins/wcx/` | `vbackup.wcx` for Double Commander, `pluginst.inf`; `win/` - the plugin for Total Commander when it was built |
+| `share/vbackup/plugins/magic/vbackup.magic` | The magic of a saveset for `file(1)` |
+
+Where Midnight Commander and far2l are found, the installation also puts `uvbk` into the extfs
+directory of Midnight Commander and its sections, between markers, into `mc.ext.ini` and into the
+`custom.ini` of MultiArc.
+
+## A.2 Files Used
+
+| File | Use |
+|---|---|
+| The journal of `/JOURNAL=`*file* | The record of the savesets and their files, for `/SINCE=BACKUP` and `/LIST /JOURNAL` (Section 3.5) |
+| The key file of `/KEY_FILE` or `VBACKUP_KEY_FILE` | The passphrase, on its first line (Section 3.8) |
+| `/tmp` | The spool of the catalog of a save: an unnamed temporary file, gone at the end of the save |
+| `~/.ssh` | The keys by which VBACKUP reaches another node (Section 3.10) |
+
+The environment variables are listed in Section 5.2.
+
+---
+
+# Appendix B
+# Saveset Format Summary
 
 This appendix summarizes the saveset format, version 1. The authoritative
 definition is `doc/format.md`; a reader written from that document alone
 must be able to list and restore any saveset. Since X01-08 a saveset may
 also be read from the standard input, and since X01-11 a stream carries
-several volumes (see Section 1.9; `format.md`, sections 2 and 8). Version
+several volumes (see Section 3.9; `format.md`, sections 2 and 8). Version
 2 (since X01-14) adds the parity of `/PARITY`; version 3 (since X01-21),
 the SOLID record.
 
-### B.1 Conventions
+## B.1 Conventions
 
 - All integers are little-endian, unsigned unless noted (u8, u16, u32,
   u64; i64 two's complement). Fields are encoded byte by byte.
@@ -4427,10 +4789,10 @@ the SOLID record.
 - Strings and paths are raw bytes without a terminating NUL; no encoding
   is assumed.
 - CRC is CRC-32/IEEE (reflected polynomial 0xEDB88320, initial value and
-  final XOR 0xFFFFFFFF; CRC("123456789") = 0xCBF43926) -- not CRC-32C.
+  final XOR 0xFFFFFFFF; CRC("123456789") = 0xCBF43926) - not CRC-32C.
 - UUID is 16 random bytes, version 4.
 
-### B.2 Volumes and Blocks
+## B.2 Volumes and Blocks
 
 ```
 volume 1 : VHDR  G G G ... G
@@ -4453,7 +4815,7 @@ a receiver splits the stream into volume files at each VHDR. A reader of
 a stream reads forward only: a TRAILER ends the groups where it comes,
 and the catalog at the end of the stream is not used for seeking.
 
-### B.3 Block Header (64 bytes)
+## B.3 Block Header (64 bytes)
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
@@ -4478,7 +4840,7 @@ blocks of its group. One bad DATA block is rebuilt from it; its `recoff`
 and `paylen` come from the `prvrecoff` and `prvpaylen` of the block that
 follows it.
 
-### B.4 Block Types
+## B.4 Block Types
 
 | Type | Name | Contents |
 |---|---|---|
@@ -4490,7 +4852,7 @@ follows it.
 | 5 | EDATA | DATA block of an encrypted saveset |
 | 6 | ETRAILER | TRAILER of an encrypted saveset |
 
-### B.5 Records
+## B.5 Records
 
 Record header, 8 bytes: u16 type, u16 flags (0), u32 length of the body.
 A record may cross block and volume boundaries; its header never does.
@@ -4523,20 +4885,20 @@ ending at `rawlen`; a reader of version 3 delivers them as if they stood
 in the stream. A SOLID that does not open is a gap, like lost blocks.
 A SOLID cut by lost blocks, or by the end of a saveset cut short, is not
 all lost (VBACKUP since X01-22): the compressed bytes before the cut are
-decompressed as far as they are exactly right -- LZ4 and Deflate up to
+decompressed as far as they are exactly right - LZ4 and Deflate up to
 the last whole sequence or code, LZMA up to the last symbol decoded
-before the input ran out, never an octet guessed -- and the records
+before the input ran out, never an octet guessed - and the records
 wholly in that are delivered, then the gap. The writer closes a group
 before its records would pass 262144 bytes (1048576 in X01-21).
 
 After a sequential pass the catalog, when there is one, is set against
-the FILE records met -- always, not only after a loss (VBACKUP since
+the FILE records met - always, not only after a loss (VBACKUP since
 X01-22). A file of the catalog (STATUS 0..2) whose FILE record never
 came is named: lost with the blocks when blocks were lost, else "the
 catalog has it, the stream does not" (NOTINSTREAM). A stream does it
 with its CATALOG records as they come (`format.md`, section 8).
 
-### B.6 Tags
+## B.6 Tags
 
 A TLV item is u16 tag, u32 length, value. One tag space serves all
 records.
@@ -4544,9 +4906,9 @@ records.
 | Tags | Group | Names |
 |---|---|---|
 | 1-20 | Per-file (FILE, CATALOG) | FILENO, PATH, FTYPE (1 REG, 2 DIR, 3 SYMLINK, 4 HARDLINK, 5 CHR, 6 BLK, 7 FIFO, 8 SOCK), MODE, UID, GID, UNAME, GNAME, SIZE, MTIME, ATIME, CTIME, BTIME, RDEV, LINK, XATTR, FSFLAGS, DEVINO, BASEIDX, NLINK |
-| 21-22 | FILE (21 also CATALOG) | WINATTR (u32, FILE_ATTRIBUTE_* of Windows), NTSD (the security descriptor, self-relative) -- files saved on Windows, since X01-18 |
-| 23 | CATALOG | SOLID (u8): 1 -- the FILE record is inside the SOLID record at LOCVOL, LOCBLK, LOCOFF |
-| 32-36 | FEND, CATALOG | CRC, STATUS (0 OK, 1 CHANGED, 2 READERR, 3 PRESENT -- catalog only), LOCVOL, LOCBLK, LOCOFF |
+| 21-22 | FILE (21 also CATALOG) | WINATTR (u32, FILE_ATTRIBUTE_* of Windows), NTSD (the security descriptor, self-relative) - files saved on Windows, since X01-18 |
+| 23 | CATALOG | SOLID (u8): 1 - the FILE record is inside the SOLID record at LOCVOL, LOCBLK, LOCOFF |
+| 32-36 | FEND, CATALOG | CRC, STATUS (0 OK, 1 CHANGED, 2 READERR, 3 PRESENT - catalog only), LOCVOL, LOCBLK, LOCOFF |
 | 64-77 | SUMMARY | PRODUCT, HOST, USER, CMDLINE, CREATED, BASE, BLOCKSIZE, GROUPSIZE, VOLSIZE, COMMENT, SYSTEM, KIND (0 FULL, 1 INCREMENTAL), FILTER, COMPRESS |
 | 78-80 | SUMMARY, /PHYSICAL | PHYSICAL, DEVSIZE, SECTORSIZE |
 | 81-87 | SUMMARY, /IMAGE | IMAGE, FSTYPE, FSLABEL, FSUUID, FSUSED, ROOTATTR, MOUNTOPTS |
@@ -4554,7 +4916,7 @@ records.
 | 96-104 | END, TRAILER | NFILES, NBYTES, NERRORS, NBLOCKS, CATVOL, CATBLK, CATOFF, NVOLS, NENTRIES |
 | 128-130 | Journal | SSUUID, SPEC, RECORDED |
 
-### B.7 Encryption (format.md, 6.10)
+## B.7 Encryption (format.md, 6.10)
 
 - Primitives: ChaCha20 (RFC 8439) and SHA-256 (FIPS 180-4), with
   HMAC-SHA256 and PBKDF2-HMAC-SHA256 built from it.
@@ -4580,18 +4942,18 @@ records.
 - CRCs and XOR blocks are computed over the ciphertext: checking and repair
   need no passphrase.
 
-### B.8 The Journal
+## B.8 The Journal
 
 A file of its own: a 16-byte header (`V` `B` `K` `J`, u16 version 1, u16
-reserved, u64 record count), records of the saveset record format -- SSET
-(type 16) for a saveset, FSTATE (type 17) for a file -- and a final u32 CRC
+reserved, u64 record count), records of the saveset record format - SSET
+(type 16) for a saveset, FSTATE (type 17) for a file - and a final u32 CRC
 of everything before it. The key of an FSTATE is the absolute name of the
 file. The journal is rewritten whole through `journal.tmp` under an
 exclusive lock on `journal.lock`.
 
-### B.9 OpenVMS BACKUP Savesets
+## B.9 OpenVMS BACKUP Savesets
 
-Read, not written (Section 1.16; `doc/vmsbackup.md`): blocks of one size
+Read, not written (Section 3.16; `doc/vmsbackup.md`): blocks of one size
 with a 256-byte header (BBH: size 256, structure level 0x0101, applic 1 for
 data and 2 for XOR, the block number from 1, CRC-32/IEEE of the block with
 its CRC and checksum fields as zeroes, flag 1 `/NOCRC`), records with a
@@ -4601,26 +4963,27 @@ of 512 octets.
 
 ---
 
-## Appendix C The Stand-Alone Extractor vbkx
+# Appendix C
+# The Stand-Alone Extractor vbkx
 
-### C.1 Description
+## C.1 Description
 
 vbkx reads savesets made by VBACKUP on a machine where VBACKUP is not
 installed: a rescue system, another distribution, a file manager. It is
-built from the reading core of VBACKUP only -- no command language, no
-help library, no message facility -- and is linked statically where the
+built from the reading core of VBACKUP only - no command language, no
+help library, no message facility - and is linked statically where the
 system allows it: copy the one file and run it.
 
-vbkx of X01-21 reads savesets of format version 3 -- the SOLID records of
-a compressed save (Section 1.7, `/SOLID`) -- as well as versions 1 and 2,
+vbkx of X01-21 reads savesets of format version 3 - the SOLID records of
+a compressed save (Section 3.7, `/SOLID`) - as well as versions 1 and 2,
 in all its commands: `l`, `x`, `p`, `t`. A file named to `x` or `p` is
 reached through the catalog by its SOLID, which is decompressed, the
 files before it passed. vbkx before X01-21 refuses such a saveset (`is
 not a saveset`). vbkx of X01-22 restores the files of a SOLID before the
-place where lost blocks cut it, as VBACKUP does (Section 1.7), and with
+place where lost blocks cut it, as VBACKUP does (Section 3.7), and with
 `x` and `t` names every file of the catalog the stream did not give.
 
-### C.2 Format
+## C.2 Format
 
 ```
 vbkx l saveset [-m] [-k keyfile] [-n]
@@ -4632,7 +4995,7 @@ vbkx t saveset [-k keyfile] [-n]
 The command letter comes first, then the saveset (the first volume, or `-`
 for the standard input), then the options and names in any order.
 
-### C.3 Commands
+## C.3 Commands
 
 | Command | Action |
 |---|---|
@@ -4652,7 +5015,7 @@ The listing has the form, the time being local:
 The type letters are those of `ls`: `-` `d` `l` `h` (hard link, followed by
 `link to` *name*) `c` `b` `p` `s`, then the mode in octal.
 
-### C.4 Options
+## C.4 Options
 
 | Option | Applies to | Meaning |
 |---|---|---|
@@ -4666,7 +5029,7 @@ The type letters are those of `ls`: `-` `d` `l` `h` (hard link, followed by
 Without `-k`, the key file named by `VBACKUP_KEY_FILE` is used; without both,
 the passphrase is asked at the terminal (on Windows, the console).
 
-### C.5 What Is Restored
+## C.5 What Is Restored
 
 vbkx restores the data and holes, the mode, the modification and access
 times, directories, symbolic and hard links and FIFOs; as root also the
@@ -4677,7 +5040,7 @@ The names of a saveset are not trusted: a name with `..`, a leading `/`, or
 a way through a symbolic link is refused, and every directory on the way
 is opened with O_NOFOLLOW. Damage is repaired as far as the XOR blocks
 allow; every file cut short is named `is incomplete`, every file of the
-catalog that could not be reached `not extracted` -- after lost blocks
+catalog that could not be reached `not extracted` - after lost blocks
 cut a SOLID, the files of it from the damage on; those before are
 extracted. The catalog is always set against the stream (since X01-22):
 a file of the catalog whose records never came, though no block was
@@ -4687,10 +5050,10 @@ saveset is listed and extracted as it is read; names are refused, because
 its catalog comes last; its catalog records are set against the stream
 as they come.
 
-### C.6 Diagnostics
+## C.6 Diagnostics
 
 vbkx writes its diagnostics to the standard error, prefixed `vbkx:`, in the
-form of the VBACKUP messages -- `Label: value - words` -- but without the
+form of the VBACKUP messages - `Label: value - words` - but without the
 date, process number and message identifier:
 
 ```
@@ -4702,7 +5065,7 @@ vbkx: File: rrl/d.txt - not extracted: the catalog has it, the record stream doe
 vbkx: Saveset: e.bck - the passphrase does not open it
 ```
 
-### C.7 Completion Codes
+## C.7 Completion Codes
 
 | Code | Meaning |
 |---|---|
@@ -4710,17 +5073,17 @@ vbkx: Saveset: e.bck - the passphrase does not open it
 | 1 | Something was damaged or not done (a file incomplete, not extracted, existing, an attribute not set). |
 | 2 | The command or the saveset cannot be used (wrong command, not a saveset, cannot be opened, wrong or missing passphrase, output directory cannot be made). |
 
-### C.8 vbkx.exe on Windows
+## C.8 vbkx.exe on Windows
 
 vbkx.exe takes the same commands. The names, UTF-8 in the saveset, become
 UTF-16 under `\\?\`, so long paths work. It restores the data, sizes,
 times, the read-only attribute (no write bit for the owner), directories
 and hard links; symbolic links where Windows allows them (developer mode,
 or the right to make them), otherwise said. FIFOs, device files, owners
-and modes beyond read-only are not made. A name Windows cannot hold -- a
+and modes beyond read-only are not made. A name Windows cannot hold - a
 component with `<>:"\|?*` or a control character, a device name (CON,
 PRN, AUX, NUL, COM1-9, LPT1-9, with an extension too), a name ending in a
-period or a space -- is not extracted, and said; a reparse point on the way
+period or a space - is not extracted, and said; a reparse point on the way
 is refused. The data and the listing are written byte for byte as on
 Linux.
 
@@ -4733,7 +5096,7 @@ $ x86_64-w64-mingw32-gcc -O2 -Ilib -o vbkx.exe tools/vbkx.c \
 $ make -f tools/Makefile.win
 ```
 
-### C.9 The Extractors of Last Resort: vbkx-go, vbkx-rs, vbkx-pl
+## C.9 The Extractors of Last Resort: vbkx-go, vbkx-rs, vbkx-pl
 
 Three further extractors are kept for the day everything else is dead:
 
@@ -4798,21 +5161,22 @@ its own SHA-256 is some hundred times slower (opening an encrypted saveset
 then takes minutes). `VBKXPL_PURE=1` makes it use its own code even when
 Digest::SHA is there. It reads a few megabytes a second.
 
-Completion codes of all three: 0 -- all done; 1 -- something was damaged or
-not done; 2 -- the command or the saveset cannot be used.
+Completion codes of all three: 0 - all done; 1 - something was damaged or
+not done; 2 - the command or the saveset cannot be used.
 
 ---
 
-## Appendix D File Manager Plugins
+# Appendix D
+# File Manager Plugins
 
-### D.1 General
+## D.1 General
 
 A saveset opens like a folder in the file managers below: list, view,
 copy out, test. All plugins are read only: nothing is ever written into a
 saveset. The listing comes from the catalog, so a saveset of hundreds of
 gigabytes opens at once, and a file is copied out through its place in the
-catalog -- for a small file of a compressed save, through its SOLID
-record (Section 1.7). The plugins of X01-21 read savesets of format
+catalog - for a small file of a compressed save, through its SOLID
+record (Section 3.7). The plugins of X01-21 read savesets of format
 version 3; older ones do not open them. The plugins share the reader of
 VBACKUP: since X01-22 they too restore the files of a SOLID before the
 place where lost blocks cut it.
@@ -4824,7 +5188,7 @@ environment variable `VBACKUP_KEY_FILE` before the file manager is started
 the saveset does not open; nothing waits for an answer on the screen. The
 plugins set `VBACKUP_NOPROMPT=1` or give vbkx `-n`.
 
-### D.2 Midnight Commander
+## D.2 Midnight Commander
 
 | Item | Value |
 |---|---|
@@ -4850,7 +5214,7 @@ A saveset of several volumes opens from a local disk only: inside another
 VFS (an archive, FTP) MC gives the script a temporary copy of volume 1,
 and the other volumes are not beside it.
 
-### D.3 far2l and Far Manager 3
+## D.3 far2l and Far Manager 3
 
 | Item | Value |
 |---|---|
@@ -4871,12 +5235,12 @@ Test=vbkx t %%AQ -n
 A saveset is recognized by its first four bytes, `VBKB` (`ID=56 42 4B 42`),
 and by the extension `bck`.
 
-### D.4 Total Commander and Double Commander
+## D.4 Total Commander and Double Commander
 
 | Item | Value |
 |---|---|
 | Source | `plugins/wcx/vbkwcx.c`, a WCX packer plugin over the reading core |
-| Files | `vbackup.wcx64` (Total Commander 64-bit), `vbackup.wcx` (Total Commander 32-bit), `vbackup.wcx` -- a shared object -- for Double Commander on Linux |
+| Files | `vbackup.wcx64` (Total Commander 64-bit), `vbackup.wcx` (Total Commander 32-bit), `vbackup.wcx` - a shared object - for Double Commander on Linux |
 | Build | `make -f plugins/wcx/Makefile linux win64 win32` (into `out/linux`, `out/win64`, `out/win32`); the CMake build makes the Linux one always (installed under `share/vbackup/plugins/wcx`) and the Windows ones when MinGW-w64 is found |
 | Installation, TC | Open the plugin archive (`make -f plugins/wcx/Makefile zip`, with `pluginst.inf`) in TC and confirm; or Configuration -> Options -> Packer -> Configure packer extension WCXs, extension `bck`. |
 | Installation, DC | Options -> Plugins -> Packer plugins (WCX) -> Add, extension `bck`. |
@@ -4896,4 +5260,3 @@ extended attributes and chattr flags are not restored; device files, FIFOs
 and sockets are listed but not made; symbolic links are made on Linux and
 skipped on Windows; the times of the listing are DOS times (local, two
 seconds), while an extracted file gets its times in full.
-
