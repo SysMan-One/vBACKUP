@@ -260,6 +260,14 @@ Install StarLet (and HELP) first, from their kits. Then:
 Every test must pass; a test that fails is a reason not to install. The tests speak TAP when `TAP=1`
 is set, for prove and the CI systems.
 
+The tests make their scratch trees under the build tree. When the build tree is on a `/tmp` of
+tmpfs - small on a small board, and without user xattrs - give `TMPDIR` a real file system at the time
+of the configuration, and the scratch trees go there (or name the place with `-DVBACKUP_TESTDIR=`):
+
+```
+# TMPDIR=/var/tmp cmake -S . -B build
+```
+
 `make kit` in the build tree makes `vbackup-`*ident*`.tar.gz`; in a git tree it is made by git
 archive of HEAD, so only what is committed goes into it.
 
