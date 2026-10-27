@@ -382,9 +382,15 @@ before it was saved.  Files that were in the cache stay there.  See
 .I /usr/local/share/doc/vbackup/format.md
 \- the saveset format;
 .I /usr/local/share/doc/vbackup/vmsbackup.md
-\- the savesets of OpenVMS BACKUP, as VBACKUP reads them.
+\- the savesets of OpenVMS BACKUP, as VBACKUP reads them;
+.I /usr/local/share/doc/vbackup/vbackup_users_guide.pdf
+\- the User's Guide (also as markdown, and in Russian).
 .SH SEE ALSO
 .BR tar (1),
 .BR dar (1)
 .SH AUTHOR
-StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
+StarLet Squad and Ruslan R. Laishev.
+.SH COPYRIGHT
+Copyright (C) 2026 StarLet Squad and Ruslan R. Laishev.
+Licensed under the Apache License, Version 2.0; distributed on an
+"AS IS" basis, without warranties or conditions of any kind.
