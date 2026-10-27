@@ -1,6 +1,6 @@
 #define	__MODULE__	"UNITS"
-#define	__IDENT__	"X01-23"
-#define	__REV__		"1.23.0"
+#define	__IDENT__	"X01-25"
+#define	__REV__		"1.25.0"
 
 /*
 **++
@@ -26,6 +26,12 @@
 **  CREATION DATE:  3-OCT-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-25		27-OCT-2026	CLD
+**		The scratch directory is made with all its parents, and a directory
+**		that cannot be made ends the run: under VBACKUP_TESTDIR the parent
+**		may not be there yet, and the checks went on against nothing until
+**		one of them fell on a null pointer (ACS-CGW, X01-25).
 **
 **	X01-23		 7-OCT-2026	RRL
 **		Batch mode: the records read ahead and decompressed on the pool are
@@ -678,7 +684,28 @@ char		l_spec [1100];
 		printf("TAP version 13\n");
 
 	snprintf(s_dir, sizeof(s_dir), "%s", a_argv [1]);
-	mkdir(s_dir, 0755);
+
+	/* The directory and every parent of it that is not there yet, as mkdir -p */
+	for ( char *l_cp = s_dir + 1; ; l_cp++ )
+		{
+		if ( *l_cp && (*l_cp != '/') )
+			continue;
+
+		char	l_save = *l_cp;
+
+		*l_cp = '\0';
+
+		if ( mkdir(s_dir, 0755) && (errno != EEXIST) )
+			{
+			fprintf(stderr, "units: %s - cannot be made, errno %d (%s)\n", s_dir, errno, strerror(errno));
+			return	2;
+			}
+
+		*l_cp = l_save;
+
+		if ( !l_save )
+			break;
+		}
 
 	s_begin("CRC-32/IEEE check value");
 	$CHECK($VBK_CRC(0, "123456789", 9) == 0xCBF43926U, "CRC(\"123456789\") = %08X", $VBK_CRC(0, "123456789", 9));
