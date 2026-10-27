@@ -112,7 +112,7 @@ $ vbkx p USERS.BCK "[SMITH]LOGIN.COM;3"
 .BR vbackup (1),
 .B vbackup /HELP VBKX
 .SH AUTHOR
-StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
+StarLet Squad and Ruslan R. Laishev.
 .SH COPYRIGHT
 Copyright (C) 2026 StarLet Squad and Ruslan R. Laishev.
 Licensed under the Apache License, Version 2.0; distributed on an

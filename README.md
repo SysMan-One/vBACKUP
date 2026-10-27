@@ -355,7 +355,7 @@ the failures:
 
 ## Author
 
-StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
+StarLet Squad and Ruslan R. Laishev.
 
 ## License
 

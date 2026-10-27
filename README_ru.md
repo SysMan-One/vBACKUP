@@ -378,7 +378,7 @@ git через git archive от HEAD, так что в него попадает
 
 ## Автор
 
-StarLet Squad и Ruslan R. Laishev (AKA: BadAss SysMan).
+StarLet Squad и Ruslan R. Laishev.
 
 ## Лицензия
 
