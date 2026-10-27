@@ -8,6 +8,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		27-OCT-2026	CLD	X-21 : The scratch trees under VBACKUP_TESTDIR: TMPDIR at the
+#					time of the configuration, else the build tree - a /tmp
+#					of tmpfs is too small for them on a small board.
+#
 #		 6-OCT-2026	RRL	X-20 : memcheck.sh - valgrind, with -DVBACKUP$M_MEMCHECK=ON.
 #
 #		 6-OCT-2026	RRL	X-18 : winutil.sh gets fakessh.exe.
@@ -37,15 +41,31 @@
 add_executable(units units.c)
 target_link_libraries(units PRIVATE vbkcore vbackup_options)
 
-#	The scratch trees go under the build tree: an ext4/xfs one, where
-#	user xattrs and chattr flags exist - a tmpfs /tmp has neither
-add_test(NAME units COMMAND units ${CMAKE_CURRENT_BINARY_DIR}/units.d)
+#
+#	The scratch trees go under the build tree by default: an ext4/xfs one,
+#	where user xattrs and chattr flags exist - a tmpfs /tmp has neither,
+#	and on a small board it is too small for smoke and damage.  When the
+#	build tree itself is on such a /tmp, give TMPDIR (a real file system)
+#	at the time of the configuration, or VBACKUP_TESTDIR outright:
+#
+#		TMPDIR=/var/tmp cmake -S . -B build
+#
+if ( DEFINED ENV{TMPDIR} AND NOT "$ENV{TMPDIR}" STREQUAL "" )
+	set(L_TESTDIR "$ENV{TMPDIR}/vbackup-test-${VBACKUP$K_IDENT}")
+else()
+	set(L_TESTDIR "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+
+set(VBACKUP_TESTDIR "${L_TESTDIR}" CACHE PATH "Directory the scratch trees of the tests go under")
+message(STATUS "VBACKUP: the scratch trees of the tests under ${VBACKUP_TESTDIR}")
+
+add_test(NAME units COMMAND units ${VBACKUP_TESTDIR}/units.d)
 
 add_test(NAME smoke
 	COMMAND ${CMAKE_COMMAND} -E env
 		VBACKUP=$<TARGET_FILE:vbackup>
 		VBKX=$<TARGET_FILE:vbkx>
-		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/smoke.d
+		SCRATCH=${VBACKUP_TESTDIR}/smoke.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/smoke.sh)
 
 #	Fewer rounds than a run by hand (ROUNDS=30 is the default): it is a test of every build
@@ -53,7 +73,7 @@ add_test(NAME damage
 	COMMAND ${CMAKE_COMMAND} -E env
 		VBACKUP=$<TARGET_FILE:vbackup>
 		VBKX=$<TARGET_FILE:vbkx>
-		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/damage.d
+		SCRATCH=${VBACKUP_TESTDIR}/damage.d
 		ROUNDS=15
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/damage.sh)
 
@@ -62,12 +82,12 @@ add_test(NAME vms
 	COMMAND ${CMAKE_COMMAND} -E env
 		VBACKUP=$<TARGET_FILE:vbackup>
 		VBKX=$<TARGET_FILE:vbkx>
-		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/vms.d
+		SCRATCH=${VBACKUP_TESTDIR}/vms.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/vms.sh)
 
 #	The extractors for the geeks, those that the toolchains here could build
 if ( VBACKUP_GEEKS )
-	set(L_ENV VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx> SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/geeks.d)
+	set(L_ENV VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx> SCRATCH=${VBACKUP_TESTDIR}/geeks.d)
 
 	if ( "go" IN_LIST VBACKUP_GEEKS )
 		list(APPEND L_ENV VBKXGO=${CMAKE_BINARY_DIR}/vbkx-go)
@@ -93,7 +113,7 @@ if ( VBACKUP$M_MEMCHECK )
 
 	if ( VBACKUP_VALGRIND )
 		add_test(NAME memcheck COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> UNITS=$<TARGET_FILE:units>
-			VALGRIND=${VBACKUP_VALGRIND} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/memcheck.d sh ${CMAKE_CURRENT_SOURCE_DIR}/memcheck.sh)
+			VALGRIND=${VBACKUP_VALGRIND} SCRATCH=${VBACKUP_TESTDIR}/memcheck.d sh ${CMAKE_CURRENT_SOURCE_DIR}/memcheck.sh)
 		set_tests_properties(memcheck PROPERTIES TIMEOUT 7200)
 	else()
 		message(STATUS "VBACKUP: VBACKUP$M_MEMCHECK - no valgrind")
@@ -103,7 +123,7 @@ endif()
 #	vbkx.exe under wine: only when both are there (a few seconds)
 if ( VBACKUP_WINVBKX AND VBACKUP_WINE )
 	add_test(NAME win COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
-		VBKXEXE=${VBACKUP_WINVBKX} WINE=${VBACKUP_WINE} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/win.d
+		VBKXEXE=${VBACKUP_WINVBKX} WINE=${VBACKUP_WINE} SCRATCH=${VBACKUP_TESTDIR}/win.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/win.sh)
 endif()
 
@@ -114,7 +134,7 @@ if ( VBACKUP_WINEXE AND VBACKUP_WINE )
 	add_test(NAME winutil COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBACKUPEXE=${VBACKUP_WINEXE}
 		WINE=${VBACKUP_WINE} OBJDIR=${CMAKE_BINARY_DIR}/winexe/CMakeFiles/vbackup.dir NM=${VBACKUP_MINGWNM}
 		UNITSEXE=${CMAKE_BINARY_DIR}/winexe/units.exe FAKESSHEXE=${CMAKE_BINARY_DIR}/winexe/fakessh.exe
-		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/winutil.d sh ${CMAKE_CURRENT_SOURCE_DIR}/winutil.sh)
+		SCRATCH=${VBACKUP_TESTDIR}/winutil.d sh ${CMAKE_CURRENT_SOURCE_DIR}/winutil.sh)
 endif()
 
 #
@@ -126,7 +146,7 @@ target_link_libraries(wcx_harness PRIVATE ${CMAKE_DL_LIBS} vbackup_options)
 add_dependencies(wcx_harness vbkwcx)
 
 add_test(NAME wcx COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
-	SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/wcx.d
+	SCRATCH=${VBACKUP_TESTDIR}/wcx.d
 	sh ${CMAKE_CURRENT_SOURCE_DIR}/wcx.sh $<TARGET_FILE:wcx_harness> $<TARGET_FILE:vbkwcx>)
 
 if ( VBACKUP_WINE AND (VBACKUP_WCX64 OR VBACKUP_WCX32) )
@@ -153,7 +173,7 @@ if ( VBACKUP_WINE AND (VBACKUP_WCX64 OR VBACKUP_WCX32) )
 	endif()
 
 	add_test(NAME wcxwin COMMAND ${CMAKE_COMMAND} -E env VBACKUP=$<TARGET_FILE:vbackup> VBKX=$<TARGET_FILE:vbkx>
-		WINE=${VBACKUP_WINE} SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/wcxwin.d
+		WINE=${VBACKUP_WINE} SCRATCH=${VBACKUP_TESTDIR}/wcxwin.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/wcx.sh ${L_PAIRS})
 endif()
 #	The plugins of the file managers: the commands always; the real mc and far2l when tmux and they are there
@@ -161,5 +181,5 @@ add_test(NAME plugins
 	COMMAND ${CMAKE_COMMAND} -E env
 		VBACKUP=$<TARGET_FILE:vbackup>
 		VBKX=$<TARGET_FILE:vbkx>
-		SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/plugins.d
+		SCRATCH=${VBACKUP_TESTDIR}/plugins.d
 		sh ${CMAKE_CURRENT_SOURCE_DIR}/plugins.sh)

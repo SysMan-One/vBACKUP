@@ -29,6 +29,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		27-OCT-2026	CLD	X-23 : The page cache behind the read-ahead is not looked at
+#						when the scratch is on tmpfs: its pages cannot be
+#						dropped (GGW2, X01-25).
+#
 #		 7-OCT-2026	RRL	X-22 : Nothing left out without a word: the files of an
 #						unknown record named (NOTINSTREAM, /COMPARE, vbkx); a
 #						SOLID cut by a lost block gives back what is before it;
@@ -437,8 +441,11 @@ check '[ $? = 0 ]' "the read-ahead under a time filter failed"
 VBACKUP_PREFETCH=4 $VB src/tree cpre > /dev/null 2>&1
 check '[ $? = 0 ] && same_tree src/tree cpre/tree' "a copy with the read-ahead differs"
 
-#	A cold file read ahead is still dropped behind the save; a warm one stays
-if command -v fincore > /dev/null 2>&1; then
+#	A cold file read ahead is still dropped behind the save; a warm one stays.  A tmpfs keeps
+#	its pages in the page cache whatever is advised: there is nothing to look at there
+if [ "$(stat -f -c %T .)" = tmpfs ]; then
+	echo "%VBACKUP-W-SMOKE, the scratch is on tmpfs: the page cache behind the read-ahead not checked"
+elif command -v fincore > /dev/null 2>&1; then
 	mkdir -p cold && for i in 1 2 3 4 5 6 7 8; do head -c 200000 /dev/urandom > cold/f$i; done
 	sync
 
