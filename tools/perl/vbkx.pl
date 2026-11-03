@@ -150,6 +150,11 @@
 #
 #  MODIFICATION HISTORY:
 #
+#	X01-22ECO1	 3-NOV-2026	RRL
+#		A directory on the way which is not a directory: the text of ENOTDIR
+#		is taken from $! - POSIX::strerror() of Perl 5.32 (Oracle Linux 9,
+#		aarch64) never returns, and the extraction of a forged saveset hung.
+#
 #	X01-22		 7-OCT-2026	RRL
 #		The repair of a group: the good DATA blocks first made as the
 #		writer left them past PAYLEN - zeros up to the TAG.  Nothing
@@ -1455,7 +1460,11 @@ sub parents
 		$p .= "/$c";
 		if (lstat($p))
 		{
-			return [POSIX::ENOTDIR(), POSIX::strerror(POSIX::ENOTDIR())] unless -d _ && !-l _;
+			unless (-d _ && !-l _)
+			{
+				local $! = POSIX::ENOTDIR();
+				return [$! + 0, "$!"];
+			}
 			next;
 		}
 		return [$! + 0, "$!"] unless $create;
@@ -2491,7 +2500,7 @@ sub selftest
 
 sub usage
 {
-	print STDERR "vbkx-pl X01-22 - the extractor of last resort for VBACKUP savesets\n\n",
+	print STDERR "vbkx-pl X01-22ECO1 - the extractor of last resort for VBACKUP savesets\n\n",
 		"  perl vbkx.pl l saveset [-k file]           list the files (times in UTC)\n",
 		"  perl vbkx.pl x saveset [-C dir] [-k file]  extract them all\n",
 		"  perl vbkx.pl t saveset [-k file]           read it all, check the checksums\n",

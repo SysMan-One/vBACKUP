@@ -570,8 +570,9 @@ stream += file(3, b'l', 3, b'../escape') + rec(4, tlv(1, struct.pack('<I', 3)))
 stream += file(4, b'l/inside', 1) + data(4) + file(5, b'h', 4, b'../evil') + rec(4, tlv(1, struct.pack('<I', 5))) + rec(6, b'')
 open(sys.argv[1], 'wb').write(blk(3, 0, 0, summ) + blk(1, 1, 0, stream))
 PYEOF
-	$G x evil.$N/x.bck -C evil.$N/out > evil.$N.log 2>&1
-	check '[ $? = 1 ] && [ ! -e evil.$N/evil ] && [ ! -e /tmp/vbackup-geek-evil ] && [ ! -e evil.$N/escape ] && [ ! -e evil.$N/out/l/inside ]' \
+	timeout 120 $G x evil.$N/x.bck -C evil.$N/out > evil.$N.log 2>&1
+	l_rc=$?
+	check '[ $l_rc = 1 ] && [ ! -e evil.$N/evil ] && [ ! -e /tmp/vbackup-geek-evil ] && [ ! -e evil.$N/escape ] && [ ! -e evil.$N/out/l/inside ]' \
 		"$N: a forged saveset wrote outside, $(cat evil.$N.log)"
 done
 
