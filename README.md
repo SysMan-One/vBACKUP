@@ -148,9 +148,10 @@ VBACKUP is young: its format is fixed and tested by its own damage tests,
 but it has not had the decades of use the others have.
 
 Platforms.  Built and tested on x86_64 and on aarch64: on 3-NOV-2026 the
-regression tests (smoke, wcx, plugins, units, damage, vms) were run on
-Oracle Linux 9 on a Neoverse-N1 (Oracle Cloud, 2 vCPU, kernel 6.12), where
-`sh` is bash.  The long `geeks` test has not been run there yet.
+regression tests (smoke, wcx, plugins, units, damage, vms) and the long
+`geeks` test (the extractors of last resort, Perl 5.32 among them) were run
+on Oracle Linux 9 on a Neoverse-N1 (Oracle Cloud, 2 vCPU, kernel 6.12), where
+`sh` is bash.
 
 ## Compression and speed
 
