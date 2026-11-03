@@ -393,34 +393,34 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 
 	#	1. The same as VBKX
 	$G l base/x.bck > $N.lst 2> $N.lerr
-	check '[ $? = 0 ] && cmp -s $N.lst ref.lst' "$N l: the listing differs from vbkx l, $(diff ref.lst $N.lst | head -4)"
+	l_rc=$?; check '[ $l_rc = 0 ] && cmp -s $N.lst ref.lst' "$N l: the listing differs from vbkx l, $(diff ref.lst $N.lst | head -4)"
 	$G x base/x.bck -C $N.out > $N.log 2>&1
-	check '[ $? = 0 ] && same ref $N.out' "$N x: the tree differs from vbkx x, $(state ref > s1; state $N.out > s2; diff s1 s2 | head -4) $(head -3 $N.log)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same ref $N.out' "$N x: the tree differs from vbkx x, $(state ref > s1; state $N.out > s2; diff s1 s2 | head -4) $(head -3 $N.log)"
 	check '[ "$(stat -c %i $N.out/tree/a.txt)" = "$(stat -c %i $N.out/tree/sub/hard)" ] && [ "$(du -k $N.out/tree/sparse | cut -f1)" -lt 1000 ]' \
 		"$N x: hard link or holes lost"
 	$G x base/x.bck -C $N.out > $N.log2 2>&1
-	check '[ $? = 1 ] && grep -q "File: tree/a.txt - already exists, not extracted" $N.log2' "$N x over the files that are there: $(head -2 $N.log2)"
+	l_rc=$?; check '[ $l_rc = 1 ] && grep -q "File: tree/a.txt - already exists, not extracted" $N.log2' "$N x over the files that are there: $(head -2 $N.log2)"
 	$G t base/x.bck > $N.t 2>&1
-	check '[ $? = 0 ] && grep -q "all checksums match" $N.t' "$N t: $(cat $N.t)"
+	l_rc=$?; check '[ $l_rc = 0 ] && grep -q "all checksums match" $N.t' "$N t: $(cat $N.t)"
 	$G q base/x.bck > /dev/null 2>&1
 	check '[ $? = 2 ]' "$N: a command that is none, completion code"
 
 	#	1z. The compressed saveset: the same as VBKX, the same tree as uncompressed
 	$G l zbase/x.bck > $N.zlst 2> $N.zlerr
-	check '[ $? = 0 ] && cmp -s $N.zlst zref.lst' "$N l of DATAZ: the listing differs from vbkx l, $(diff zref.lst $N.zlst | head -4)"
+	l_rc=$?; check '[ $l_rc = 0 ] && cmp -s $N.zlst zref.lst' "$N l of DATAZ: the listing differs from vbkx l, $(diff zref.lst $N.zlst | head -4)"
 	$G x zbase/x.bck -C $N.zout > $N.zlog 2>&1
-	check '[ $? = 0 ] && same zref $N.zout && same ref $N.zout' "$N x of DATAZ: the tree differs, $(head -3 $N.zlog)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same zref $N.zout && same ref $N.zout' "$N x of DATAZ: the tree differs, $(head -3 $N.zlog)"
 	$G t zbase/x.bck > $N.zt 2>&1
-	check '[ $? = 0 ] && grep -q "all checksums match" $N.zt' "$N t of DATAZ: $(cat $N.zt)"
+	l_rc=$?; check '[ $l_rc = 0 ] && grep -q "all checksums match" $N.zt' "$N t of DATAZ: $(cat $N.zt)"
 
 	#	1d. Deflate and LZMA: the listing of VBKX, the tree of the uncompressed saveset, the checksums
 	for ZL in 3 8; do
 		$G l z${ZL}base/x.bck > $N.z${ZL}lst 2>&1
-		check '[ $? = 0 ] && cmp -s $N.z${ZL}lst z${ZL}ref.lst' "$N l of /LEVEL=$ZL: the listing differs from vbkx l, $(diff z${ZL}ref.lst $N.z${ZL}lst | head -4)"
+		l_rc=$?; check '[ $l_rc = 0 ] && cmp -s $N.z${ZL}lst z${ZL}ref.lst' "$N l of /LEVEL=$ZL: the listing differs from vbkx l, $(diff z${ZL}ref.lst $N.z${ZL}lst | head -4)"
 		$G x z${ZL}base/x.bck -C $N.z${ZL}out > $N.z${ZL}log 2>&1
-		check '[ $? = 0 ] && same z${ZL}ref $N.z${ZL}out && same ref $N.z${ZL}out' "$N x of /LEVEL=$ZL: the tree differs, $(head -3 $N.z${ZL}log)"
+		l_rc=$?; check '[ $l_rc = 0 ] && same z${ZL}ref $N.z${ZL}out && same ref $N.z${ZL}out' "$N x of /LEVEL=$ZL: the tree differs, $(head -3 $N.z${ZL}log)"
 		$G t z${ZL}base/x.bck > $N.z${ZL}t 2>&1
-		check '[ $? = 0 ] && grep -q "all checksums match" $N.z${ZL}t' "$N t of /LEVEL=$ZL: $(cat $N.z${ZL}t)"
+		l_rc=$?; check '[ $l_rc = 0 ] && grep -q "all checksums match" $N.z${ZL}t' "$N t of /LEVEL=$ZL: $(cat $N.z${ZL}t)"
 	done
 
 	#	1r. DATAZ records of the reference compressor, in its default, fast and high modes
@@ -435,7 +435,7 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	#	2. Volume 1 without its VHDR: the block size and the group size found by trying
 	rm -rf d && cp -r base d && python3 g.py damage d VHDR 0
 	$G x d/x.bck -C $N.vh > $N.vh.log 2>&1
-	check '[ $? = 0 ] && same ref $N.vh && grep -q "Saveset: d/x.bck - its first block is bad: block size $BSZ and group size $GRP found by trying" $N.vh.log' "$N: volume 1 without its VHDR, $(head -3 $N.vh.log)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same ref $N.vh && grep -q "Saveset: d/x.bck - its first block is bad: block size $BSZ and group size $GRP found by trying" $N.vh.log' "$N: volume 1 without its VHDR, $(head -3 $N.vh.log)"
 
 	#	3. The rounds of damage: on the plain saveset, then on the compressed one - there also
 	#	   garbage inside the compressed bytes of DATAZ records with the blocks resealed (ZBODY),
@@ -501,25 +501,25 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	#	5. Encrypted: the same as VBKX and as the plain saveset, the passphrase from -k or
 	#	   VBACKUP_KEY_FILE; a wrong one refused before anything is made
 	$G selftest > $N.self 2>&1
-	check '[ $? = 0 ] && grep -q "all primitives right" $N.self && ! grep -q FAILED $N.self' "$N selftest: $(grep -v ': ok$' $N.self | head -3)"
+	l_rc=$?; check '[ $l_rc = 0 ] && grep -q "all primitives right" $N.self && ! grep -q FAILED $N.self' "$N selftest: $(grep -v ': ok$' $N.self | head -3)"
 	$G l ebase/x.bck -k key > $N.elst 2> $N.elerr
-	check '[ $? = 0 ] && cmp -s $N.elst eref.lst && cmp -s $N.elst ref.lst' "$N l of the encrypted saveset: $(diff eref.lst $N.elst | head -4) $(head -2 $N.elerr)"
+	l_rc=$?; check '[ $l_rc = 0 ] && cmp -s $N.elst eref.lst && cmp -s $N.elst ref.lst' "$N l of the encrypted saveset: $(diff eref.lst $N.elst | head -4) $(head -2 $N.elerr)"
 	$G x ebase/x.bck -C $N.eout -k key > $N.elog 2>&1
-	check '[ $? = 0 ] && same eref $N.eout && same ref $N.eout' "$N x of the encrypted saveset: the tree differs, $(head -3 $N.elog)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same eref $N.eout && same ref $N.eout' "$N x of the encrypted saveset: the tree differs, $(head -3 $N.elog)"
 	VBACKUP_KEY_FILE=key $G t ebase/x.bck > $N.et 2>&1
-	check '[ $? = 0 ] && grep -q "all checksums match" $N.et' "$N t of the encrypted saveset, VBACKUP_KEY_FILE: $(cat $N.et)"
+	l_rc=$?; check '[ $l_rc = 0 ] && grep -q "all checksums match" $N.et' "$N t of the encrypted saveset, VBACKUP_KEY_FILE: $(cat $N.et)"
 	if [ $N = vbkx-pl ]; then
 		#	Without Digest::SHA (not in perl-base): its own SHA-256, written out
 		VBKXPL_PURE=1 $G x ebase/x.bck -C $N.epure -k key > $N.epurelog 2>&1
-		check '[ $? = 0 ] && same ref $N.epure' "$N x of the encrypted saveset, pure Perl SHA-256: $(head -3 $N.epurelog)"
+		l_rc=$?; check '[ $l_rc = 0 ] && same ref $N.epure' "$N x of the encrypted saveset, pure Perl SHA-256: $(head -3 $N.epurelog)"
 	fi
 	$G x ezbase/x.bck -C $N.ezout -k key > $N.ezlog 2>&1
-	check '[ $? = 0 ] && same ezref $N.ezout && same ref $N.ezout' "$N x of the encrypted saveset in volumes, compressed: $(head -3 $N.ezlog)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same ezref $N.ezout && same ref $N.ezout' "$N x of the encrypted saveset in volumes, compressed: $(head -3 $N.ezlog)"
 	$G x ebase/x.bck -C $N.ebad -k badkey > $N.ebadlog 2>&1
-	check '[ $? = 2 ] && [ ! -e $N.ebad ] && grep -q "Saveset: ebase/x.bck - the passphrase does not open it" $N.ebadlog' "$N: a wrong passphrase, $(head -2 $N.ebadlog)"
+	l_rc=$?; check '[ $l_rc = 2 ] && [ ! -e $N.ebad ] && grep -q "Saveset: ebase/x.bck - the passphrase does not open it" $N.ebadlog' "$N: a wrong passphrase, $(head -2 $N.ebadlog)"
 	chmod 644 key
 	$G t ebase/x.bck -k key > $N.eperm 2>&1
-	check '[ $? = 2 ] && grep -q "Key file: key - not a regular file, or others may read it: chmod 600 it" $N.eperm' "$N: a key file others may read, $(head -2 $N.eperm)"
+	l_rc=$?; check '[ $l_rc = 2 ] && grep -q "Key file: key - not a regular file, or others may read it: chmod 600 it" $N.eperm' "$N: a key file others may read, $(head -2 $N.eperm)"
 	chmod 600 key
 
 	#	5f. A forged EDATA block - one octet of its ciphertext, the CRC made right again:
@@ -537,15 +537,15 @@ for NG in "vbkx-go ${VBKXGO:-}" "vbkx-rs ${VBKXRS:-}" "vbkx-pl ${VBKXPL:+perl $V
 	#	5t. A forged ETRAILER: said, and the stream read all the same
 	rm -rf d && cp -r ebase d && python3 g.py forge d/${ELAST#ebase/} $((EBLKS - 1)) 0
 	$G x d/x.bck -C $N.et2 -k key > $N.et2log 2>&1
-	check '[ $? = 1 ] && same ref $N.et2 && grep -q "Saveset: d/x.bck - its trailer fails its authentication" $N.et2log' "$N: a forged trailer, $(head -3 $N.et2log)"
+	l_rc=$?; check '[ $l_rc = 1 ] && same ref $N.et2 && grep -q "Saveset: d/x.bck - its trailer fails its authentication" $N.et2log' "$N: a forged trailer, $(head -3 $N.et2log)"
 
 	#	5. Version 2 (/PARITY): three bad blocks of a group rebuilt, four lost; encrypted, two rebuilt
 	rm -rf $N.p3; $G x p3z/x.bck -C $N.p3 > $N.p3log 2>&1
-	check '[ $? = 0 ] && same ref $N.p3 && [ "$(grep -c "was bad, rebuilt from its group" $N.p3log)" = 3 ]' "$N: /PARITY=3, three bad blocks of a group, $(head -3 $N.p3log)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same ref $N.p3 && [ "$(grep -c "was bad, rebuilt from its group" $N.p3log)" = 3 ]' "$N: /PARITY=3, three bad blocks of a group, $(head -3 $N.p3log)"
 	$G t p4z/x.bck > $N.p4log 2>&1
-	check '[ $? = 1 ] && grep -q "is bad and cannot be rebuilt" $N.p4log' "$N: /PARITY=3, four bad blocks of a group, $(head -3 $N.p4log)"
+	l_rc=$?; check '[ $l_rc = 1 ] && grep -q "is bad and cannot be rebuilt" $N.p4log' "$N: /PARITY=3, four bad blocks of a group, $(head -3 $N.p4log)"
 	rm -rf $N.pe; $G x pe2z/x.bck -C $N.pe -k key > $N.pelog 2>&1
-	check '[ $? = 0 ] && same eref $N.pe && [ "$(grep -c "was bad, rebuilt from its group" $N.pelog)" = 2 ]' "$N: /PARITY=2 /ENCRYPT, two bad blocks, $(head -3 $N.pelog)"
+	l_rc=$?; check '[ $l_rc = 0 ] && same eref $N.pe && [ "$(grep -c "was bad, rebuilt from its group" $N.pelog)" = 2 ]' "$N: /PARITY=2 /ENCRYPT, two bad blocks, $(head -3 $N.pelog)"
 
 	#	4. A forged saveset: names that climb out, a link to go through
 	mkdir -p evil.$N/out

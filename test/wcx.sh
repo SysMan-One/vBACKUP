@@ -232,7 +232,7 @@ while [ $# -ge 2 ]; do
 	check '[ "$(wh c "$(wp $S/plain.bck)")" = "CAPS 68 CAN 1" ]' "$N: CanYouHandleThisFile/GetPackerCaps on a saveset: $(wh c "$(wp $S/plain.bck)")"
 	check '[ "$(wh c "$(wp $S/text.txt)")" = "CAPS 68 CAN 0" ]' "$N: CanYouHandleThisFile on a text file"
 	wh l "$(wp $S/text.txt)" > $R/notbck.log 2>&1
-	check '[ $? = 2 ] && grep -q "^OPEN 14" $R/notbck.log' "$N: a text file opened: $(cat $R/notbck.log)"
+	l_rc=$?; check '[ $l_rc = 2 ] && grep -q "^OPEN 14" $R/notbck.log' "$N: a text file opened: $(cat $R/notbck.log)"
 
 	#	2. Each saveset: the listing, everything extracted, tested
 	for B in plain packed vols nocat; do
@@ -247,7 +247,7 @@ while [ $# -ge 2 ]; do
 		check 'grep -q "PROGRESS [1-9]" $R/$B.xe' "$N $B: no progress reported"
 
 		wh t "$(wp $S/$B.bck)" > $R/$B.t 2>&1
-		check '[ $? = 0 ]' "$N $B: test: $(head -3 $R/$B.t)"
+		l_rc=$?; check '[ $l_rc = 0 ]' "$N $B: test: $(head -3 $R/$B.t)"
 	done
 
 	#	Attributes, time, a sparse file, a hard link, read-only
@@ -263,7 +263,7 @@ while [ $# -ge 2 ]; do
 	#	3. By name: a further name of a file alone gets the data; Cyrillic and a space
 	for B in plain nocat; do
 		wh x "$(wp $S/$B.bck)" "$(wp $S/$R/h.$B)" tree/sub/hard > $R/h.$B.log 2>&1
-		check '[ $? = 0 ] && cmp -s $R/h.$B/tree/sub/hard src/tree/a.txt && [ ! -e $R/h.$B/tree/a.txt ]' "$N $B: a further name alone: $(cat $R/h.$B.log)"
+		l_rc=$?; check '[ $l_rc = 0 ] && cmp -s $R/h.$B/tree/sub/hard src/tree/a.txt && [ ! -e $R/h.$B/tree/a.txt ]' "$N $B: a further name alone: $(cat $R/h.$B.log)"
 	done
 	wh x "$(wp $S/packed.bck)" "$(wp $S/$R/named)" "tree/sub/deep/имя с пробелом" tree/text.txt > $R/named.log 2>&1
 	check '[ $? = 0 ] && cmp -s "$R/named/tree/sub/deep/имя с пробелом" "src/tree/sub/deep/имя с пробелом" && cmp -s $R/named/tree/text.txt src/tree/text.txt && [ ! -e $R/named/tree/a.txt ]' \
@@ -274,7 +274,7 @@ while [ $# -ge 2 ]; do
 		wh -a l "$S/plain.bck" 2> /dev/null | lwh > $R/plain.la
 		check 'cmp -s plain.lx $R/plain.la' "$N: the listing of ReadHeaderEx differs"
 		wh -a x "$S/plain.bck" "$S/$R/ansi.out" > $R/ansi.x 2>&1
-		check '[ $? = 0 ] && python3 judge.py ref.plain $R/ansi.out $R/ansi.x strict' "$N: ProcessFile: $(head -3 $R/ansi.x)"
+		l_rc=$?; check '[ $l_rc = 0 ] && python3 judge.py ref.plain $R/ansi.out $R/ansi.x strict' "$N: ProcessFile: $(head -3 $R/ansi.x)"
 	fi
 
 	#	4. A volume not beside volume 1: asked for, given - all there; refused - named

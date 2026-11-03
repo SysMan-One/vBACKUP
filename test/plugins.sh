@@ -100,7 +100,7 @@ INI=$SRC/plugins/far/vbackup.ini
 #	1. MC: the extfs script itself
 #
 sh "$UVBK" list x.bck > mc.lst 2> mc.err
-check '[ $? = 0 ] && [ "$(cat mc.lst)" = "$($VB x.bck /LIST /FORMAT=LS)" ]' "uvbk list is not the listing of the catalog: $(cat mc.err)"
+l_rc=$?; check '[ $l_rc = 0 ] && [ "$(cat mc.lst)" = "$($VB x.bck /LIST /FORMAT=LS)" ]' "uvbk list is not the listing of the catalog: $(cat mc.err)"
 check 'grep -q " tree/a b.txt$" mc.lst && grep -q "tree/link -> a b.txt$" mc.lst && grep -q " tree/с пробелом/файл.txt$" mc.lst' "uvbk list: a name with a space, Cyrillic or a link is wrong"
 sh "$UVBK" copyout x.bck "tree/с пробелом/файл.txt" out/f.txt 2>> mc.err
 check '[ $? = 0 ] && cmp -s out/f.txt "tree/с пробелом/файл.txt"' "uvbk copyout of a Cyrillic name with a space"
@@ -121,7 +121,7 @@ check '[ "$(ini ID)" = "56 42 4B 42" ] && [ "$(head -c 4 x.bck)" = "VBKB" ] && [
 
 LISTCMD=$(ini List | sed 's/%%AQ/x.bck/')
 sh -c "$LISTCMD" > far.lst 2> far.err
-check '[ $? = 0 ] && [ -s far.lst ] && ! grep -q -- " -> " far.lst' "MultiArc List: $(cat far.err)"
+l_rc=$?; check '[ $l_rc = 0 ] && [ -s far.lst ] && ! grep -q -- " -> " far.lst' "MultiArc List: $(cat far.err)"
 
 #	Format0: y t d h m s z a n at their columns; every other character is skipped
 python3 - "$(ini Format0)" far.lst tree > far.parse 2>&1 << 'PYEOF'
@@ -152,27 +152,27 @@ check 'grep -q "^bad 0$" far.parse && [ "$(wc -l < far.lst)" = "$(find tree | wc
 NAMES="'tree/a b.txt' 'tree/с пробелом/файл.txt' tree/sub/r.bin"
 mkdir -p far.x far.j
 (cd far.x && sh -c "$(ini Extract | sed "s#%%AQ#$S/x.bck#; s#%%FSQ#$NAMES#")") > far.xlog 2>&1
-check '[ $? = 0 ] && cmp -s "far.x/tree/a b.txt" "tree/a b.txt" && cmp -s "far.x/tree/с пробелом/файл.txt" "tree/с пробелом/файл.txt" && cmp -s far.x/tree/sub/r.bin tree/sub/r.bin' "MultiArc Extract: $(cat far.xlog)"
+l_rc=$?; check '[ $l_rc = 0 ] && cmp -s "far.x/tree/a b.txt" "tree/a b.txt" && cmp -s "far.x/tree/с пробелом/файл.txt" "tree/с пробелом/файл.txt" && cmp -s far.x/tree/sub/r.bin tree/sub/r.bin' "MultiArc Extract: $(cat far.xlog)"
 (cd far.j && sh -c "$(ini ExtractWithoutPath | sed "s#%%AQ#$S/x.bck#; s#%%FSQ#$NAMES#")") > far.jlog 2>&1
-check '[ $? = 0 ] && cmp -s "far.j/a b.txt" "tree/a b.txt" && cmp -s far.j/файл.txt "tree/с пробелом/файл.txt" && [ ! -d far.j/tree ]' "MultiArc ExtractWithoutPath: $(cat far.jlog)"
+l_rc=$?; check '[ $l_rc = 0 ] && cmp -s "far.j/a b.txt" "tree/a b.txt" && cmp -s far.j/файл.txt "tree/с пробелом/файл.txt" && [ ! -d far.j/tree ]' "MultiArc ExtractWithoutPath: $(cat far.jlog)"
 sh -c "$(ini Test | sed "s#%%AQ#x.bck#")" > far.tlog 2>&1
-check '[ $? = 0 ]' "MultiArc Test: $(cat far.tlog)"
+l_rc=$?; check '[ $l_rc = 0 ]' "MultiArc Test: $(cat far.tlog)"
 check '[ -z "$(ini Delete)" ] && [ -z "$(ini Add)" ]' "MultiArc: the format offers to change a saveset"
 
 #	An encrypted saveset: through VBACKUP_KEY_FILE; without it the commands fail at once, never ask on the screen
 printf 'plugin passphrase\n' > key && chmod 600 key
 VBACKUP_KDFITER=1000 VBACKUP_KEY_FILE=$S/key $VB tree e.bck /ENCRYPT > /dev/null 2>&1
 VBACKUP_KEY_FILE=$S/key sh "$UVBK" list e.bck > mce.lst 2> mce.err
-check '[ $? = 0 ] && [ "$(cat mce.lst)" = "$(cat mc.lst)" ]' "uvbk list of an encrypted saveset: $(head -2 mce.err)"
+l_rc=$?; check '[ $l_rc = 0 ] && [ "$(cat mce.lst)" = "$(cat mc.lst)" ]' "uvbk list of an encrypted saveset: $(head -2 mce.err)"
 VBACKUP_KEY_FILE=$S/key sh "$UVBK" copyout e.bck "tree/a b.txt" out/e.txt 2>> mce.err
 check '[ $? = 0 ] && cmp -s out/e.txt "tree/a b.txt"' "uvbk copyout of an encrypted saveset"
 env -u VBACKUP_KEY_FILE timeout 20 sh "$UVBK" list e.bck > mcn.lst 2>&1 < /dev/null
 RC=$?
 check '[ $RC = 1 ] || [ $RC = 2 ]' "uvbk list of an encrypted saveset without a key: hung or succeeded"
 VBACKUP_KEY_FILE=$S/key sh -c "$(ini List | sed 's/%%AQ/e.bck/')" > fare.lst 2>&1
-check '[ $? = 0 ] && [ "$(cat fare.lst)" = "$(cat far.lst)" ]' "MultiArc List of an encrypted saveset: $(head -2 fare.lst)"
+l_rc=$?; check '[ $l_rc = 0 ] && [ "$(cat fare.lst)" = "$(cat far.lst)" ]' "MultiArc List of an encrypted saveset: $(head -2 fare.lst)"
 env -u VBACKUP_KEY_FILE timeout 20 sh -c "$(ini List | sed 's/%%AQ/e.bck/')" > farn.lst 2>&1
-check '[ $? = 2 ] && grep -q "give -k" farn.lst' "MultiArc List without a key: $(head -1 farn.lst)"
+l_rc=$?; check '[ $l_rc = 2 ] && grep -q "give -k" farn.lst' "MultiArc List without a key: $(head -1 farn.lst)"
 
 #
 #	3. The real programs, in tmux

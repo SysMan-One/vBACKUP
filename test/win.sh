@@ -135,7 +135,7 @@ check '[ -e plain.bck ] && [ -e packed.bck ] && [ -e vols.bck.003 ]' "the savese
 for B in plain packed vols; do
 	$VX l $B.bck > $B.lx 2>&1
 	vw l $B.bck > $B.lw 2> $B.lwe
-	check '[ $? = 0 ] && cmp -s $B.lx $B.lw' "$B: the listing differs from VBKX: $(diff $B.lx $B.lw | head -3)"
+	l_rc=$?; check '[ $l_rc = 0 ] && cmp -s $B.lx $B.lw' "$B: the listing differs from VBKX: $(diff $B.lx $B.lw | head -3)"
 
 	vw x $B.bck -C $B.out > $B.xw 2>&1
 	RC=$?
@@ -148,7 +148,7 @@ for B in plain packed vols; do
 	check 'grep -q "fifo - a FIFO, not made on Windows" $B.xw' "$B: the FIFO not said"
 
 	vw t $B.bck > $B.tw 2>&1
-	check '[ $? = 0 ] && grep -q "all checksums match" $B.tw' "$B: t, $(cat $B.tw)"
+	l_rc=$?; check '[ $l_rc = 0 ] && grep -q "all checksums match" $B.tw' "$B: t, $(cat $B.tw)"
 
 	vw p $B.bck tree/big.bin > $B.pw 2>/dev/null
 	check 'cmp -s $B.pw src/tree/big.bin' "$B: p of big.bin"
@@ -163,10 +163,10 @@ check '[ $? = 0 ] && cmp -s "named/tree/sub/deep/имя с пробелом" "sr
 
 #	Over what is there: kept, 1; with -f: replaced
 vw x plain.bck -C named tree/text.txt > again.log 2>&1
-check '[ $? = 1 ] && grep -q "already exists, not extracted" again.log' "x over a file that is there: $(cat again.log)"
+l_rc=$?; check '[ $l_rc = 1 ] && grep -q "already exists, not extracted" again.log' "x over a file that is there: $(cat again.log)"
 echo changed > named/tree/text.txt
 vw x plain.bck -C named -f tree/text.txt > force.log 2>&1
-check '[ $? = 0 ] && cmp -s named/tree/text.txt src/tree/text.txt' "x -f: $(cat force.log)"
+l_rc=$?; check '[ $l_rc = 0 ] && cmp -s named/tree/text.txt src/tree/text.txt' "x -f: $(cat force.log)"
 
 #
 #	2. Damage: one bad block a group is repaired, two are named
