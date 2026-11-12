@@ -10,9 +10,11 @@
 #			SHA256SUMS) and its NOTES.md as the text.
 #
 #	DESCRIPTION:	A tag X* pushed - its release.  A push to main - the
-#			newest tag X*, if it has no release yet (a tag made before
-#			this file was in the tree: GitHub runs the workflow of the
-#			tagged commit, so its own push did nothing).  By hand
+#			newest tag X* (a tag X.aa-bb[ECOcc], the IDENT itself, is
+#			newer than every older Xaa-bb[ECOc]), if it has no release
+#			yet (a tag made before this file was in the tree: GitHub
+#			runs the workflow of the tagged commit, so its own push did
+#			nothing).  By hand
 #			(Run workflow) - the tag named.  Any other push builds the
 #			files of the newest tag and keeps them as an artifact only:
 #			mkrelease.sh tried before it matters.  A release already
@@ -23,6 +25,11 @@
 #	CREATION DATE:	20-OCT-2026
 #
 #	MODIFICATION HISTORY:
+#
+#		12-NOV-2026	CLD	X-02 : The tag is the IDENT itself, X.01-26ECO02 (was
+#					X01-25): the newest tag is the newest X.* and only
+#					without one the newest X01-*; git sorts X01-25 after
+#					X.02-01, so -v:refname alone picked an old tag.
 #
 #		20-OCT-2026	RRL	X-01 : Initial version.
 #
@@ -37,7 +44,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'The tag to release (X01-24 and so on)'
+        description: 'The tag to release (X.01-26ECO02, the IDENT; the older X01-24 and so on)'
         required: true
 
 permissions:
@@ -71,11 +78,14 @@ jobs:
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           git fetch -q --tags --force
+          #	The newest tag: X.aa-bb[ECOcc] are all newer than the older Xaa-bb[ECOc],
+          #	which git sorts above them ('0' > '.'), so the two forms are sorted apart
+          newest () { { git tag -l 'X.*' --sort=-v:refname; git tag -l 'X[0-9]*' --sort=-v:refname; } | head -1; }
           case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
           workflow_dispatch:*)	TAG=$INPUT_TAG;			PUBLISH=1 ;;
           push:refs/tags/*)	TAG=$GITHUB_REF_NAME;		PUBLISH=1 ;;
-          push:refs/heads/main)	TAG=$(git tag -l 'X*' --sort=-v:refname | head -1); PUBLISH=1 ;;
-          *)			TAG=$(git tag -l 'X*' --sort=-v:refname | head -1); PUBLISH=0 ;;
+          push:refs/heads/main)	TAG=$(newest);	PUBLISH=1 ;;
+          *)			TAG=$(newest);	PUBLISH=0 ;;
           esac
           [ -n "$TAG" ] || { echo "::error title=release::no tag X* in the repository"; exit 1; }
           if [ $PUBLISH = 1 ] && gh release view "$TAG" > /dev/null 2>&1

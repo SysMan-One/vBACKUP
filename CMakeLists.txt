@@ -14,6 +14,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		12-NOV-2026	CLD	X-23 : An __IDENT__ may be X.aa-bb[ECOcc] (the form of the
+#						releases from now on, the ECO of two digits) as well as
+#						Xaa-bb[ECOc] of the modules not changed since; __REV__
+#						aa.bb.cc is checked against both.
+#
 #		27-OCT-2026	CLD	X-22 : The User's Guide, EN and RU, in place of the reference
 #						manual (doc/ref): installed with the documents, its
 #						PDF beside it; VBACKUP$M_PDF renders the PDF.
@@ -111,7 +116,8 @@ set(VBACKUP$K_IDENT "${CMAKE_MATCH_1}")
 
 #
 #	__IDENT__ and __REV__ of every module are two spellings of one number:
-#	Xnn-mm[ECOkk] against nn.mm.kk.  A module revised without its __REV__
+#	X.nn-mm[ECOkk] (or the older Xnn-mm[ECOk] of a module not changed
+#	since) against nn.mm.kk.  A module revised without its __REV__
 #	stops the configuration.
 #
 function(s_vbackup_check_ident)
@@ -131,8 +137,8 @@ function(s_vbackup_check_ident)
 
 		set(L_R "${CMAKE_MATCH_1}")
 
-		if ( NOT L_I MATCHES "^X0*([0-9]+)-0*([0-9]+)(ECO0*([0-9]+))?$" )
-			message(FATAL_ERROR "${F}: __IDENT__ \"${L_I}\" is not of the form Xnn-nn[ECOnn]")
+		if ( NOT L_I MATCHES "^X\\.?0*([0-9]+)-0*([0-9]+)(ECO0*([0-9]+))?$" )
+			message(FATAL_ERROR "${F}: __IDENT__ \"${L_I}\" is not of the form X.nn-nn[ECOnn] (or Xnn-nn[ECOnn])")
 		endif()
 
 		set(L_MAJ "${CMAKE_MATCH_1}")
