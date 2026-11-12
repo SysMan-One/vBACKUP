@@ -1226,20 +1226,19 @@ impl Gf {
         if std::env::var("VBACKUP_NOSIMD").map(|v| v == "1").unwrap_or(false) {
             return 0;
         }
-        #[allow(unused_mut)]
-        let mut k: u8 = 0;
+        /* One binding per processor: a default overwritten under a cfg is "never read" on aarch64 */
         #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("avx2") {
-                k = 2;
-            } else if is_x86_feature_detected!("ssse3") {
-                k = 1;
-            }
-        }
+        let k: u8 = if is_x86_feature_detected!("avx2") {
+            2
+        } else if is_x86_feature_detected!("ssse3") {
+            1
+        } else {
+            0
+        };
         #[cfg(target_arch = "aarch64")]
-        {
-            k = 3;
-        }
+        let k: u8 = 3;
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let k: u8 = 0;
         if k == 0 {
             return 0;
         }
