@@ -26,6 +26,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		12-NOV-2026	CLD	X-03 : The tag is X.aa-bb[ECOcc] with two digits in every
+#					field (X.01-26ECO2 is refused) or the older
+#					Xaa-bb[ECOc]; newest() takes no tag of another form.
+#
 #		12-NOV-2026	CLD	X-02 : The tag is the IDENT itself, X.01-26ECO02 (was
 #					X01-25): the newest tag is the newest X.* and only
 #					without one the newest X01-*; git sorts X01-25 after
@@ -80,7 +84,11 @@ jobs:
           git fetch -q --tags --force
           #	The newest tag: X.aa-bb[ECOcc] are all newer than the older Xaa-bb[ECOc],
           #	which git sorts above them ('0' > '.'), so the two forms are sorted apart
-          newest () { { git tag -l 'X.*' --sort=-v:refname; git tag -l 'X[0-9]*' --sort=-v:refname; } | head -1; }
+          #	(X.aa-bb[ECOcc] with two digits each, the older Xaa-bb[ECOc]; a tag of no
+          #	such form is never taken for the newest, and is refused when named)
+          newform='^X\.[0-9]{2}-[0-9]{2}(ECO[0-9]{2})?$'
+          oldform='^X[0-9]+-[0-9]+(ECO[0-9]+)?$'
+          newest () { { git tag -l 'X.*' --sort=-v:refname | grep -E "$newform" || :; git tag -l 'X[0-9]*' --sort=-v:refname | grep -E "$oldform" || :; } | head -1; }
           case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
           workflow_dispatch:*)	TAG=$INPUT_TAG;			PUBLISH=1 ;;
           push:refs/tags/*)	TAG=$GITHUB_REF_NAME;		PUBLISH=1 ;;
@@ -88,6 +96,7 @@ jobs:
           *)			TAG=$(newest);	PUBLISH=0 ;;
           esac
           [ -n "$TAG" ] || { echo "::error title=release::no tag X* in the repository"; exit 1; }
+          [[ "$TAG" =~ $newform || "$TAG" =~ $oldform ]] || { echo "::error title=release::$TAG is not X.aa-bb[ECOcc] (nor the older Xaa-bb[ECOc])"; exit 1; }
           if [ $PUBLISH = 1 ] && gh release view "$TAG" > /dev/null 2>&1
           then
             echo "::notice title=release::$TAG - released already, not touched"

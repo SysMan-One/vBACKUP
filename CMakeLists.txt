@@ -14,6 +14,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		12-NOV-2026	CLD	X-24 : The form X.aa-bb[ECOcc] is checked strictly: two
+#					digits in every field, X.01-24ECO3 is refused; the
+#					older Xaa-bb[ECOc] as it was.
+#
 #		12-NOV-2026	CLD	X-23 : An __IDENT__ may be X.aa-bb[ECOcc] (the form of the
 #						releases from now on, the ECO of two digits) as well as
 #						Xaa-bb[ECOc] of the modules not changed since; __REV__
@@ -136,6 +140,13 @@ function(s_vbackup_check_ident)
 		endif()
 
 		set(L_R "${CMAKE_MATCH_1}")
+
+		#	X.nn-mm[ECOkk]: two digits in every field and no others
+		#	(X.01-24ECO3 and X.01-24ECO003 are refused); the older
+		#	Xnn-mm[ECOk] as it was
+		if ( L_I MATCHES "^X\\." AND NOT L_I MATCHES "^X\\.[0-9][0-9]-[0-9][0-9](ECO[0-9][0-9])?$" )
+			message(FATAL_ERROR "${F}: __IDENT__ \"${L_I}\" is not of the form X.nn-nn[ECOnn] (two digits each)")
+		endif()
 
 		if ( NOT L_I MATCHES "^X\\.?0*([0-9]+)-0*([0-9]+)(ECO0*([0-9]+))?$" )
 			message(FATAL_ERROR "${F}: __IDENT__ \"${L_I}\" is not of the form X.nn-nn[ECOnn] (or Xnn-nn[ECOnn])")
